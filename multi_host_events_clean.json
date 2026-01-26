@@ -1,0 +1,145 @@
+[
+    {
+        "time_of_packet": "12:00:00.100"
+    },
+    {
+        "role": "DB_SERV",
+        "timestamp_ref": "12:00:00.100",
+        "host": {
+            "id": "0x100",
+            "os": "Linux Ubuntu",
+            "ip": "10.0.10.5",
+            "mac": "00:11:22:33:44:55"
+        },
+        "event": {
+            "type": "process_start",
+            "timestamp": "12:00:00.100",
+            "process": "postgres",
+            "path": "/usr/lib/postgresql/14/bin",
+            "sha256": "db_hash_123...",
+            "cmdline": "postgres -D /var/lib/postgresql/14/main",
+            "user": "postgres",
+            "cpu": "15%",
+            "ram": "40%"
+        }
+    },
+    {
+        "role": "HR_WORKSTATION",
+        "timestamp_ref": "12:00:00.250",
+        "host": {
+            "id": "0x200",
+            "os": "Windows 11",
+            "ip": "192.168.50.105",
+            "mac": "AA:AA:AA:BB:BB:BB"
+        },
+        "event": {
+            "type": "file_create",
+            "timestamp": "12:00:00.250",
+            "file_type": ".pdf",
+            "path": "C:\\Users\\Sarah\\Downloads",
+            "size": "2MB",
+            "process": "chrome.exe",
+            "user": "corp\\sarah",
+            "owner": "corp\\sarah"
+        }
+    },
+    {
+        "role": "EDGE_FW",
+        "timestamp_ref": "12:00:00.800",
+        "host": {
+            "id": "0x300"
+        },
+        "event": {
+            "type": "traffic",
+            "timestamp": "12:00:00.800",
+            "src_ip": "45.33.22.11",
+            "dst_ip": "10.0.10.5",
+            "src_port": "4444",
+            "dst_port": "22",
+            "proto": "TCP",
+            "action": "BLOCK",
+            "src_iface": "wan0",
+            "dst_iface": "dmz0"
+        }
+    },
+    {
+        "role": "CORE_ROUTER",
+        "timestamp_ref": "12:00:00.400",
+        "host": {
+            "id": "0x400"
+        },
+        "status": {
+            "cpu": "80%",
+            "ram": "60%"
+        },
+        "event": {
+            "type": "traffic",
+            "timestamp": "12:00:00.400",
+            "src_ip": "10.0.10.5",
+            "dst_ip": "8.8.8.8",
+            "src_iface": "Gi0/1",
+            "dst_iface": "Gi0/2",
+            "proto": "UDP",
+            "sent": "50MB"
+        }
+    },
+    {
+        "role": "ACCESS_SWITCH",
+        "timestamp_ref": "12:00:00.600",
+        "host": {
+            "id": "0x500"
+        },
+        "status": {
+            "cpu": "30%",
+            "ram": "40%"
+        },
+        "event": {
+            "type": "traffic",
+            "timestamp": "12:00:00.600",
+            "src_mac": "DE:AD:BE:EF:00:00",
+            "dst_mac": "FF:FF:FF:FF:FF:FF",
+            "vlan_src": "10",
+            "vlan_dst": "20",
+            "src_iface": "Fa0/1",
+            "dst_iface": "Fa0/24"
+        }
+    },
+    {
+        "role": "DB_SERV",
+        "timestamp_ref": "12:00:01.050",
+        "host": {
+            "id": "0x100",
+            "os": "Linux Ubuntu",
+            "ip": "10.0.10.5",
+            "mac": "00:11:22:33:44:55"
+        },
+        "event": {
+            "type": "file_modified",
+            "timestamp": "12:00:01.050",
+            "path": "/var/lib/postgresql/14/main/base/16384",
+            "process": "postgres",
+            "size_change": "+4KB",
+            "perm_change": "none",
+            "user": "postgres"
+        }
+    },
+    {
+        "role": "HR_WORKSTATION",
+        "timestamp_ref": "12:00:01.200",
+        "host": {
+            "id": "0x200",
+            "os": "Windows 11",
+            "ip": "192.168.50.105",
+            "mac": "AA:AA:AA:BB:BB:BB"
+        },
+        "event": {
+            "type": "process_start",
+            "timestamp": "12:00:01.200",
+            "process": "unknown.exe",
+            "path": "C:\\Users\\Sarah\\AppData\\Local\\Temp",
+            "sha256": "bad_hash_999...",
+            "parent": "explorer.exe",
+            "user": "corp\\sarah"
+        }
+    }
+]

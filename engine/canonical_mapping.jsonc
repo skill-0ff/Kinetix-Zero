@@ -1,0 +1,183 @@
+[
+    // =================================================================================
+    // Kinetix-Zero: Optimized 15-Dimension Canonical Field Mapping
+    // =================================================================================
+    // Logic: Fields are overlapped ONLY if they never appear in the same event type.
+    // Constraint: `path` & `parent_path` must separate. `user` & `owner` must separate.
+    // --- PRIMARY IDENTIFIERS (0-2) ---
+    {
+        "slot": 0,
+        "name": "Meta",
+        "description": "Event Type",
+        "fields": [
+            "event_type"
+        ]
+    },
+    {
+        "slot": 1,
+        "name": "Subject / Source",
+        "description": "The active entity or source address",
+        "fields": [
+            "process", // process_*
+            "name", // service_*
+            "q_name", // dns_query
+            "src_ip", // traffic (Network L3 Src)
+            "src_mac" // traffic (Network L2 Src)
+        ]
+        // Audit: process_start (process) vs traffic (src_ip). Exclusive.
+    },
+    {
+        "slot": 2,
+        "name": "Target / Dest",
+        "description": "The target object or destination address",
+        "fields": [
+            "path", // file_*, process_*, service_*
+            "reg_path", // registry
+            "dst_ip", // traffic (Network L3 Dst)
+            "dst_mac", // traffic (Network L2 Dst)
+            "q_type" // dns_query
+        ]
+        // Audit: `path` and `reg_path` are exclusive. `path` and `dst_ip` are exclusive.
+    },
+    // --- DATA PAYLOADS (3-5) ---
+    {
+        "slot": 3,
+        "name": "Data A / Src Port",
+        "description": "Primary Hash / Size / Source Port",
+        "fields": [
+            "sha256", // process_*, file_*
+            "size", // file_create
+            "reg_val", // registry
+            "src_port", // traffic / network_connection
+            "q_res" // dns_query
+        ]
+        // Audit: `sha256` and `src_port` never share an event.
+    },
+    {
+        "slot": 4,
+        "name": "Data B / Dst Port",
+        "description": "Cmdline / Flags / Dest Port",
+        "fields": [
+            "cmdline", // process_start
+            "dst_port", // traffic / network_connection
+            "term_type", // process_kill
+            "start_type", // service_create
+            "reg_type", // registry
+            "perm_change", // file_modified
+            "q_port" // dns_query
+        ]
+    },
+    {
+        "slot": 5,
+        "name": "Data C / Protocol",
+        "description": "Parent Name / Proto / Permissions",
+        "fields": [
+            "parent", // process_start (Name only)
+            "proto", // traffic
+            "protocol", // network_connection
+            "exit_code", // process_kill
+            "reg_perm", // registry
+            "perm" // file_delete
+        ]
+    },
+    // --- AUTHORITY (6-7) ---
+    {
+        "slot": 6,
+        "name": "Actor A",
+        "description": "Primary User / Account",
+        "fields": [
+            "user",
+            "account",
+            "reg_user"
+        ]
+    },
+    {
+        "slot": 7,
+        "name": "Actor B",
+        "description": "Secondary Owner / Creator",
+        "fields": [
+            "owner",
+            "creator",
+            "deleter",
+            "reg_owner"
+        ]
+    },
+    // Audit: file_create uses BOTH `user` and `owner`. They are successfully separated.
+    // --- RESOURCES (8-11) ---
+    {
+        "slot": 8,
+        "name": "Resource A",
+        "description": "CPU / Sent Bytes",
+        "fields": [
+            "cpu",
+            "sent"
+        ]
+    },
+    {
+        "slot": 9,
+        "name": "Resource B",
+        "description": "RAM / Recv Bytes",
+        "fields": [
+            "ram",
+            "recv"
+        ]
+    },
+    {
+        "slot": 10,
+        "name": "Resource C",
+        "description": "Disk Usage",
+        "fields": [
+            "disk"
+        ]
+    },
+    {
+        "slot": 11,
+        "name": "Resource D",
+        "description": "GPU Usage",
+        "fields": [
+            "gpu"
+        ]
+    },
+    // --- AUXILIARY / CONTEXT (12-14) ---
+    {
+        "slot": 12,
+        "name": "Aux A",
+        "description": "Parent Path / Source Interface",
+        "fields": [
+            "parent_path", // process_start
+            "src_iface", // traffic
+            "op_type", // registry
+            "size_change" // file_modified
+        ]
+        // Audit: `process_start` has `path` (Slot 2) and `parent_path` (Slot 12). SAFE.
+    },
+    {
+        "slot": 13,
+        "name": "Aux B",
+        "description": "Parent Hash / Dest Interface",
+        "fields": [
+            "parent_sha256", // process_start
+            "dst_iface", // traffic
+            "vlan_src", // traffic
+            "action" // firewall
+        ]
+    },
+    {
+        "slot": 14,
+        "name": "Aux C",
+        "description": "File Type / Vlan Dst",
+        "fields": [
+            "file_type", // file_create
+            "vlan_dst", // traffic
+            "reg_data" // registry (unused?)
+        ]
+    },
+    {
+        "slot": 15,
+        "name": "Time",
+        "description": "Timestamp Reference (Seconds)",
+        "fields": [
+            "timestamp"
+        ]
+    }
+]

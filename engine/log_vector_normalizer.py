@@ -4,331 +4,385 @@ import hashlib
 import re
 import math
 import time
+import numpy as np
 from datetime import datetime
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from threading import Lock
+from typing import Optional, Dict, Any, List, Union, Literal
+from pydantic import BaseModel, Field, ValidationError, Extra
 
-# Constants for Vector Dimensions
-# 15 Optimized Slots per atomic event
+# ==========================================
+# 1. Pydantic Models (Strict Input Validation)
+# ==========================================
 
-class ConfigLoader:
-    @staticmethod
-    def load(path):
-        if not os.path.exists(path):
-             return {"listening_port": 3000, "single_image_dist_s": 1, "ai_window_dist_s": 1.0}
-        with open(path, 'r') as f:
-            lines = f.readlines()
-            clean_lines = [line for line in lines if not line.strip().startswith("//")]
-            return json.loads("".join(clean_lines))
+class HostIdentity(BaseModel):
+    id: str
+    os: Optional[str] = None
+    ip: Optional[str] = None
+    mac: Optional[str] = None
+
+    class Config:
+        extra = Extra.forbid
+
+# --- Event Sub-Types ---
+
+class BaseEvent(BaseModel):
+    timestamp: str 
+    class Config:
+        extra = Extra.forbid
+
+class ProcessStartEvent(BaseEvent):
+    type: Literal["process_start"]
+    process: Optional[str] = None
+    path: Optional[str] = None
+    sha256: Optional[str] = None
+    cmdline: Optional[str] = None
+    parent: Optional[str] = None
+    parent_path: Optional[str] = None
+    parent_sha_256: Optional[str] = None
+    user: Optional[str] = None
+    cpu: Optional[str] = None
+    gpu: Optional[str] = None
+    ram: Optional[str] = None
+    disk: Optional[str] = None
+
+class ProcessKillEvent(BaseEvent):
+    type: Literal["process_kill"]
+    process: Optional[str] = None
+    path: Optional[str] = None
+    sha256: Optional[str] = None
+    term_type: Optional[str] = None
+    exit_code: Optional[str] = None
+
+class FileCreateEvent(BaseEvent):
+    type: Literal["file_create"]
+    file_type: Optional[str] = None
+    path: Optional[str] = None
+    size: Optional[str] = None
+    process: Optional[str] = None
+    user: Optional[str] = None
+    owner: Optional[str] = None
+
+class FileModifiedEvent(BaseEvent):
+    type: Literal["file_modified"]
+    path: Optional[str] = None
+    process: Optional[str] = None
+    size_change: Optional[str] = None
+    perm_change: Optional[str] = None
+    user: Optional[str] = None
+    owner: Optional[str] = None
+
+class FileDeleteEvent(BaseEvent):
+    type: Literal["file_delete"]
+    path: Optional[str] = None
+    process: Optional[str] = None
+    size: Optional[str] = None
+    user: Optional[str] = None
+    perm: Optional[str] = None
+    owner: Optional[str] = None
+
+class ServiceCreateEvent(BaseEvent):
+    type: Literal["service_create"]
+    name: Optional[str] = None
+    path: Optional[str] = None
+    start_type: Optional[str] = None
+    account: Optional[str] = None
+    creator: Optional[str] = None
+
+class ServiceDeleteEvent(BaseEvent):
+    type: Literal["service_delete"]
+    name: Optional[str] = None
+    path: Optional[str] = None
+    account: Optional[str] = None
+    deleter: Optional[str] = None
+
+class ServiceModifiedEvent(BaseEvent):
+    type: Literal["service_modified"]
+    name: Optional[str] = None
+    path: Optional[str] = None
+    account: Optional[str] = None
+    user: Optional[str] = None
+
+class RegistryEvent(BaseEvent):
+    type: Literal["registry"]
+    op_type: Optional[str] = None
+    reg_path: Optional[str] = None
+    reg_val: Optional[str] = None
+    reg_type: Optional[str] = None
+    reg_user: Optional[str] = None
+    reg_owner: Optional[str] = None
+    reg_perm: Optional[str] = None
+
+class NetworkConnectionEvent(BaseEvent):
+    type: Literal["network_connection"]
+    process: Optional[str] = None
+    protocol: Optional[str] = None
+    ip_local: Optional[Union[bool, str]] = None
+    dst_ip: Optional[str] = None
+    src_port: Optional[str] = None
+    dst_port: Optional[str] = None
+    sent: Optional[str] = None
+    recv: Optional[str] = None
+
+class DnsQueryEvent(BaseEvent):
+    type: Literal["dns_query"]
+    q_name: Optional[str] = None
+    q_type: Optional[str] = None
+    q_res: Optional[str] = None
+    q_port: Optional[str] = None
+    q_proto: Optional[str] = None
+
+class TrafficEvent(BaseEvent):
+    type: Literal["traffic"]
+    # Router/Switch/Firewall fields
+    src_ip: Optional[str] = None
+    dst_ip: Optional[str] = None
+    src_iface: Optional[str] = None
+    dst_iface: Optional[str] = None
+    src_port: Optional[str] = None
+    dst_port: Optional[str] = None
+    proto: Optional[str] = None
+    action: Optional[str] = None
+    src_mac: Optional[str] = None
+    dst_mac: Optional[str] = None
+    vlan_src: Optional[str] = None
+    vlan_dst: Optional[str] = None
+    sent: Optional[str] = None # Added based on example usage
+
+# Polymorphic Event Union
+EventUnion = Union[
+    ProcessStartEvent, ProcessKillEvent, 
+    FileCreateEvent, FileModifiedEvent, FileDeleteEvent,
+    ServiceCreateEvent, ServiceDeleteEvent, ServiceModifiedEvent,
+    RegistryEvent, NetworkConnectionEvent, DnsQueryEvent,
+    TrafficEvent
+]
+
+class LogEntry(BaseModel):
+    role: str
+    timestamp_ref: str
+    host: HostIdentity
+    status: Optional[Dict[str, str]] = None
+    event: EventUnion = Field(..., discriminator='type')
+
+    class Config:
+        extra = Extra.ignore
+
+# ==========================================
+# 2. Vector Library (Advanced Feature Eng.)
+# ==========================================
 
 class VectorLibrary:
-    """Helper for normalization and encoding."""
+    
+    TOP_K_PROCESSES = {
+        "svchost.exe": 0.1, "explorer.exe": 0.2, "chrome.exe": 0.3,
+        "powershell.exe": 0.9, "cmd.exe": 0.95, "nmap": 0.99
+    }
+
+    @staticmethod
+    def encode_time_cyclic(t_str):
+        if not t_str: return [0.0, 0.0]
+        try:
+            parts = t_str.split(":")
+            h = int(parts[0])
+            m = int(parts[1])
+            s = float(parts[2])
+            seconds_in_day = h * 3600 + m * 60 + s
+            angle = (2 * math.pi * seconds_in_day) / 86400.0
+            return [math.sin(angle), math.cos(angle)]
+        except:
+            return [0.0, 0.0]
+
+    @staticmethod
+    def calculate_entropy(text):
+        if not text: return 0.0
+        prob = [float(text.count(c)) / len(text) for c in dict.fromkeys(list(text))]
+        entropy = -sum([p * math.log(p) / math.log(2.0) for p in prob])
+        return min(entropy / 8.0, 1.0)
+
+    @staticmethod
+    def get_top_k_score(text):
+        if not text: return 0.0
+        return VectorLibrary.TOP_K_PROCESSES.get(text.lower(), VectorLibrary.hash_string(text))
+
+    @staticmethod
+    def hash_string(s):
+        if not s: return 0.0
+        return int(hashlib.sha256(s.encode()).hexdigest(), 16) % 100000 / 100000.0
+
+    @staticmethod
+    def normalize_ip(ip):
+        return VectorLibrary.hash_string(ip)
+
+    @staticmethod
+    def normalize_port(p):
+        if not p: return 0.0
+        try:
+            val = int(p)
+            return math.log10(val + 1) / 5.0
+        except:
+            return 0.0
     
     @staticmethod
-    def normalize_size(value):
-        """Log-scaled normalization: log10(bytes+1) / 10.0"""
-        if not isinstance(value, str): return 0.0
-        value = value.upper()
-        multipliers = {"B": 1, "KB": 1024, "MB": 1024**2, "GB": 1024**3}
-        match = re.search(r"([\d\.]+)\s*([A-Z]*)", value)
-        if match:
-            try:
-                num = float(match.group(1))
-                unit = match.group(2)
-                bytes_val = num * multipliers.get(unit, 1)
-                # compress millions to small range (e.g. 1MB=6.0, 1GB=9.0) -> /10 -> 0.6, 0.9
-                return math.log10(bytes_val + 1) / 10.0
-            except: pass
-        return 0.0
-
-    @staticmethod
-    def encode_categorical(value):
-        """Hashes a string to a normalized float between -1 and 1."""
-        if not isinstance(value, str): return 0.0
-        hash_val = int(hashlib.sha256(value.encode('utf-8')).hexdigest(), 16)
-        return (hash_val % 100000) / 50000.0 - 1.0
-
-    @staticmethod
-    def parse_time(time_str):
-        """Normalized time of day: seconds / 86400.0 (0.0 to 1.0)"""
-        if isinstance(time_str, (int, float)): 
-            # Assume raw float is seconds, normalize it
-            return float(time_str) / 86400.0
-            
-        if not isinstance(time_str, str): return 0.0
-        
-        seconds = 0.0
+    def normalize_size(s):
+        if not s: return 0.0
         try:
-            if ":" in time_str:
-                parts = time_str.split(":")
-                if len(parts) >= 3:
-                    h = int(parts[0])
-                    m = int(parts[1])
-                    s_parts = parts[2].split(".")
-                    s = int(s_parts[0])
-                    ms = int(s_parts[1]) if len(s_parts) > 1 else 0
-                    seconds = h * 3600 + m * 60 + s + (ms / 1000.0)
-            elif time_str.endswith("s"):
-                seconds = float(time_str.replace("s", ""))
-            else:
-                seconds = float(time_str)
+            num = float(re.findall(r"[\d\.]+", str(s))[0])
+            if "MB" in str(s): num *= 1024
+            if "GB" in str(s): num *= 1024 * 1024
+            return min(math.log10(num + 1) / 10.0, 1.0)
         except:
-            pass
-            
-        return seconds / 86400.0
+            return 0.0
+
+# ==========================================
+# 3. Log Normalizer (32-Dim Sparse Map)
+# ==========================================
 
 class LogNormalizer:
-    def __init__(self, config):
-        # Atomic Mode: No buffering, no windows.
-        self.lock = Lock()
-        
-    def process_incoming(self, raw_entry):
-        """
-        ATOMIC MODE: Maps events 1:1 to vectors.
-        """
-        # Detection
-        is_legacy = True
-        role = "unknown"
-        data = {}
-        
-        if "role" in raw_entry and "host" in raw_entry:
-            is_legacy = False
-            role = raw_entry.get("role", "unknown")
-            data = raw_entry
-        else:
-            role = list(raw_entry.keys())[0]
-            data = raw_entry[role]
+    def __init__(self, config_path="engine/config.jsonc"):
+        self.config = self._load_config(config_path)
+
+    def _load_config(self, path):
+        if not os.path.exists(path): return {}
+        with open(path, 'r') as f:
+            lines = [l for l in f.readlines() if not l.strip().startswith("//")]
+            return json.loads("".join(lines))
+
+    def input_to_vector(self, raw_json):
+        try:
+            # 1. Validate (Polymorphic)
+            log = LogEntry(**raw_json)
             
-        if not isinstance(data, dict):
-             return []
-        
-        # 1. Identity & Context
-        identity_vector = VectorLibrary.encode_categorical(role)
-        
-        if is_legacy:
-            raw_identity = data.get("_identity", [])
-            linkage_info = raw_identity[0] if raw_identity and isinstance(raw_identity, list) else (raw_identity if isinstance(raw_identity, dict) else {})
-            host_id = str(linkage_info.get("ID", "unknown"))
-            linkage_vector = [
-                VectorLibrary.encode_categorical(host_id),
-                VectorLibrary.encode_categorical(linkage_info.get("OS", "")),
-                VectorLibrary.encode_categorical(linkage_info.get("ip", "")),
-                VectorLibrary.encode_categorical(linkage_info.get("mac", ""))
-            ]
-        else:
-            host = data.get("host", {})
-            host_id = str(host.get("id", "") or host.get("ID", "unknown"))
-            linkage_vector = [
-                VectorLibrary.encode_categorical(host_id),
-                VectorLibrary.encode_categorical(host.get("os", "") or host.get("OS", "")),
-                VectorLibrary.encode_categorical(host.get("ip", "")),
-                VectorLibrary.encode_categorical(host.get("mac", ""))
-            ]
-        
-        context_vector = [identity_vector] + linkage_vector
+            # 2. Initialize
+            vector = np.zeros(32)
 
-        # 2. Map Events
-        output_list = []
-        
-        raw_events = []
-        if is_legacy:
-            raw_events = data.get("_event", [])
-        elif "events" in data:
-            raw_events = data.get("events", [])
-        elif "event" in data:
-            raw_events = [data.get("event", {})]
+            # --- 00-05 Identity ---
+            vector[0] = VectorLibrary.hash_string(log.role)
+            vector[1] = VectorLibrary.hash_string(log.host.id)
+            vector[2] = VectorLibrary.hash_string(log.host.os)
+            vector[3] = VectorLibrary.normalize_ip(log.host.ip)
+            vector[4] = VectorLibrary.hash_string(log.host.mac)
+            vector[5] = 0.5
+
+            # --- 06-07 Time ---
+            t_cyclic = VectorLibrary.encode_time_cyclic(log.timestamp_ref)
+            vector[6] = t_cyclic[0]
+            vector[7] = t_cyclic[1]
+
+            # --- 08-10 Status ---
+            if log.status:
+                vector[8] = VectorLibrary.normalize_size(log.status.get("cpu", "0"))
+                vector[9] = VectorLibrary.normalize_size(log.status.get("ram", "0"))
+                vector[10] = VectorLibrary.normalize_size(log.status.get("disk", "0"))
+
+            # --- 11-15 Event Meta ---
+            ev = log.event
+            vector[11] = VectorLibrary.hash_string(ev.type)
             
-        for e in raw_events:
-            details = {}
-            event_type = "unknown"
+            # Extract common optional fields safely
+            user = getattr(ev, 'user', None) or getattr(ev, 'reg_user', None)
+            vector[12] = VectorLibrary.hash_string(user)
             
-            if is_legacy:
-                details = e.get("event_details", {})
-                if not details and "moment" in e: details = e
-                event_type = e.get("event_ID", "unknown")
-            else:
-                details = e
-                if "details" in e: details = e["details"]
-                event_type = e.get("type", "") or e.get("id", "") or e.get("event_ID", "unknown")
-                
-                if "status" in data:
-                     details = {**details, **data["status"]}
-
-            # Extract Timestamp (for prepending)
-            t_str = details.get("timestamp", "") or details.get("moment", "") or details.get("time", "0")
-            if t_str == "0" and not is_legacy:
-                 t_str = data.get("timestamp_ref", "0")
-
-            # 15-Dimension Optimized Mapping
-            evt_vector = self._map_canonical(event_type, details)
+            action = getattr(ev, 'action', None) or getattr(ev, 'op_type', None)
+            vector[13] = VectorLibrary.hash_string(action)
             
-            # FLATTEN: Context (5) + Sequence (16) = 21 Dims (Pure Floats)
-            flat_vector = context_vector + evt_vector
+            vector[14] = 0.0
             
-            # Just the raw vector
-            output_list.append(flat_vector)
+            # Direction Logic
+            src_ip = getattr(ev, 'src_ip', None)
+            is_ext = 1.0 if src_ip and not src_ip.startswith("192.168") else 0.0
+            vector[15] = is_ext
 
-        return output_list
+            # --- 16-20 Process/File ---
+            process = getattr(ev, 'process', None)
+            if process:
+                vector[16] = VectorLibrary.get_top_k_score(process)
+                vector[17] = VectorLibrary.calculate_entropy(getattr(ev, 'path', None))
+                vector[18] = VectorLibrary.hash_string(getattr(ev, 'parent', None))
+                vector[19] = VectorLibrary.calculate_entropy(getattr(ev, 'cmdline', None))
+            
+            size = getattr(ev, 'size', None) or getattr(ev, 'sent', None)
+            if size:
+                vector[20] = VectorLibrary.normalize_size(size)
 
-    def _map_canonical(self, type_str, d):
-        """
-        Maps raw details to Optimized 16 Canonical Dimensions.
-        Strict adherence to canonical_mapping.jsonc.
-        """
-        v = [0.0] * 16
-        enc = VectorLibrary.encode_categorical
-        norm = VectorLibrary.normalize_size
-        
-        # 0. Meta
-        v[0] = enc(type_str)
-        
-        # 1. Subject / Source
-        # Fields: process, name, q_name, src_ip, src_mac
-        val = d.get("process", "") or d.get("name", "") or d.get("q_name", "") or d.get("src_ip", "") or d.get("ip_local", "") or d.get("src_mac", "")
-        v[1] = enc(str(val))
-        
-        # 2. Target / Dest
-        # Fields: path, reg_path, dst_ip, dst_mac, q_type
-        val = d.get("path", "") or d.get("reg_path", "") or d.get("dst_ip", "") or d.get("dst_mac", "") or d.get("q_type", "")
-        v[2] = enc(str(val))
-        
-        # 3. Data A / Src Port
-        # Fields: sha256, size, reg_val, src_port, q_res
-        val = d.get("sha256", "") or d.get("size", "") or d.get("reg_val", "") or d.get("src_port", "") or d.get("q_res", "")
-        if str(val).isdigit() and d.get("src_port"):
-             v[3] = float(val) / 65535.0
-        elif isinstance(val, (int, float)) or (isinstance(val, str) and (val.strip().isdigit() or "B" in val.upper())):
-             v[3] = norm(val)
-        else:
-             v[3] = enc(str(val))
-        
-        # 4. Data B / Dst Port
-        # Fields: cmdline, dst_port, term_type, start_type, reg_type, perm_change, q_port
-        val = d.get("cmdline", "") or d.get("dst_port", "") or d.get("term_type", "") or d.get("start_type", "") or d.get("reg_type", "") or d.get("perm_change", "") or d.get("q_port", "")
-        if str(val).isdigit() and (d.get("dst_port") or d.get("q_port")):
-             v[4] = float(val) / 65535.0
-        else:
-             v[4] = enc(str(val))
-        
-        # 5. Data C / Protocol
-        # Fields: parent, proto, protocol, exit_code, reg_perm, perm
-        val = d.get("parent", "") or d.get("proto", "") or d.get("protocol", "") or d.get("exit_code", "") or d.get("reg_perm", "") or d.get("perm", "")
-        v[5] = enc(str(val))
-        
-        # 6. Actor A (Primary)
-        val = d.get("user", "") or d.get("account", "") or d.get("reg_user", "")
-        v[6] = enc(str(val))
-        
-        # 7. Actor B (Secondary)
-        val = d.get("owner", "") or d.get("creator", "") or d.get("deleter", "") or d.get("reg_owner", "")
-        v[7] = enc(str(val))
-        
-        # 8. Resource A (CPU / Sent)
-        val = d.get("cpu", "") or d.get("sent", "")
-        v[8] = norm(val)
-        if "%" in str(val):
-             try: v[8] = float(str(val).replace("%",""))/100.0
-             except: pass
-             
-        # 9. Resource B (RAM / Recv)
-        val = d.get("ram", "") or d.get("recv", "")
-        v[9] = norm(val)
-        if "%" in str(val):
-             try: v[9] = float(str(val).replace("%",""))/100.0
-             except: pass
-             
-        # 10. Resource C (Disk)
-        val = d.get("disk", "")
-        v[10] = norm(val)
-        if "%" in str(val):
-             try: v[10] = float(str(val).replace("%",""))/100.0
-             except: pass
+            # --- 21-25 Network ---
+            # Handle aliasing
+            protocol = getattr(ev, 'protocol', None) or getattr(ev, 'proto', None)
+            dst_ip = getattr(ev, 'dst_ip', None)
+            
+            if src_ip or dst_ip or protocol or getattr(ev, 'src_mac', None):
+                vector[21] = VectorLibrary.hash_string(protocol)
+                vector[22] = VectorLibrary.normalize_ip(src_ip)
+                vector[23] = VectorLibrary.normalize_ip(dst_ip)
+                vector[24] = VectorLibrary.normalize_port(getattr(ev, 'src_port', None))
+                vector[25] = VectorLibrary.normalize_port(getattr(ev, 'dst_port', None))
 
-        # 11. Resource D (GPU)
-        val = d.get("gpu", "")
-        v[11] = norm(val)
-        if "%" in str(val):
-             try: v[11] = float(str(val).replace("%",""))/100.0
-             except: pass
-             
-        # 12. Aux A
-        # Fields: parent_path, src_iface, op_type, size_change
-        val = d.get("parent_path", "") or d.get("src_iface", "") or d.get("op_type", "") or d.get("size_change", "")
-        v[12] = enc(str(val))
-        
-        # 13. Aux B
-        # Fields: parent_sha256, dst_iface, vlan_src, action
-        val = d.get("parent_sha256", "") or d.get("dst_iface", "") or d.get("vlan_src", "") or d.get("action", "")
-        v[13] = enc(str(val))
-        
-        # 14. Aux C
-        # Fields: file_type, vlan_dst
-        val = d.get("file_type", "") or d.get("vlan_dst", "") or d.get("reg_data", "")
-        v[14] = enc(str(val))
+            # --- 26-31 Special ---
+            vector[26] = VectorLibrary.hash_string(getattr(ev, 'reg_path', None))
+            vector[27] = VectorLibrary.hash_string(getattr(ev, 'reg_val', None))
+            
+            name = getattr(ev, 'name', None) or getattr(ev, 'q_name', None)
+            vector[28] = VectorLibrary.hash_string(name)
+            
+            vector[29] = VectorLibrary.hash_string(getattr(ev, 'q_name', None))
+            vector[30] = VectorLibrary.normalize_size(getattr(ev, 'sent', None))
+            vector[31] = VectorLibrary.normalize_size(getattr(ev, 'recv', None))
 
-        # 15. Time (Timestamp)
-        val = d.get("timestamp", "") or d.get("time", "") or d.get("moment", "")
-        v[15] = VectorLibrary.parse_time(str(val))
-        
-        return v
+            return vector.tolist()
 
-# Server Setup
+        except ValidationError as e:
+            # print(f"Validation Error: {e}") 
+            # Silent fail for production or log?
+            return None
+        except Exception as e:
+            print(f"Normalization Error: {e}")
+            return None
+
+# ==========================================
+# 4. HTTP Service
+# ==========================================
+
 class RequestHandler(BaseHTTPRequestHandler):
-    normalizer = None
-    
+    normalizer = LogNormalizer()
+
     def do_POST(self):
         content_length = int(self.headers['Content-Length'])
         post_data = self.rfile.read(content_length)
         
         try:
-            input_data = json.loads(post_data)
-            if isinstance(input_data, list):
-                # 1. Detect Window Timestamp Header
-                window_time = "0"
-                events_to_process = input_data
-                
-                if len(input_data) > 0 and isinstance(input_data[0], dict) and "time_of_packet" in input_data[0]:
-                    window_time = input_data[0]["time_of_packet"]
-                    events_to_process = input_data[1:] # Skip header
-                
-                results = []
-                for entry in events_to_process:
-                    # process_incoming returns a LIST OF VECTORS (usually one)
-                    res = self.normalizer.process_incoming(entry)
-                    results.extend(res)
-                
-                # Prepend Window Timestamp to Result List
-                final_results = [window_time] + results
-                
-                self.send_response(200)
-                self.send_header('Content-type', 'application/json')
-                self.end_headers()
-                self.wfile.write(json.dumps(final_results).encode('utf-8'))
+            data = json.loads(post_data)
+            if isinstance(data, list):
+                vectors = [self.normalizer.input_to_vector(item) for item in data]
+                vectors = [v for v in vectors if v is not None]
             else:
-                # Returns list of vectors (single)
-                result = self.normalizer.process_incoming(input_data)
-                self.send_response(200)
-                self.send_header('Content-type', 'application/json')
-                self.end_headers()
-                self.wfile.write(json.dumps(result).encode('utf-8'))
+                v = self.normalizer.input_to_vector(data)
+                vectors = [v] if v is not None else []
+            
+            response = {"vectors": vectors, "count": len(vectors)}
+            
+            self.send_response(200)
+            self.send_header('Content-type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps(response).encode('utf-8'))
+            
         except Exception as e:
             self.send_response(500)
             self.end_headers()
-            self.wfile.write(f"Error: {str(e)}".encode('utf-8'))
+            self.wfile.write(str(e).encode('utf-8'))
 
-    def log_message(self, format, *args):
-        return
+def run(server_class=HTTPServer, handler_class=RequestHandler):
+    try:
+        with open("engine/config.jsonc", 'r') as f:
+            lines = [l for l in f.readlines() if not l.strip().startswith("//")]
+            config = json.loads("".join(lines))
+            port = config.get("listening_port", 3000)
+    except:
+        port = 3000
 
-def run_server():
-    config_path = os.path.join(os.path.dirname(__file__), "config.jsonc")
-    config = ConfigLoader.load(config_path)
-    port = config.get("listening_port", 3000)
-    RequestHandler.normalizer = LogNormalizer(config)
-    server = HTTPServer(('0.0.0.0', port), RequestHandler)
-    print(f"Log Normalizer running on port {port}")
-    try: server.serve_forever()
-    except KeyboardInterrupt: pass
-    server.server_close()
+    server_address = ('', port)
+    httpd = server_class(server_address, handler_class)
+    print(f"V2 Log Normalizer (32-Dim) running on port {port}")
+    httpd.serve_forever()
 
 if __name__ == "__main__":
-    run_server()
+    run()

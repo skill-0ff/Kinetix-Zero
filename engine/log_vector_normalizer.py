@@ -6,8 +6,13 @@ import math
 import time
 import numpy as np
 from datetime import datetime
+import zlib
 from http.server import HTTPServer, BaseHTTPRequestHandler
+from socketserver import ThreadingMixIn
 from threading import Lock
+
+class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
+    daemon_threads = True
 from typing import Optional, Dict, Any, List, Union, Literal
 from pydantic import BaseModel, Field, ValidationError, Extra
 
@@ -150,12 +155,90 @@ class TrafficEvent(BaseEvent):
     sent: Optional[str] = None # Added based on example usage
 
 # Polymorphic Event Union
+class ConsoleLoginEvent(BaseEvent):
+    type: Literal["console_login"]
+    user: Optional[str] = None
+    action: Optional[str] = None
+    method: Optional[str] = None
+    terminal: Optional[str] = None
+    result: Optional[str] = None
+
+class SessionEvent(BaseEvent):
+    type: Literal["session"]
+    session_id: Optional[str] = None
+    user: Optional[str] = None
+    status: Optional[str] = None
+    logon_type: Optional[str] = None
+    source_network_address: Optional[str] = None
+
+class AuthLoginEvent(BaseEvent):
+    type: Literal["auth_login"]
+    user: Optional[str] = None
+    domain: Optional[str] = None
+    src_ip: Optional[str] = None
+    logon_type: Optional[str] = None
+    auth_package: Optional[str] = None
+    result: Optional[str] = None
+    failure_reason: Optional[str] = None
+
+class LoggingEvent(BaseEvent):
+    type: Literal["logging"]
+    level: Optional[str] = None
+    source: Optional[str] = None
+    event_id: Optional[str] = None
+    message: Optional[str] = None
+    task_category: Optional[str] = None
+
+class ScheduledTaskEvent(BaseEvent):
+    type: Literal["scheduled_task"]
+    task_name: Optional[str] = None
+    action: Optional[str] = None
+    path: Optional[str] = None
+    user: Optional[str] = None
+
+class AccountManagementEvent(BaseEvent):
+    type: Literal["account_management"]
+    action: Optional[str] = None
+    target_user: Optional[str] = None
+    subject_user: Optional[str] = None
+    domain: Optional[str] = None
+
+class GroupManagementEvent(BaseEvent):
+    type: Literal["group_management"]
+    action: Optional[str] = None
+    group_name: Optional[str] = None
+    member_user: Optional[str] = None
+    subject_user: Optional[str] = None
+
+class ModuleLoadEvent(BaseEvent):
+    type: Literal["module_load"]
+    process: Optional[str] = None
+    image_path: Optional[str] = None
+    sha256: Optional[str] = None
+    signed: Optional[str] = None
+
+class PipeEvent(BaseEvent):
+    type: Literal["pipe_event"]
+    pipe_name: Optional[str] = None
+    op_type: Optional[str] = None
+    process: Optional[str] = None
+    handle_id: Optional[str] = None
+
+class WmiEvent(BaseEvent):
+    type: Literal["wmi_event"]
+    query: Optional[str] = None
+    user: Optional[str] = None
+    namespace: Optional[str] = None
+
 EventUnion = Union[
     ProcessStartEvent, ProcessKillEvent, 
     FileCreateEvent, FileModifiedEvent, FileDeleteEvent,
     ServiceCreateEvent, ServiceDeleteEvent, ServiceModifiedEvent,
     RegistryEvent, NetworkConnectionEvent, DnsQueryEvent,
-    TrafficEvent
+    TrafficEvent,
+    ConsoleLoginEvent, SessionEvent, AuthLoginEvent, LoggingEvent,
+    ScheduledTaskEvent, AccountManagementEvent, GroupManagementEvent,
+    ModuleLoadEvent, PipeEvent, WmiEvent
 ]
 
 class LogEntry(BaseModel):
@@ -178,6 +261,16 @@ class VectorLibrary:
         "svchost.exe": 0.1, "explorer.exe": 0.2, "chrome.exe": 0.3,
         "powershell.exe": 0.9, "cmd.exe": 0.95, "nmap": 0.99
     }
+
+    @staticmethod
+    def get_role_score(role):
+        if not role: return 0.0
+        role = role.upper()
+        if "WORKSTATION" in role: return 0.1
+        if "SERVER" in role: return 0.5
+        if "DC" in role or "AD" in role: return 0.9
+        if "FW" in role or "FIREWALL" in role: return 0.8
+        return VectorLibrary.hash_string(role)
 
     @staticmethod
     def encode_time_cyclic(t_str):
@@ -208,7 +301,8 @@ class VectorLibrary:
     @staticmethod
     def hash_string(s):
         if not s: return 0.0
-        return int(hashlib.sha256(s.encode()).hexdigest(), 16) % 100000 / 100000.0
+        # Optimization: CRC32 is 10x faster than SHA256 for feature hashing
+        return (zlib.crc32(s.encode()) & 0xffffffff) % 100000 / 100000.0
 
     @staticmethod
     def normalize_ip(ip):
@@ -256,82 +350,99 @@ class LogNormalizer:
             # 2. Initialize
             vector = np.zeros(32)
 
-            # --- 00-05 Identity ---
-            vector[0] = VectorLibrary.hash_string(log.role)
+            # --- 32-DIMENSION COLLISION-FREE MAP ---
+            # 00-05: Identity, 06-07: Time, 08-10: Status, 11-15: Meta
+            # 16-19: Actor Ctx, 20: Target Identity
+            # 21-25: Network
+            # 26-31: Resource
+
+            # [00-05] Identity
+            vector[0] = VectorLibrary.get_role_score(log.role)
             vector[1] = VectorLibrary.hash_string(log.host.id)
             vector[2] = VectorLibrary.hash_string(log.host.os)
             vector[3] = VectorLibrary.normalize_ip(log.host.ip)
             vector[4] = VectorLibrary.hash_string(log.host.mac)
-            vector[5] = 0.5
+            vector[5] = 0.5 # Default Maturity
 
-            # --- 06-07 Time ---
-            t_cyclic = VectorLibrary.encode_time_cyclic(log.timestamp_ref)
-            vector[6] = t_cyclic[0]
-            vector[7] = t_cyclic[1]
+            # [06-07] Time
+            t_vec = VectorLibrary.encode_time_cyclic(log.timestamp_ref)
+            vector[6] = t_vec[0]
+            vector[7] = t_vec[1]
 
-            # --- 08-10 Status ---
+            # [08-10] Status
             if log.status:
                 vector[8] = VectorLibrary.normalize_size(log.status.get("cpu", "0"))
                 vector[9] = VectorLibrary.normalize_size(log.status.get("ram", "0"))
                 vector[10] = VectorLibrary.normalize_size(log.status.get("disk", "0"))
 
-            # --- 11-15 Event Meta ---
-            ev = log.event
-            vector[11] = VectorLibrary.hash_string(ev.type)
+            e = log.event
             
-            # Extract common optional fields safely
-            user = getattr(ev, 'user', None) or getattr(ev, 'reg_user', None)
-            vector[12] = VectorLibrary.hash_string(user)
+            # [11-15] Meta
+            vector[11] = VectorLibrary.hash_string(e.type)
             
-            action = getattr(ev, 'action', None) or getattr(ev, 'op_type', None)
-            vector[13] = VectorLibrary.hash_string(action)
-            
-            vector[14] = 0.0
-            
-            # Direction Logic
-            src_ip = getattr(ev, 'src_ip', None)
-            is_ext = 1.0 if src_ip and not src_ip.startswith("192.168") else 0.0
-            vector[15] = is_ext
+            # Slot 12: Actor Identity (Who did it?)
+            actor = getattr(e, 'user', None) or getattr(e, 'subject_user', None) or getattr(e, 'reg_user', None) or getattr(e, 'creator', None) or getattr(e, 'account', None)
+            vector[12] = VectorLibrary.hash_string(actor)
 
-            # --- 16-20 Process/File ---
-            process = getattr(ev, 'process', None)
-            if process:
-                vector[16] = VectorLibrary.get_top_k_score(process)
-                vector[17] = VectorLibrary.calculate_entropy(getattr(ev, 'path', None))
-                vector[18] = VectorLibrary.hash_string(getattr(ev, 'parent', None))
-                vector[19] = VectorLibrary.calculate_entropy(getattr(ev, 'cmdline', None))
-            
-            size = getattr(ev, 'size', None) or getattr(ev, 'sent', None)
-            if size:
-                vector[20] = VectorLibrary.normalize_size(size)
+            # Slot 13: Action
+            act = getattr(e, 'action', None) or getattr(e, 'op_type', None) or getattr(e, 'result', None) or getattr(e, 'start_type', None)
+            vector[13] = VectorLibrary.hash_string(act)
 
-            # --- 21-25 Network ---
-            # Handle aliasing
-            protocol = getattr(ev, 'protocol', None) or getattr(ev, 'proto', None)
-            dst_ip = getattr(ev, 'dst_ip', None)
-            
-            if src_ip or dst_ip or protocol or getattr(ev, 'src_mac', None):
-                vector[21] = VectorLibrary.hash_string(protocol)
-                vector[22] = VectorLibrary.normalize_ip(src_ip)
-                vector[23] = VectorLibrary.normalize_ip(dst_ip)
-                vector[24] = VectorLibrary.normalize_port(getattr(ev, 'src_port', None))
-                vector[25] = VectorLibrary.normalize_port(getattr(ev, 'dst_port', None))
+            # Slot 14: Auth/Rarity
+            auth = getattr(e, 'logon_type', None) or getattr(e, 'auth_package', None) or getattr(e, 'signed', None)
+            vector[14] = VectorLibrary.hash_string(auth)
 
-            # --- 26-31 Special ---
-            vector[26] = VectorLibrary.hash_string(getattr(ev, 'reg_path', None))
-            vector[27] = VectorLibrary.hash_string(getattr(ev, 'reg_val', None))
+            # Slot 15: Direction (Inferred later or from Action)
             
-            name = getattr(ev, 'name', None) or getattr(ev, 'q_name', None)
-            vector[28] = VectorLibrary.hash_string(name)
-            
-            vector[29] = VectorLibrary.hash_string(getattr(ev, 'q_name', None))
-            vector[30] = VectorLibrary.normalize_size(getattr(ev, 'sent', None))
-            vector[31] = VectorLibrary.normalize_size(getattr(ev, 'recv', None))
+            # [16-19] Actor Context
+            # Slot 16: Actor Process
+            proc = getattr(e, 'process', None)
+            vector[16] = VectorLibrary.get_top_k_score(proc)
+
+            # Slot 17: Actor Path
+            path = getattr(e, 'path', None) or getattr(e, 'image_path', None) or getattr(e, 'pipe_name', None)
+            vector[17] = VectorLibrary.calculate_entropy(path)
+
+            # Slot 18: Parent/Handle
+            parent = getattr(e, 'parent', None) or getattr(e, 'handle_id', None)
+            vector[18] = VectorLibrary.hash_string(parent)
+
+            # Slot 19: Payload/Cmd
+            cmd = getattr(e, 'cmdline', None) or getattr(e, 'query', None) or getattr(e, 'message', None)
+            vector[19] = VectorLibrary.calculate_entropy(cmd)
+
+            # [20] Target Identity
+            target = getattr(e, 'target_user', None) or getattr(e, 'member_user', None)
+            vector[20] = VectorLibrary.hash_string(target)
+
+            # [21-25] Network
+            vector[21] = VectorLibrary.hash_string(getattr(e, 'protocol', None) or getattr(e, 'proto', None))
+            vector[22] = VectorLibrary.hash_string(getattr(e, 'src_ip', None) or getattr(e, 'source_network_address', None))
+            vector[23] = VectorLibrary.hash_string(getattr(e, 'dst_ip', None))
+            vector[24] = float(getattr(e, 'src_port', 0) or 0)
+            vector[25] = float(getattr(e, 'dst_port', 0) or 0)
+
+            # [26-31] Resource
+            # Slot 26: Resource ID
+            res_id = getattr(e, 'reg_path', None) or getattr(e, 'task_name', None) or getattr(e, 'group_name', None) 
+            vector[26] = VectorLibrary.hash_string(res_id)
+
+            # Slot 27: Resource Detail
+            res_det = getattr(e, 'reg_val', None) or getattr(e, 'q_name', None)
+            vector[27] = VectorLibrary.hash_string(res_det)
+
+            # Slot 28: Target Service
+            vector[28] = VectorLibrary.hash_string(getattr(e, 'name', None) or getattr(e, 'service_name', None))
+
+            # Size/Data
+            vector[29] = VectorLibrary.normalize_size(getattr(e, 'size', None) or getattr(e, 'file_size', None))
+            vector[30] = VectorLibrary.normalize_size(getattr(e, 'sent', None))
+            vector[31] = VectorLibrary.normalize_size(getattr(e, 'recv', None))
 
             return vector.tolist()
 
         except ValidationError as e:
-            # print(f"Validation Error: {e}") 
+            print(f"Validation Error: {e}") 
             # Silent fail for production or log?
             return None
         except Exception as e:
@@ -370,7 +481,7 @@ class RequestHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(str(e).encode('utf-8'))
 
-def run(server_class=HTTPServer, handler_class=RequestHandler):
+def run(server_class=ThreadingHTTPServer, handler_class=RequestHandler):
     try:
         with open("engine/config.jsonc", 'r') as f:
             lines = [l for l in f.readlines() if not l.strip().startswith("//")]
@@ -381,7 +492,7 @@ def run(server_class=HTTPServer, handler_class=RequestHandler):
 
     server_address = ('', port)
     httpd = server_class(server_address, handler_class)
-    print(f"V2 Log Normalizer (32-Dim) running on port {port}")
+    print(f"Kinetix-Zero Engine (32-Dim) [Optimized] running on port {port}")
     httpd.serve_forever()
 
 if __name__ == "__main__":

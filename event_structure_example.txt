@@ -129,6 +129,73 @@
         - q_port:
         - q_proto:*
 
+    - session:
+        - timestamp: hh:mm:ss.ms
+        - session_id:*
+        - user:*
+        - status: (Start/End)*
+        - logon_type:
+        - source_network_address:
+
+    - console_login:
+        - timestamp: hh:mm:ss.ms
+        - user:*
+        - action: (Login, Logout, Unlock)*
+        - method: (Password, Biometric, Pin)
+        - terminal: (Console, TTY)*
+        - result: (Success, Failure)*
+
+    - auth_login:
+        - timestamp: hh:mm:ss.ms
+        - user:*
+        - domain:
+        - src_ip:
+        - logon_type:
+        - auth_package:
+        - result: (Success/Failure)*
+        - failure_reason:
+
+    - scheduled_task:
+        - timestamp: hh:mm:ss.ms
+        - task_name:*
+        - action:*
+        - path:
+        - user:
+
+    - account_management:
+        - timestamp: hh:mm:ss.ms
+        - action: (Created, Deleted, Locked, Changed)*
+        - target_user:*
+        - subject_user:*
+        - domain:
+
+    - group_management:
+        - timestamp: hh:mm:ss.ms
+        - action: (MemberAdded, MemberRemoved)*
+        - group_name:*
+        - member_user:*
+        - subject_user:
+
+    - module_load:
+        - timestamp: hh:mm:ss.ms
+        - process:*
+        - image_path:*
+        - sha256:
+        - signed: (True/False)
+
+    - pipe_event:
+        - timestamp: hh:mm:ss.ms
+        - pipe_name:*
+        - op_type: (Create, Connect)*
+        - process:
+        - handle_id:
+
+    - wmi_event:
+        - timestamp: hh:mm:ss.ms
+        - query:*
+        - user:
+        - namespace:
+
 #########################
 #  ROUTER/SWITCH EVENTS #
 #########################

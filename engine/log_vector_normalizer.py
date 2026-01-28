@@ -262,14 +262,33 @@ class VectorLibrary:
         "powershell.exe": 0.9, "cmd.exe": 0.95, "nmap": 0.99
     }
 
+    ROLE_MAPPING = None
+
     @staticmethod
     def get_role_score(role):
         if not role: return 0.0
-        role = role.upper()
-        if "WORKSTATION" in role: return 0.1
-        if "SERVER" in role: return 0.5
-        if "DC" in role or "AD" in role: return 0.9
-        if "FW" in role or "FIREWALL" in role: return 0.8
+        
+        # Lazy Load Mapping
+        if VectorLibrary.ROLE_MAPPING is None:
+            try:
+                # Assuming engine/role_mapping.json is relative to this file
+                base_path = os.path.dirname(os.path.abspath(__file__))
+                map_path = os.path.join(base_path, "role_mapping.json")
+                with open(map_path, 'r') as f:
+                    VectorLibrary.ROLE_MAPPING = json.load(f)
+            except Exception as e:
+                print(f"[Warning] Failed to load role_mapping.json: {e}")
+                VectorLibrary.ROLE_MAPPING = {}
+
+        role_upper = role.upper()
+        
+        # 1. Check Configured Mappings (Keyword Search)
+        # e.g. if "WORKSTATION" is in "MY-WORKSTATION-01" -> 0.1
+        for key, val in VectorLibrary.ROLE_MAPPING.items():
+            if key in role_upper:
+                return float(val)
+
+        # 2. Fallback to Dynamic Hashing (Auto-Learning for Unknown Roles)
         return VectorLibrary.hash_string(role)
 
     @staticmethod

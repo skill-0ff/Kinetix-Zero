@@ -1,0 +1,14 @@
+{
+    "WORKSTATION": 0.1,
+    "LAPTOP": 0.1,
+    "DESKTOP": 0.1,
+    "SERVER": 0.5,
+    "FILE_SERVER": 0.5,
+    "DB_SERVER": 0.5,
+    "DC": 0.9,
+    "DOMAIN_CONTROLLER": 0.9,
+    "FW": 0.8,
+    "FIREWALL": 0.8,
+    "ROUTER": 0.8,
+    "SWITCH": 0.8
+}

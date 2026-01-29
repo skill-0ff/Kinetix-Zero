@@ -7,14 +7,8 @@ import time
 import numpy as np
 from datetime import datetime
 import zlib
-from http.server import HTTPServer, BaseHTTPRequestHandler
-from socketserver import ThreadingMixIn
-from threading import Lock
-
-class ThreadingHTTPServer(ThreadingMixIn, HTTPServer):
-    daemon_threads = True
 from typing import Optional, Dict, Any, List, Union, Literal
-from pydantic import BaseModel, Field, ValidationError, Extra
+from pydantic import BaseModel, Field, ValidationError, Extra, ConfigDict
 
 # ==========================================
 # 1. Pydantic Models (Strict Input Validation)
@@ -271,7 +265,7 @@ class VectorLibrary:
         # Lazy Load Mapping
         if VectorLibrary.ROLE_MAPPING is None:
             try:
-                # Assuming engine/role_mapping.json is relative to this file
+                # Assuming role_mapping.json is in the same directory (engine/core)
                 base_path = os.path.dirname(os.path.abspath(__file__))
                 map_path = os.path.join(base_path, "role_mapping.json")
                 with open(map_path, 'r') as f:
@@ -468,51 +462,5 @@ class LogNormalizer:
             print(f"Normalization Error: {e}")
             return None
 
-# ==========================================
-# 4. HTTP Service
-# ==========================================
-
-class RequestHandler(BaseHTTPRequestHandler):
-    normalizer = LogNormalizer()
-
-    def do_POST(self):
-        content_length = int(self.headers['Content-Length'])
-        post_data = self.rfile.read(content_length)
-        
-        try:
-            data = json.loads(post_data)
-            if isinstance(data, list):
-                vectors = [self.normalizer.input_to_vector(item) for item in data]
-                vectors = [v for v in vectors if v is not None]
-            else:
-                v = self.normalizer.input_to_vector(data)
-                vectors = [v] if v is not None else []
-            
-            response = {"vectors": vectors, "count": len(vectors)}
-            
-            self.send_response(200)
-            self.send_header('Content-type', 'application/json')
-            self.end_headers()
-            self.wfile.write(json.dumps(response).encode('utf-8'))
-            
-        except Exception as e:
-            self.send_response(500)
-            self.end_headers()
-            self.wfile.write(str(e).encode('utf-8'))
-
-def run(server_class=ThreadingHTTPServer, handler_class=RequestHandler):
-    try:
-        with open("engine/config.jsonc", 'r') as f:
-            lines = [l for l in f.readlines() if not l.strip().startswith("//")]
-            config = json.loads("".join(lines))
-            port = config.get("listening_port", 3000)
-    except:
-        port = 3000
-
-    server_address = ('', port)
-    httpd = server_class(server_address, handler_class)
-    print(f"Kinetix-Zero Engine (32-Dim) [Optimized] running on port {port}")
-    httpd.serve_forever()
-
-if __name__ == "__main__":
-    run()
+# HTTP Server Removed - Use engine/orchestrator.py
+# This file is now a pure library.

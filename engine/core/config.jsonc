@@ -1,0 +1,10 @@
+{
+    // Brain Processor Configuration
+    "port": 5001,
+    "protocol": "udp",
+    "time_window": 5.0,
+    "max_sequence": 100,
+    "ddos_threshold": 50,
+    "ai_context_epochs": 5,
+    "ai_anomaly_threshold": 0.5
+}

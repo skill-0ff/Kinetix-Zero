@@ -259,20 +259,33 @@ class VectorLibrary:
     ROLE_MAPPING = None
 
     @staticmethod
+    def reload_role_mapping(mapping=None):
+        if mapping:
+            VectorLibrary.ROLE_MAPPING = mapping
+            return
+
+        try:
+            # Look in current directory (core/) first
+            base_path = os.path.dirname(os.path.abspath(__file__))
+            map_path = os.path.join(base_path, "role_mapping.json")
+            
+            if not os.path.exists(map_path):
+                 # Fallback to parent (engine/)
+                 map_path = os.path.join(os.path.dirname(base_path), "role_mapping.json")
+
+            with open(map_path, 'r') as f:
+                VectorLibrary.ROLE_MAPPING = json.load(f)
+                print(f"[Info] Role Mapping loaded: {len(VectorLibrary.ROLE_MAPPING)} roles")
+        except Exception as e:
+            print(f"[Warning] Failed to load role_mapping.json: {e}")
+            VectorLibrary.ROLE_MAPPING = {}
+
+    @staticmethod
     def get_role_score(role):
         if not role: return 0.0
         
-        # Lazy Load Mapping
         if VectorLibrary.ROLE_MAPPING is None:
-            try:
-                # Assuming role_mapping.json is in the same directory (engine/core)
-                base_path = os.path.dirname(os.path.abspath(__file__))
-                map_path = os.path.join(base_path, "role_mapping.json")
-                with open(map_path, 'r') as f:
-                    VectorLibrary.ROLE_MAPPING = json.load(f)
-            except Exception as e:
-                print(f"[Warning] Failed to load role_mapping.json: {e}")
-                VectorLibrary.ROLE_MAPPING = {}
+            VectorLibrary.reload_role_mapping()
 
         role_upper = role.upper()
         
@@ -351,9 +364,21 @@ class LogNormalizer:
 
     def _load_config(self, path):
         if not os.path.exists(path): return {}
-        with open(path, 'r') as f:
-            lines = [l for l in f.readlines() if not l.strip().startswith("//")]
-            return json.loads("".join(lines))
+        try:
+            with open(path, 'r') as f:
+                # Robust comment stripping
+                lines = []
+                for line in f:
+                    # Strip // comments
+                    if "//" in line:
+                        line = line.split("//")[0]
+                    line = line.strip()
+                    if line:
+                        lines.append(line)
+                return json.loads("".join(lines))
+        except Exception as e:
+            print(f"[Warning] Config load error: {e}")
+            return {}
 
     def input_to_vector(self, raw_json):
         try:

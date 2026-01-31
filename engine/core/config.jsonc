@@ -16,6 +16,18 @@
     "ai_context_epochs": 5,
     // Sensitivity: 0.0 (Relaxed) to 1.0 (Paranoid). Higher = More Alerts.
     "ai_anomaly_threshold": 0.9,
+    // --- Database Storage ---
+    // NOTE: Environment Variables (MONGO_URI, QDRANT_URL, QDRANT_API_KEY) take priority if set.
+    // Qdrant: Use 'qdrant_path' (Local) OR 'qdrant_url' (Remote/Cluster).
+    "qdrant_path": "DB/vector", // (Priority 1) Local Path (e.g. "DB/vector")
+    "qdrant_url": null, // (Priority 2) Remote URL (e.g. "http://localhost:6333" or "http://node1,node2")
+    // MongoDB: Connection String (Local OR Remote)
+    "mongo_uri": "mongodb://localhost:27017/",
+    // --- Memory Logic (Vector DB) ---
+    // Deduplication (Peace Time): If distance < X, considered duplicate.
+    "memory_dedup_dist": 0.05,
+    // Query Match (Alert Time): If distance < X, considered a match (FP/Threat).
+    "memory_query_dist": 0.10,
     // --- Persistence (Saving State) ---
     // "auto" (Load Newest) or "path/to/specific.pth".
     "ai_checkpoint_file": "auto",

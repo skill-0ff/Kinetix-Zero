@@ -10,6 +10,17 @@ import time
 import signal
 import glob
 import re
+import torch.nn as nn
+import uuid
+from torch.cuda.amp import GradScaler
+from qdrant_client import QdrantClient
+from qdrant_client.models import Distance, VectorParams, PointStruct, SearchRequest
+import pymongo
+from pymongo import MongoClient, ASCENDING, DESCENDING
+from dotenv import load_dotenv
+
+# Load Environment Variables from .env (if present)
+load_dotenv()
 
 # Relative import fix for direct usage vs module usage
 try:
@@ -37,6 +48,10 @@ class UnsupervisedAI(threading.Thread):
             
         self.last_save_time = time.time()
         self.last_config_check = time.time()
+        
+        # Uptime Tracking
+        self.start_time = time.time()
+
         self.config_mtime = 0
         try:
             self.config_mtime = os.path.getmtime(self.config_path)
@@ -83,7 +98,10 @@ class UnsupervisedAI(threading.Thread):
         self.log_buffer = []
         self.batch_size = 64
         self.last_batch_time = time.time()
-        
+
+        # Log Store & Memory (Init)
+        self._init_databases()
+
         print(f"[AI] Async Worker Initialized on {self.device} (AMP Enabled). Context={self.context_epochs}")
         
         # Initial Load
@@ -107,15 +125,138 @@ class UnsupervisedAI(threading.Thread):
             if os.path.exists(self.config_path):
                 with open(self.config_path, 'r') as f:
                     lines = [l for l in f.readlines() if not l.strip().startswith("//")]
-                    self.config = json.loads("".join(lines))
+                    new_config = json.loads("".join(lines))
+                    
+                    old_config = self.config
+                    self.config = new_config
                     
                     # Runtime FIFO update
                     new_ctx = self.config.get("ai_context_epochs", 5)
                     if hasattr(self, 'context_epochs') and new_ctx != self.context_epochs:
                         print(f"[AI] Resizing FIFO: {self.context_epochs} -> {new_ctx}")
                         self.context_epochs = new_ctx
-        except:
-            self.config = {}
+                        
+                    # Runtime DB Hot-Swap Check
+                    if hasattr(self, 'memory'):
+                        db_keys = ["qdrant_path", "qdrant_url", "mongo_uri"]
+                        changed = any(old_config.get(k) != new_config.get(k) for k in db_keys)
+                        if changed:
+                            print("[AI] Database Config Changed. Reconnecting...")
+                            self._init_databases()
+                            
+        except Exception as e:
+             if not self.config: self.config = {}
+             # print(f"[AI] Config Load Error: {e}")
+
+    def _init_databases(self):
+        """Initializes or Re-initializes Memory and Log Stores"""
+        
+        # 1. Qdrant (Memory)
+        try:
+            # Check Priority: Env Var > Config
+            q_url = os.getenv("QDRANT_URL") or self.config.get("qdrant_url")
+            q_key = os.getenv("QDRANT_API_KEY") 
+            q_path = self.config.get("qdrant_path", "DB/vector")
+            
+            if q_url:
+                print(f"[AI] Connecting to Remote Qdrant: {q_url}")
+                # Security Check
+                if not q_url.startswith("https://") and "localhost" not in q_url and "127.0.0.1" not in q_url:
+                    print(f"  [WARNING] Remote Qdrant using insecure HTTP. Recommend HTTPS for sensitive data.")
+                
+                self.memory = QdrantClient(url=q_url, api_key=q_key)
+            else:
+                print(f"[AI] Connecting to Local Qdrant: {q_path}")
+                self.memory = QdrantClient(path=q_path)
+
+            self.mem_collection = "brain_memory"
+            
+            # Ensure Collection Exists (Idempotent usually, but recreate wipes data!)
+            # FIX: Don't recreate if exists, unless forced. QdrantClient.recreate_collection DELETES existing.
+            # We should probably check first or use Create if not exists.
+            # Local Qdrant (path) is persistent on disk. Recreate wipes it?
+            # client.recreate_collection() -> "Operations on collections: create, delete, ... This method DELETES collection if exists."
+            # WAIT. We have been wiping memory on every restart?!
+            # FIX: Use `collection_exists` check.
+            
+            collections = self.memory.get_collections()
+            exists = any(c.name == self.mem_collection for c in collections.collections)
+            
+            if not exists:
+                self.memory.create_collection(
+                    collection_name=self.mem_collection,
+                    vectors_config=VectorParams(size=34, distance=Distance.COSINE)
+                )
+                print(f"[AI] Created New Memory Collection: {self.mem_collection}")
+            else:
+                print(f"[AI] Attached to Existing Memory Collection: {self.mem_collection}")
+
+        except Exception as e:
+            print(f"[AI] Memory Init Failed: {e}")
+            self.memory = None
+
+        # 2. Thresholds (Reload from config)
+        self.dedup_dist = self.config.get("memory_dedup_dist", 0.05)
+        self.query_dist = self.config.get("memory_query_dist", 0.10)
+
+        # 3. MongoDB (Log Store)
+        try:
+            # Close old if exists
+            if hasattr(self, 'mongo_client') and self.mongo_client:
+                self.mongo_client.close()
+                
+            self.mongo_uri = os.getenv("MONGO_URI") or self.config.get("mongo_uri", "mongodb://localhost:27017/")
+            
+            # Security: Auto-Enforce TLS for Remote (non-local) if not in URI
+            is_remote = "localhost" not in self.mongo_uri and "127.0.0.1" not in self.mongo_uri
+            mongo_kwargs = {"serverSelectionTimeoutMS": 2000}
+            
+            if is_remote and "ssl=true" not in self.mongo_uri and "tls=true" not in self.mongo_uri:
+                 # Implicitly enable TLS for remote unless explicitly disabled (not supported here to force safety)
+                 # But standard pymongo[srv] does this for +srv URIs.
+                 # If plain mongodb://remote, we force it.
+                 print("[AI] Enforcing TLS for Remote Mongo Connection")
+                 mongo_kwargs["tls"] = True
+                 mongo_kwargs["tlsAllowInvalidCertificates"] = False # Strict
+            
+            self.mongo_client = MongoClient(self.mongo_uri, **mongo_kwargs)
+            self.mongo_db = self.mongo_client["kinetix_brain"]
+            self.mongo_events = self.mongo_db["events"]
+            self.mongo_metrics = self.mongo_db["metrics"]
+            
+            # Check Connection
+            self.mongo_client.server_info()
+            print(f"[AI] MongoDB Connected: {self.mongo_uri}")
+            
+            # Ensure Indexes (Background)
+            self.mongo_events.create_index([("verdict", ASCENDING)], background=True)
+            self.mongo_events.create_index([("host_id", ASCENDING)], background=True)
+            self.mongo_events.create_index([("event_type", ASCENDING)], background=True)
+            self.mongo_events.create_index([("timestamp", DESCENDING)], background=True)
+            self.mongo_events.create_index([("uuid", ASCENDING)], unique=True, background=True) 
+            
+            # Metrics Index (auto-expire not implemented yet per user req, but helpful)
+            self.mongo_metrics.create_index([("timestamp", DESCENDING)], background=True) 
+            
+        except Exception as e:
+            print(f"[AI] MongoDB Init Failed: {e}")
+            self.mongo_client = None
+            self.mongo_events = None
+            self.mongo_metrics = None
+
+    def _init_metrics(self):
+        """Reset the per-second accumulator"""
+        self.metrics_accum = {
+            "processed_count": 0,
+            "processed_bytes": 0,
+            "verdict_safe": 0,
+            "verdict_threat": 0, 
+            "verdict_new": 0,
+            "verdict_fp": 0,
+            "mem_saved": 0,
+            "mem_dropped": 0,
+        }
+        self.last_metric_time = time.time()
 
     def _load_initial_checkpoint(self):
         target = self.config.get("ai_checkpoint_file", "auto")
@@ -242,9 +383,16 @@ class UnsupervisedAI(threading.Thread):
                     
                 # Runtime Hot-Reload
                 # Check every 1.0 seconds if config changed (for anomaly_threshold)
+                # Runtime Hot-Reload
+                # Check every 1.0 seconds if config changed
                 if now - self.last_config_check > 1.0:
                     self.last_config_check = now
                     self._check_config_reload()
+                    
+                # Metrics Flush (Every 1s)
+                if now - self.last_metric_time >= 1.0:
+                    self._flush_metrics(now)
+
 
             except Exception as e:
                 print(f"[AI Worker Error] {e}")
@@ -258,6 +406,68 @@ class UnsupervisedAI(threading.Thread):
                 self.load_config()
         except:
             pass
+            
+    def _flush_metrics(self, timestamp):
+        """Flushes 1s of accumulated stats to MongoDB"""
+        if not hasattr(self, "metrics_accum"): return
+        if not self.mongo_metrics: return # Should we reset anyway?
+        
+        # Calculate rates
+        # If interval > 1.0s, counts are total over interval.
+        # eps = processed_count / interval
+        
+        # Snapshot
+        data = self.metrics_accum.copy()
+        
+        # Build Document
+        doc = {
+            "timestamp": timestamp,
+            "datetime": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(timestamp)),
+            "uptime_seconds": int(timestamp - self.start_time),
+            
+            # Traffic
+            "eps": data["processed_count"], # Assuming ~1s flush
+            "throughput_bytes": data["processed_bytes"],
+            "queue_size": self.input_queue.qsize(),
+            "batch_queue": len(self.batch_buffer),
+            
+            # Decisions
+            "verdict_safe": data["verdict_safe"],
+            "verdict_threat": data["verdict_threat"],
+            "verdict_new": data["verdict_new"],
+            "verdict_fp": data["verdict_fp"],
+            
+            # Memory Details
+            "memory_saved": data["mem_saved"],
+            "memory_dropped": data["mem_dropped"],
+            
+            # Config Snapshot
+            "config": {
+                "threshold": self.config.get("ai_anomaly_threshold", 0.5),
+                "dedup": self.dedup_dist,
+                "query": self.query_dist,
+            }
+        }
+        
+        # System Stats (psutil removed, so only AI internal)
+        # However, we can track GPU utilization if available
+        if torch.cuda.is_available():
+            try:
+               doc["gpu_mem_reserved"] = torch.cuda.memory_reserved(self.device)
+               doc["gpu_mem_allocated"] = torch.cuda.memory_allocated(self.device)
+            except: pass
+            
+        # Write to Mongo
+        try:
+            self.mongo_metrics.insert_one(doc)
+        except Exception as e:
+            print(f"[AI] Metric Write Failed: {e}")
+            
+        # Reset Accumulator
+        for k in self.metrics_accum:
+            self.metrics_accum[k] = 0
+            
+        self.last_metric_time = timestamp
 
     def process_batch(self, new_window, new_logs=None):
         # Optimization: Convert to tensor ONCE here
@@ -319,41 +529,286 @@ class UnsupervisedAI(threading.Thread):
             
         # Alerting Check
         if enforce_mask.any():
-            # User Definition: 1.0 = Max Sensitivity (Paranoid), 0.0 = Relaxed
-            # Logic: We invert it to get the Loss Threshold
-            # Config 0.9 (Sensitive) -> Threshold 0.1 (Low Bar)
-            sensitivity = self.config.get("ai_anomaly_threshold", 0.5)
-            # Clamp to 0.01-0.99 to avoid div by zero or infinite alerts
-            sensitivity = max(0.0, min(1.0, sensitivity))
+        # Logic: We invert it to get the Loss Threshold
+        # Config 0.9 (Sensitive) -> Threshold 0.1 (Low Bar)
+        sensitivity = self.config.get("ai_anomaly_threshold", 0.5)
+        # Clamp to 0.01-0.99 to avoid div by zero or infinite alerts
+        sensitivity = max(0.01, min(0.99, sensitivity))
+        
+        # Formula: Higher Sensitivity = Lower Threshold
+        threshold = 1.0 - sensitivity
+        
+        enforced_losses = raw_loss_map * enforce_mask.float()
+        
+        # --- MEMORY LOGIC START ---
+        
+        # Helper for Qdrant Operations
+        def _check_memory(vector, check_type, max_dist):
+            if not self.memory: return False, 1.0
+            hits = self.memory.search(
+                collection_name=self.mem_collection,
+                query_vector=vector,
+                query_filter=None, # In future, could filter by type
+                limit=1
+            )
+            if not hits: return False, 1.0
             
-            # Formula: Higher Sensitivity = Lower Threshold
-            threshold = 1.0 - sensitivity
+            top = hits[0]
+            # Verify Type match
+            # Note: We need to filter by 'type' in payload if we want strict type checking
+            # But the plan says: Search nearest, THEN differentiate action based on Type.
+            # So let's return the HIT details.
+            return top.payload.get("type") == check_type, top.score  # score for cosine is usually similarity (1.0=same), but distance logic varies.
+            # Qdrant with Distance.COSINE: Score is Cosine Similarity (1.0 = identical, 0.0 = orthogonal, -1.0 = opposite)
+            # Distance = 1.0 - Similarity.
             
-            enforced_losses = raw_loss_map * enforce_mask.float()
+            # Wait, user specified "distance".
+            # Qdrant Default Cosine Search returns "Score" (Similarity).
+            # To get Distance, we do 1 - score.
+        
+        def _search_nearest(vector):
+            if not self.memory: return None, 1.0
+            hits = self.memory.search(
+                collection_name=self.mem_collection,
+                query_vector=vector,
+                limit=1
+            )
+            if not hits: return None, 1.0
+            sim = hits[0].score # Cosine Similarity
+            dist = 1.0 - sim
+            return hits[0].payload.get("type"), dist
+
+        # Path A: Peace Time (Non-Anomalous)
+        # Iterate over Valid items (Masked IN, but Loss BELOW Threshold)
+        # Actually, simpler: Iterate ALL enforceable items.
+        # If Loss < Threshold -> Path A
+        # If Loss > Threshold -> Path B
+        
+        # Access log batch flat
+        full_logs = []
+        if hasattr(self, "log_batch_queue"):
+            full_logs = [item for sublist in self.log_batch_queue for item in sublist]
+
+        # Optimization: We only check Memory for "Notable" events or Random sampling to build "Normalcy"?
+        # User said "path A: Auto-Learn". This implies learning EVERYTHING that is "Safe".
+        # This loop could be heavy. Limiting to Enforce Mask.
+        
+        # It is faster to process indices on CPU
+        cpu_losses = enforced_losses.detach().cpu().numpy()
+        cpu_threshold = threshold
+        
+        BATCH_SIZE = len(new_window) # Not strictly batch_size buffer, but the window size (accumulated)
+        # Wait, process_batch receives `new_window`.
+        # `full_seq` is the Context + New Window.
+        # We only want to alert/learn on the NEWEST window (the one just added).
+        # We shouldn't re-alert on old context.
+        # `process_batch` calculates loss for `full_seq`?
+        
+        # Looking at Line 280: `recon_x, mu, logvar = self.model(full_seq)`
+        # `train_loss` is scalar. `raw_loss_map` is [Batch, Seq].
+        # We only care about the last elements?
+        # Actually `inference.py` logic so far seemed to check EVERYTHING in the window_queue.
+        # This might be redundant (checking same packet 5 times).
+        # FIX: Only check the LAST slice of the sequence (Size of new_window).
+        
+        # But `enforce_mask` handles "Maturity".
+        # If we stick to existing logic for now, we iterate all `enforced_losses`.
+        
+        # To make this right for Memory:
+        # We should iterate through the indices of `enforced_losses`.
+        
+        # --- MEMORY LOGIC START (BATCH OPTIMIZED) ---
+        
+        # 1. Identify Valid Indices (Those with Maturity >= 1.0)
+        valid_indices = torch.nonzero(enforce_mask).cpu().numpy().flatten()
+        # Note: nonzero returns [N, 2] (Batch, Seq) or [N] if 1D. 
+        # But enforce_mask is [1, Seq]. So indices are [[0, 0], [0, 1]...].
+        # We need the 2nd dim.
+        if len(valid_indices) == 0: return
+
+        # Access log batch flat
+        full_logs = []
+        if hasattr(self, "log_batch_queue"):
+             full_logs = [item for sublist in self.log_batch_queue for item in sublist]
+             
+        # 2. Extract Data for Valid Items
+        batch_eval = [] # List of (index, vector, log, score, is_anomaly)
+        
+        # Pre-calculation
+        cpu_losses = enforced_losses[0].detach().cpu().numpy()
+        cpu_threshold = threshold
+        
+        # Metrics: Count Batch
+        if hasattr(self, "metrics_accum"):
+            self.metrics_accum["processed_count"] += len(full_logs) # Roughly
+            # Actually we only process 'new_window' items effectively? 
+            # No, 'valid_indices' are the enforceable ones.
+            # Let's count 'processed' as Input EPS.
+            # self.metrics_accum["processed_count"] += len(new_window) # Passed in arg
+            pass
+
+        # Lists for Batch Query
+        query_vectors = []
+        query_indices = [] # Map query_idx -> batch_eval_idx
+        
+        for idx in valid_indices:
+             # Depending on shape of nonzero:
+             # If enforce_mask is [1, Seq], valid_indices is [0, 1, 0, 5...] 
+             # Actually nonzero returns [ [0,1], [0,5] ].
+             pass
+             
+        # Let's do it safely:
+        valid_coords = torch.nonzero(enforce_mask).cpu().numpy() # [[0, 1], [0, 5]]
+        
+        for coord in valid_coords:
+            idx = coord[1] # Seq index
+            if idx >= len(full_logs): continue
             
-            # Fast Check: Max loss > threshold?
-            if enforced_losses.max() > threshold:
-                bad_indices = torch.nonzero(enforced_losses > threshold)
-                count = len(bad_indices)
-                print(f"[AI ALERT] {count} Anomalies Detected! (Sensitivity={sensitivity:.2f})")
+            loss_val = cpu_losses[idx]
+            vec = full_seq[0, idx, :].detach().cpu().tolist()
+            log = full_logs[idx]
+            is_anom = (loss_val > cpu_threshold)
+            
+            # Store context
+            batch_eval.append({
+                "vector": vec,
+                "log": log,
+                "score": loss_val,
+                "is_anomaly": is_anom,
+                "id": idx
+            })
+            
+            # Prepare Query
+            query_vectors.append(vec)
+
+        # 3. Batch Query (One Network Call)
+        if not self.memory or not query_vectors:
+            return # Cannot process without memory
+            
+        try:
+            # Send all (Safe + Anomalies) in one batch
+            # We filter/decide later based on is_anomaly
+            search_results = self.memory.search_batch(
+                collection_name=self.mem_collection,
+                requests=[SearchRequest(vector=v, limit=1) for v in query_vectors]
+            )
+        except Exception as e:
+            print(f"[AI] Memory Batch Error: {e}")
+            return
+
+        # 4. Process Results
+        points_to_upsert = []
+        mongo_docs = []
+        
+        for i, result in enumerate(search_results):
+            ctx = batch_eval[i]
+            top_match = result[0] if result else None
+            
+            mem_type = top_match.payload.get("type") if top_match else None
+            mem_dist = (1.0 - top_match.score) if top_match else 1.0
+            
+            # Shared ID for Mongo + Qdrant
+            event_uuid = uuid.uuid4().hex
+            verdict = "Safe" # Default
+            
+            # PATH B: ANOMALY
+            if ctx["is_anomaly"]:
+                verdict = "NEW ANOMALY"
                 
-                # REPORTING
-                if hasattr(self, "log_batch_queue"):
-                    # Flatten Log Batches to match full_seq
-                    full_logs = [item for sublist in self.log_batch_queue for item in sublist]
+                # Scenario 1: False Positive
+                if mem_type == "Safe" and mem_dist < self.query_dist:
+                    verdict = "FALSE POSITIVE"
                     
-                    # Print details for first few anomalies to avoid spam
-                    for idx_tensor in bad_indices[:5]:
-                        idx = idx_tensor.item()
-                        if idx < len(full_logs):
-                            bad_log = full_logs[idx]
-                            score = enforced_losses[idx].item()
-                            
-                            # Extract Time safely (Root -> Event -> Server TS)
-                            evt = bad_log.get("event", {})
-                            ts_val = bad_log.get("timestamp_ref") or evt.get("timestamp") or bad_log.get("_server_ts") or "?"
-                            
-                            # Compact Report Header
-                            print(f"  >> [ANOMALY] Score: {score:.4f} | Time: {ts_val}")
-                            # Full Details
-                            print(json.dumps(bad_log, indent=2))
+                # Scenario 2: Known Threat
+                elif mem_type == "Threat" and mem_dist < self.query_dist:
+                    verdict = "KNOWN THREAT"
+                    
+                # Scenario 3: New
+                else:
+                    # Queue for upsert
+                    points_to_upsert.append(PointStruct(
+                        id=event_uuid, 
+                        vector=ctx["vector"], 
+                        payload={"type": "New", "timestamp": time.time(), "log": ctx["log"]}
+                    ))
+                
+                # REPORT
+                evt = ctx["log"].get("event", {})
+                ts_val = ctx["log"].get("timestamp_ref") or evt.get("timestamp") or ctx["log"].get("_server_ts") or "?"
+                
+                print(f"[AI ALERT] Score: {ctx['score']:.4f}")
+                print(f"  >> [VERDICT] {verdict} (Type: {mem_type or 'None'}, Dist: {mem_dist:.4f})")
+                print(f"  >> [DETAILS] Time: {ts_val}")
+                print(json.dumps(ctx["log"], indent=2))
+
+            # PATH A: SAFE (Auto-Learn)
+            else:
+                 verdict = "Safe"
+                 # Deduplication
+                 # If Safe Neighbor Exists (Low Dist), Skip Qdrant Save
+                 if not (mem_type == "Safe" and mem_dist < self.dedup_dist):
+                     points_to_upsert.append(PointStruct(
+                        id=event_uuid, 
+                        vector=ctx["vector"], 
+                        payload={"type": "Safe", "timestamp": time.time(), "log": ctx["log"]}
+                    ))
+                     if hasattr(self, "metrics_accum"): self.metrics_accum["mem_saved"] += 1
+                 else:
+                     if hasattr(self, "metrics_accum"): self.metrics_accum["mem_dropped"] += 1
+
+            # Update Metric Counters
+            if hasattr(self, "metrics_accum"):
+                if verdict == "Safe": self.metrics_accum["verdict_safe"] += 1
+                elif verdict == "NEW ANOMALY": self.metrics_accum["verdict_new"] += 1
+                elif verdict == "KNOWN THREAT": self.metrics_accum["verdict_threat"] += 1
+                elif verdict == "FALSE POSITIVE": self.metrics_accum["verdict_fp"] += 1
+                
+                # Estimate Bytes
+                try:
+                    self.metrics_accum["processed_bytes"] += len(json.dumps(ctx["log"]))
+                except: pass
+            
+            # --- MONGO STORE (Save Everything) ---
+            if self.mongo_events:
+                # Prepare Relational Doc
+                # Enrich Log
+                enriched_log = ctx["log"].copy()
+                enriched_log["ai_verdict"] = verdict
+                enriched_log["ai_score"] = float(ctx["score"])
+                enriched_log["ai_uuid"] = event_uuid
+                
+                doc = {
+                    "_id": event_uuid,
+                    "uuid": event_uuid,
+                    "timestamp": time.time(),
+                    "verdict": verdict,
+                    "score": float(ctx["score"]),
+                    # Promoted Index Keys
+                    "host_id": ctx["log"].get("host", {}).get("id"),
+                    "group_id": ctx["log"].get("role"), # Assuming role is group-like
+                    "event_type": ctx["log"].get("event", {}).get("type"),
+                    
+                    "full_log": enriched_log
+                }
+                mongo_docs.append(doc)
+
+        # 5. Batch Upsert (One Write Call per DB)
+        if points_to_upsert:
+            try:
+                self.memory.upsert(
+                    collection_name=self.mem_collection,
+                    points=points_to_upsert
+                )
+            except Exception as e:
+                print(f"[AI] Memory Upsert Failed: {e}")
+                
+        if mongo_docs and self.mongo_events:
+            try:
+                self.mongo_events.insert_many(mongo_docs, ordered=False)
+            except Exception as e:
+                print(f"[AI] Mongo Insert Failed: {e}")
+        
+        # End of memory logic replacement
+        return # Skip old logic
+        
+

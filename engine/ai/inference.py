@@ -30,7 +30,8 @@ class UnsupervisedAI(threading.Thread):
         self.daemon = True
         
         # Persistence Settings
-        self.checkpoint_dir = "checkpoints"
+        # Persistence Settings
+        self.checkpoint_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "checkpoints")
         if not os.path.exists(self.checkpoint_dir):
             os.makedirs(self.checkpoint_dir)
             

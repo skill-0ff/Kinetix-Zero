@@ -51,7 +51,9 @@ class UnsupervisedAI(threading.Thread):
         
         # Context Management
         self.context_epochs = self.config.get("ai_context_epochs", 5)
+        self.context_epochs = self.config.get("ai_context_epochs", 5)
         self.window_queue = [] # List of Tensors
+        self.log_queue = [] # List of Raw Log Dicts (Parallel to window_queue)
         
         # AI Components
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -78,6 +80,7 @@ class UnsupervisedAI(threading.Thread):
         
         # Optimization: Batch Buffer
         self.batch_buffer = []
+        self.log_buffer = []
         self.batch_size = 64
         self.last_batch_time = time.time()
         
@@ -197,9 +200,9 @@ class UnsupervisedAI(threading.Thread):
                 except:
                     pass
 
-    def push_batch(self, vectors):
+    def push_batch(self, vectors, logs=None):
         """Non-blocking push from Brain"""
-        self.input_queue.put(vectors)
+        self.input_queue.put((vectors, logs))
 
     def run(self):
         print("[AI] Worker Loop Started.")
@@ -207,8 +210,10 @@ class UnsupervisedAI(threading.Thread):
             try:
                 # Poll frequently to check buffer timeout even if empty
                 try:
-                    vectors = self.input_queue.get(timeout=0.1) 
+                    vectors, logs = self.input_queue.get(timeout=0.1) 
                     self.batch_buffer.extend(vectors)
+                    if logs:
+                        self.log_buffer.extend(logs)
                 except queue.Empty:
                     pass
                 
@@ -220,10 +225,14 @@ class UnsupervisedAI(threading.Thread):
                 if is_full or is_timeout:
                     # Process Accumulated Batch
                     to_process = self.batch_buffer[:self.batch_size]
+                    to_process_logs = self.log_buffer[:self.batch_size]
+                    
                     self.batch_buffer = self.batch_buffer[self.batch_size:] # Keep remainder
+                    self.log_buffer = self.log_buffer[self.batch_size:]
+                    
                     self.last_batch_time = now
                     
-                    self.process_batch(to_process)
+                    self.process_batch(to_process, to_process_logs)
                 
                 # Check Persistence Schedule
                 interval = self.config.get("checkpoint_interval_seconds", 3600)
@@ -250,14 +259,37 @@ class UnsupervisedAI(threading.Thread):
         except:
             pass
 
-    def process_batch(self, new_window):
+    def process_batch(self, new_window, new_logs=None):
         # Optimization: Convert to tensor ONCE here
         tensor_win = torch.tensor(new_window, dtype=torch.float32)
         self.window_queue.append(tensor_win)
         
+        # Maintain Log FIFO
+        # new_logs matches new_window length
+        if new_logs:
+            self.log_queue.extend(new_logs) # Note: List of dicts, unlike tensor_win which is batched
+            # But wait, self.window_queue is a list of Tensors (Batches)
+            # self.log_queue should probably be a flat list of logs matching the flattened tensor sequence?
+            # Actually, `full_seq` (Line 266) concatenates the window_queue.
+            # So `full_seq` is [Total_Len, 34].
+            # So `self.log_queue` should just be [Total_Len] list of dicts.
+            # But `tensor_win` is [Batch, 34].
+            # So `self.window_queue` is List[Tensor[Batch, 34]].
+            # So we should store `self.log_queue` as List[List[Dict]] (Batches of logs) to mirror structure?
+            # No, easier to just utilize flattened view when alerting.
+            pass
+
+        # We need to maintain parallel structures.
+        # self.window_queue = [T1(64), T2(64)...]
+        # self.log_batch_queue = [L1(64), L2(64)...]
+        if not hasattr(self, "log_batch_queue"): self.log_batch_queue = []
+        if new_logs:
+            self.log_batch_queue.append(new_logs)
+
         # Maintain FIFO
         while len(self.window_queue) > self.context_epochs:
             self.window_queue.pop(0)
+            if self.log_batch_queue: self.log_batch_queue.pop(0)
 
         # Optimization: Don't infer until we have at least 1 context
         if not self.window_queue: return
@@ -304,3 +336,24 @@ class UnsupervisedAI(threading.Thread):
                 bad_indices = torch.nonzero(enforced_losses > threshold)
                 count = len(bad_indices)
                 print(f"[AI ALERT] {count} Anomalies Detected! (Sensitivity={sensitivity:.2f})")
+                
+                # REPORTING
+                if hasattr(self, "log_batch_queue"):
+                    # Flatten Log Batches to match full_seq
+                    full_logs = [item for sublist in self.log_batch_queue for item in sublist]
+                    
+                    # Print details for first few anomalies to avoid spam
+                    for idx_tensor in bad_indices[:5]:
+                        idx = idx_tensor.item()
+                        if idx < len(full_logs):
+                            bad_log = full_logs[idx]
+                            score = enforced_losses[idx].item()
+                            
+                            # Extract Time safely (Root -> Event -> Server TS)
+                            evt = bad_log.get("event", {})
+                            ts_val = bad_log.get("timestamp_ref") or evt.get("timestamp") or bad_log.get("_server_ts") or "?"
+                            
+                            # Compact Report Header
+                            print(f"  >> [ANOMALY] Score: {score:.4f} | Time: {ts_val}")
+                            # Full Details
+                            print(json.dumps(bad_log, indent=2))

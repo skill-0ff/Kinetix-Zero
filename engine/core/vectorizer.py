@@ -422,15 +422,18 @@ class LogNormalizer:
         Returns a list of 32-dim vectors (lists).
         """
         vectors = []
+        valid_logs = []
         # Localize for speed
         _to_vec = self.input_to_vector
-        _append = vectors.append
+        _append_v = vectors.append
+        _append_l = valid_logs.append
         
         for log in raw_log_list:
             v = _to_vec(log)
             if v:
-                _append(v)
-        return vectors
+                _append_v(v)
+                _append_l(log)
+        return vectors, valid_logs
 
     def input_to_vector(self, raw_json):
         # Optimization: Pure Python List (Faster than single-row Numpy allocation)

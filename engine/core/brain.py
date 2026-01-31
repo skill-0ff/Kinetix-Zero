@@ -302,13 +302,13 @@ class Brain:
                 
         # Optimization: Bulk Vectorization
         if decoded_logs:
-            vectors = self.vectorizer.vectorize_batch(decoded_logs)
+            vectors, aligned_logs = self.vectorizer.vectorize_batch(decoded_logs)
             
             if vectors:
                 if self.ai:
                     try:
                         # Async Push (Fire and Forget)
-                        self.ai.push_batch(vectors)
+                        self.ai.push_batch(vectors, aligned_logs)
                     except Exception as e:
                         print(f"[AI Error] {e}")
 

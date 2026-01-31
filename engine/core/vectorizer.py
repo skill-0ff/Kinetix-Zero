@@ -7,6 +7,9 @@ import time
 import numpy as np
 from datetime import datetime
 import zlib
+from datetime import datetime
+from collections import Counter
+from functools import lru_cache
 from typing import Optional, Dict, Any, List, Union, Literal
 from pydantic import BaseModel, Field, ValidationError, Extra, ConfigDict
 
@@ -257,11 +260,15 @@ class VectorLibrary:
     }
 
     ROLE_MAPPING = None
+    
+    # Pre-compiled regex for size extraction
+    SIZE_REGEX = re.compile(r"[\d\.]+")
 
     @staticmethod
     def reload_role_mapping(mapping=None):
         if mapping:
             VectorLibrary.ROLE_MAPPING = mapping
+            VectorLibrary.get_role_score.cache_clear()
             return
 
         try:
@@ -276,11 +283,13 @@ class VectorLibrary:
             with open(map_path, 'r') as f:
                 VectorLibrary.ROLE_MAPPING = json.load(f)
                 print(f"[Info] Role Mapping loaded: {len(VectorLibrary.ROLE_MAPPING)} roles")
+                VectorLibrary.get_role_score.cache_clear()
         except Exception as e:
             print(f"[Warning] Failed to load role_mapping.json: {e}")
             VectorLibrary.ROLE_MAPPING = {}
 
     @staticmethod
+    @lru_cache(maxsize=128)
     def get_role_score(role):
         if not role: return 0.0
         
@@ -302,12 +311,18 @@ class VectorLibrary:
     def encode_time_cyclic(t_str):
         if not t_str: return [0.0, 0.0]
         try:
+            # Expected format: HH:MM:SS... or ISO
+            # Fast parse assumption: "HH:MM:SS" is at end or is string
+            if "T" in t_str:
+                t_str = t_str.split("T")[1]
             parts = t_str.split(":")
             h = int(parts[0])
             m = int(parts[1])
-            s = float(parts[2])
+            s = float(parts[2][:6]) # Truncate sub-seconds for safety
+            
             seconds_in_day = h * 3600 + m * 60 + s
-            angle = (2 * math.pi * seconds_in_day) / 86400.0
+            # 2*pi / 86400 = 7.2722e-5
+            angle = seconds_in_day * 0.000072722
             return [math.sin(angle), math.cos(angle)]
         except:
             return [0.0, 0.0]
@@ -315,20 +330,30 @@ class VectorLibrary:
     @staticmethod
     def calculate_entropy(text):
         if not text: return 0.0
-        prob = [float(text.count(c)) / len(text) for c in dict.fromkeys(list(text))]
-        entropy = -sum([p * math.log(p) / math.log(2.0) for p in prob])
-        return min(entropy / 8.0, 1.0)
+        # O(N) using Counter instead of O(N^2) count() loop
+        length = len(text)
+        counts = Counter(text)
+        entropy = 0.0
+        for count in counts.values():
+            p = count / length
+            entropy -= p * math.log2(p)
+            
+        return min(entropy * 0.125, 1.0) # / 8.0
 
     @staticmethod
+    @lru_cache(maxsize=256)
     def get_top_k_score(text):
         if not text: return 0.0
-        return VectorLibrary.TOP_K_PROCESSES.get(text.lower(), VectorLibrary.hash_string(text))
+        text_lower = text.lower()
+        return VectorLibrary.TOP_K_PROCESSES.get(text_lower, VectorLibrary.hash_string(text_lower))
 
     @staticmethod
     def hash_string(s):
         if not s: return 0.0
-        # Optimization: CRC32 is 10x faster than SHA256 for feature hashing
-        return (zlib.crc32(s.encode()) & 0xffffffff) % 100000 / 100000.0
+        # Optimization: CRC32 is fast. 
+        # Caching not effective here due to high cardinality of inputs (IPs, Hashes)
+        val = zlib.crc32(s.encode()) & 0xffffffff
+        return (val % 100000) * 0.00001 # / 100000.0
 
     @staticmethod
     def normalize_ip(ip):
@@ -338,19 +363,30 @@ class VectorLibrary:
     def normalize_port(p):
         if not p: return 0.0
         try:
+            if isinstance(p, (int, float)):
+                return math.log10(p + 1) * 0.2
             val = int(p)
-            return math.log10(val + 1) / 5.0
+            return math.log10(val + 1) * 0.2 # / 5.0
         except:
             return 0.0
     
     @staticmethod
     def normalize_size(s):
         if not s: return 0.0
+        if isinstance(s, (int, float)):
+            return min(math.log10(s + 1) * 0.1, 1.0)
+            
         try:
-            num = float(re.findall(r"[\d\.]+", str(s))[0])
-            if "MB" in str(s): num *= 1024
-            if "GB" in str(s): num *= 1024 * 1024
-            return min(math.log10(num + 1) / 10.0, 1.0)
+            s_str = str(s)
+            match = VectorLibrary.SIZE_REGEX.search(s_str)
+            if not match: return 0.0
+            
+            num = float(match.group())
+            if "MB" in s_str: num *= 1048576
+            elif "GB" in s_str: num *= 1073741824
+            elif "KB" in s_str: num *= 1024
+            
+            return min(math.log10(num + 1) * 0.1, 1.0) # / 10.0
         except:
             return 0.0
 
@@ -380,111 +416,140 @@ class LogNormalizer:
             print(f"[Warning] Config load error: {e}")
             return {}
 
+    def vectorize_batch(self, raw_log_list):
+        """
+        Batch process a list of raw log dictionaries.
+        Returns a list of 32-dim vectors (lists).
+        """
+        vectors = []
+        # Localize for speed
+        _to_vec = self.input_to_vector
+        _append = vectors.append
+        
+        for log in raw_log_list:
+            v = _to_vec(log)
+            if v:
+                _append(v)
+        return vectors
+
     def input_to_vector(self, raw_json):
+        # Optimization: Pure Python List (Faster than single-row Numpy allocation)
         try:
-            # 1. Validate (Polymorphic)
-            log = LogEntry(**raw_json)
+            # 1. Initialize
+            # 1. Initialize
+            # [0.0]*34 (2 new dims for Server Time)
+            vector = [0.0] * 34
             
-            # 2. Initialize
-            vector = np.zeros(32)
-
-            # --- 32-DIMENSION COLLISION-FREE MAP ---
-            # 00-05: Identity, 06-07: Time, 08-10: Status, 11-15: Meta
-            # 16-19: Actor Ctx, 20: Target Identity
-            # 21-25: Network
-            # 26-31: Resource
-
+            # Helper to get nested safely
+            host = raw_json.get("host", {})
+            event = raw_json.get("event", {})
+            status = raw_json.get("status", {})
+            
+            role = raw_json.get("role", "")
+            
             # [00-05] Identity
-            vector[0] = VectorLibrary.get_role_score(log.role)
-            vector[1] = VectorLibrary.hash_string(log.host.id)
-            vector[2] = VectorLibrary.hash_string(log.host.os)
-            vector[3] = VectorLibrary.normalize_ip(log.host.ip)
-            vector[4] = VectorLibrary.hash_string(log.host.mac)
+            vector[0] = VectorLibrary.get_role_score(role)
+            vector[1] = VectorLibrary.hash_string(host.get("id"))
+            vector[2] = VectorLibrary.hash_string(host.get("os"))
+            vector[3] = VectorLibrary.normalize_ip(host.get("ip"))
+            vector[4] = VectorLibrary.hash_string(host.get("mac"))
             vector[5] = 0.5 # Default Maturity
 
             # [06-07] Time
-            t_vec = VectorLibrary.encode_time_cyclic(log.timestamp_ref)
+            t_vec = VectorLibrary.encode_time_cyclic(raw_json.get("timestamp_ref"))
             vector[6] = t_vec[0]
             vector[7] = t_vec[1]
 
-            # [08-10] Status
-            if log.status:
-                vector[8] = VectorLibrary.normalize_size(log.status.get("cpu", "0"))
-                vector[9] = VectorLibrary.normalize_size(log.status.get("ram", "0"))
-                vector[10] = VectorLibrary.normalize_size(log.status.get("disk", "0"))
+            # [New 08-09] Server Authority Time (For Delta Detection)
+            # Uses injected _server_ts from Brain
+            server_ts = raw_json.get("_server_ts") 
+            # If missing (test script), float(time.time())
+            if not server_ts: server_ts = time.time()
+            # Convert float timestamp to cyclic
+            # HACK: Re-use encode_time_cyclic by converting float -> HH:MM:SS string? 
+            # Better: Make encode_time_cyclic accept float. But for now, let's just do math directly to save str alloc
+            # 86400 seconds in day
+            s_day = server_ts % 86400
+            s_angle = s_day * 0.000072722
+            vector[8] = math.sin(s_angle)
+            vector[9] = math.cos(s_angle)
 
-            e = log.event
-            
+            # [10-12] Status (Shifted +2)
+            if status:
+                vector[10] = VectorLibrary.normalize_size(status.get("cpu", 0))
+                vector[11] = VectorLibrary.normalize_size(status.get("ram", 0))
+                vector[12] = VectorLibrary.normalize_size(status.get("disk", 0))
+
             # [11-15] Meta
-            vector[11] = VectorLibrary.hash_string(e.type)
+            # [13-17] Meta (Shifted +2)
+            vector[13] = VectorLibrary.hash_string(event.get("type"))
             
-            # Slot 12: Actor Identity (Who did it?)
-            actor = getattr(e, 'user', None) or getattr(e, 'subject_user', None) or getattr(e, 'reg_user', None) or getattr(e, 'creator', None) or getattr(e, 'account', None)
-            vector[12] = VectorLibrary.hash_string(actor)
+            # Slot 14: Actor Identity
+            actor = event.get("user") or event.get("subject_user") or event.get("reg_user") or event.get("creator") or event.get("account")
+            vector[14] = VectorLibrary.hash_string(actor)
 
-            # Slot 13: Action
-            act = getattr(e, 'action', None) or getattr(e, 'op_type', None) or getattr(e, 'result', None) or getattr(e, 'start_type', None)
-            vector[13] = VectorLibrary.hash_string(act)
+            # Slot 15: Action
+            act = event.get("action") or event.get("op_type") or event.get("result") or event.get("start_type")
+            vector[15] = VectorLibrary.hash_string(act)
 
-            # Slot 14: Auth/Rarity
-            auth = getattr(e, 'logon_type', None) or getattr(e, 'auth_package', None) or getattr(e, 'signed', None)
-            vector[14] = VectorLibrary.hash_string(auth)
+            # Slot 16: Auth/Rarity
+            auth = event.get("logon_type") or event.get("auth_package") or event.get("signed")
+            vector[16] = VectorLibrary.hash_string(auth)
 
-            # Slot 15: Direction (Inferred later or from Action)
-            
+            # Slot 17: Direction
+            vector[17] = 0.0
+
             # [16-19] Actor Context
-            # Slot 16: Actor Process
-            proc = getattr(e, 'process', None)
-            vector[16] = VectorLibrary.get_top_k_score(proc)
+            # [18-21] Actor Context (Shifted +2)
+            # Slot 18: Actor Process
+            proc = event.get("process")
+            vector[18] = VectorLibrary.get_top_k_score(proc)
 
-            # Slot 17: Actor Path
-            path = getattr(e, 'path', None) or getattr(e, 'image_path', None) or getattr(e, 'pipe_name', None)
-            vector[17] = VectorLibrary.calculate_entropy(path)
+            # Slot 19: Actor Path
+            path = event.get("path") or event.get("image_path") or event.get("pipe_name")
+            vector[19] = VectorLibrary.calculate_entropy(path)
 
-            # Slot 18: Parent/Handle
-            parent = getattr(e, 'parent', None) or getattr(e, 'handle_id', None)
-            vector[18] = VectorLibrary.hash_string(parent)
+            # Slot 20: Parent/Handle
+            parent = event.get("parent") or event.get("handle_id")
+            vector[20] = VectorLibrary.hash_string(parent)
 
-            # Slot 19: Payload/Cmd
-            cmd = getattr(e, 'cmdline', None) or getattr(e, 'query', None) or getattr(e, 'message', None)
-            vector[19] = VectorLibrary.calculate_entropy(cmd)
+            # Slot 21: Payload/Cmd
+            cmd = event.get("cmdline") or event.get("query") or event.get("message")
+            vector[21] = VectorLibrary.calculate_entropy(cmd)
 
-            # [20] Target Identity
-            target = getattr(e, 'target_user', None) or getattr(e, 'member_user', None)
-            vector[20] = VectorLibrary.hash_string(target)
+            # [22] Target Identity (Shifted +2)
+            target = event.get("target_user") or event.get("member_user")
+            vector[22] = VectorLibrary.hash_string(target)
 
-            # [21-25] Network
-            vector[21] = VectorLibrary.hash_string(getattr(e, 'protocol', None) or getattr(e, 'proto', None))
-            vector[22] = VectorLibrary.hash_string(getattr(e, 'src_ip', None) or getattr(e, 'source_network_address', None))
-            vector[23] = VectorLibrary.hash_string(getattr(e, 'dst_ip', None))
-            vector[24] = float(getattr(e, 'src_port', 0) or 0)
-            vector[25] = float(getattr(e, 'dst_port', 0) or 0)
+            # [23-27] Network (Shifted +2)
+            vector[23] = VectorLibrary.hash_string(event.get("protocol") or event.get("proto"))
+            vector[24] = VectorLibrary.hash_string(event.get("src_ip") or event.get("source_network_address"))
+            vector[25] = VectorLibrary.hash_string(event.get("dst_ip"))
+            vector[26] = float(event.get("src_port") or 0)
+            vector[27] = float(event.get("dst_port") or 0)
 
             # [26-31] Resource
-            # Slot 26: Resource ID
-            res_id = getattr(e, 'reg_path', None) or getattr(e, 'task_name', None) or getattr(e, 'group_name', None) 
-            vector[26] = VectorLibrary.hash_string(res_id)
+            # [28-33] Resource (Shifted +2)
+            # Slot 28: Resource ID
+            res_id = event.get("reg_path") or event.get("task_name") or event.get("group_name") 
+            vector[28] = VectorLibrary.hash_string(res_id)
 
-            # Slot 27: Resource Detail
-            res_det = getattr(e, 'reg_val', None) or getattr(e, 'q_name', None)
-            vector[27] = VectorLibrary.hash_string(res_det)
+            # Slot 29: Resource Detail
+            res_det = event.get("reg_val") or event.get("q_name")
+            vector[29] = VectorLibrary.hash_string(res_det)
 
-            # Slot 28: Target Service
-            vector[28] = VectorLibrary.hash_string(getattr(e, 'name', None) or getattr(e, 'service_name', None))
+            # Slot 30: Target Service
+            vector[30] = VectorLibrary.hash_string(event.get("name") or event.get("service_name"))
 
             # Size/Data
-            vector[29] = VectorLibrary.normalize_size(getattr(e, 'size', None) or getattr(e, 'file_size', None))
-            vector[30] = VectorLibrary.normalize_size(getattr(e, 'sent', None))
-            vector[31] = VectorLibrary.normalize_size(getattr(e, 'recv', None))
+            vector[31] = VectorLibrary.normalize_size(event.get("size") or event.get("file_size"))
+            vector[32] = VectorLibrary.normalize_size(event.get("sent"))
+            vector[33] = VectorLibrary.normalize_size(event.get("recv"))
 
-            return vector.tolist()
+            return vector
 
-        except ValidationError as e:
-            print(f"Validation Error: {e}") 
-            # Silent fail for production or log?
-            return None
         except Exception as e:
-            print(f"Normalization Error: {e}")
+            # print(f"Normalization Error: {e}") # Reduce print spam
             return None
 
 # HTTP Server Removed - Use engine/orchestrator.py

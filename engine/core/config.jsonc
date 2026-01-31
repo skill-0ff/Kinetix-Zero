@@ -1,10 +1,29 @@
 {
-    // Brain Processor Configuration
+    // --- Network Configuration ---
+    // UDP Port to listen on (0.0.0.0:5001)
     "port": 5001,
-    "protocol": "udp",
+    // --- Brain Logic (Aggregation & Protection) ---
+    // Time in seconds to buffer logs (Aggregation Window)
     "time_window": 5.0,
+    // Baseline max logs expected per window (Normal Traffic)
     "max_sequence": 100,
+    // Buffer above baseline. Traffic > (Max+Threshold) is DROPPED.
     "ddos_threshold": 50,
+    // Ingress Queue Limit (Packets). Prevents Memory Overflow (Tail Drop).
+    "max_queue_size": 10000,
+    // --- AI Engine (Vectorization & Inference) ---
+    // Memory Depth: How many past windows the AI remembers.
     "ai_context_epochs": 5,
-    "ai_anomaly_threshold": 0.5
+    // Sensitivity: 0.0 (Relaxed) to 1.0 (Paranoid). Higher = More Alerts.
+    "ai_anomaly_threshold": 0.9,
+    // --- Persistence (Saving State) ---
+    // "auto" (Load Newest) or "path/to/specific.pth".
+    "ai_checkpoint_file": "auto",
+    // How often to auto-save the model model to disk (Seconds).
+    "checkpoint_interval_seconds": 3600,
+    // Rotation: Keep only the last N checkpoint files.
+    "max_checkpoints_history": 10,
+    // --- Forensics ---
+    "forensic_sample_rate": 100, // Percentage (0-100).
+    "forensic_sample_mode": "random" // "random" (Probabilistic) OR "sequence" (Deterministic every Nth).
 }

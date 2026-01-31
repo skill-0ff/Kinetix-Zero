@@ -1,5 +1,0 @@
-[Warning] AI Module not found: No module named 'torch'
-[Config] Loaded: Port=5001, Window=5.0s
-[Info] Role Mapping loaded: 8 roles
-[Network] Listening on UDP 5001
-[Brain] Started.

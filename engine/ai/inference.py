@@ -720,8 +720,20 @@ class UnsupervisedAI(threading.Thread):
             event_uuid = uuid.uuid4().hex
             verdict = "Safe" # Default
             
-            # PATH B: ANOMALY
-            if ctx["is_anomaly"]:
+            # PATH A: SAFE (High Flow Optimization)
+            if not ctx["is_anomaly"]:
+                # If it's safe but "New" (Far from existing memory), learn it!
+                if mem_dist > self.dedup_dist:
+                    verdict = "NEW SAFE PATTERN"
+                    points_to_upsert.append(PointStruct(
+                        id=event_uuid,
+                        vector=ctx["vector"],
+                        payload={"type": "ai_safe", "timestamp": time.time(), "log": ctx["log"]}
+                    ))
+                # Else: It's just normal safe traffic (matches existing). Ignore.
+            
+            # PATH B: ANOMALY (Low Flow)
+            else:
                 verdict = "NEW ANOMALY"
                 
                 # Scenario 1: False Positive

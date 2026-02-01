@@ -37,5 +37,9 @@
     "max_checkpoints_history": 10,
     // --- Forensics ---
     "forensic_sample_rate": 100, // Percentage (0-100).
-    "forensic_sample_mode": "random" // "random" (Probabilistic) OR "sequence" (Deterministic every Nth).
+    "forensic_sample_mode": "random", // "random" (Probabilistic) OR "sequence" (Deterministic every Nth).
+    // MISP Threat Intel
+    "misp_enabled": false,
+    "misp_url": "https://misp.local",
+    "misp_verify_ssl": true
 }

@@ -143,6 +143,10 @@ class UnsupervisedAI(threading.Thread):
                         if changed:
                             print("[AI] Database Config Changed. Reconnecting...")
                             self._init_databases()
+                        else:
+                            # Refresh Thresholds only (if DB didn't change)
+                            self.dedup_dist = self.config.get("memory_dedup_dist", 0.05)
+                            self.query_dist = self.config.get("memory_query_dist", 0.10)
                             
         except Exception as e:
              if not self.config: self.config = {}
@@ -223,6 +227,7 @@ class UnsupervisedAI(threading.Thread):
             self.mongo_db = self.mongo_client["kinetix_brain"]
             self.mongo_events = self.mongo_db["events"]
             self.mongo_metrics = self.mongo_db["metrics"]
+            self.mongo_ddos = self.mongo_db["ddos"]
             
             # Check Connection
             self.mongo_client.server_info()
@@ -238,11 +243,15 @@ class UnsupervisedAI(threading.Thread):
             # Metrics Index (auto-expire not implemented yet per user req, but helpful)
             self.mongo_metrics.create_index([("timestamp", DESCENDING)], background=True) 
             
+            # DDoS Index (TTL?)
+            self.mongo_ddos.create_index([("timestamp", DESCENDING)], background=True)
+            
         except Exception as e:
             print(f"[AI] MongoDB Init Failed: {e}")
             self.mongo_client = None
             self.mongo_events = None
             self.mongo_metrics = None
+            self.mongo_ddos = None
 
     def _init_metrics(self):
         """Reset the per-second accumulator"""

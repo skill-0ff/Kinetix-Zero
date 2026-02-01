@@ -7,18 +7,32 @@ import threading
 import datetime
 import select
 import random
+import uuid
 
 # Add engine path
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-from vectorizer import LogNormalizer, VectorLibrary
-# Try Importing AI (Optional Dependency)
+from engine.core.vectorizer import LogNormalizer
 try:
-    sys.path.append(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "ai"))
-    from inference import UnsupervisedAI
+    from engine.core.misp_client import MispClient # Attempt relative/module import
+except ImportError:
+    # If running directly from core/
+    try:
+        from misp_client import MispClient
+    except:
+        MispClient = None
+        print("[Warning] MispClient module could not be imported.")
+
+try:
+    from inference import UnsupervisedAI # If same dir
     AI_AVAILABLE = True
-except ImportError as e:
-    print(f"[Warning] AI Module not found: {e}")
-    AI_AVAILABLE = False
+except ImportError:
+    try:
+        sys.path.append(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "ai"))
+        from inference import UnsupervisedAI
+        AI_AVAILABLE = True
+    except ImportError as e:
+        print(f"[Warning] AI Module not found: {e}")
+        AI_AVAILABLE = False
 
 class Brain:
     def __init__(self, config_path="engine/core/config.jsonc", role_map_path="engine/core/role_mapping.json"):
@@ -43,6 +57,16 @@ class Brain:
                 self.ai = UnsupervisedAI(config_path)
             except Exception as e:
                 print(f"[Error] AI Init Failed: {e}")
+                
+        # Initialize MISP (Optional)
+        self.misp = None
+        if MispClient:
+            try:
+                self.misp = MispClient(self.config)
+                if self.misp.enabled:
+                    print(f"[Brain] MISP Integration Enabled: {self.misp.url}")
+            except Exception as e:
+                print(f"[Error] MISP Init Failed: {e}")
         
         # State monitoring
         self.last_config_mtime = 0
@@ -56,8 +80,8 @@ class PacketReceiver(threading.Thread):
         self.port = port
         self.protocol = protocol
         self.queue = buffer_queue
-        self.sample_rate = sample_rate
-        self.sample_mode = sample_mode
+        self.queue = buffer_queue
+        # Sample Rate/Mode now only used for Logic Layer config, not here
         self.running = True
         self.sock = None
         self.daemon = True # Auto-kill when main dies
@@ -105,32 +129,8 @@ class PacketReceiver(threading.Thread):
                                 _queue_put(data)
                             except queue.Full:
                                 dropped_packets += 1
-                                # Advanced Forensic Sampling
-                                should_save = False
-                                if self.sample_rate >= 100:
-                                    should_save = True
-                                elif self.sample_rate > 0:
-                                    if self.sample_mode == "sequence":
-                                        # Deterministic Stride (e.g. Rate 10% -> 100/10 = 10. Every 10th packet)
-                                        # Max(1) to avoid div/0
-                                        stride = int(100 / max(1, self.sample_rate))
-                                        if dropped_packets % stride == 0:
-                                            should_save = True
-                                    else:
-                                        # Random (Probabilistic)
-                                        if random.randint(1, 100) <= self.sample_rate:
-                                            should_save = True
-
-                                if should_save:
-                                    try:
-                                        # Non-blocking append (OS handles buffering mostly)
-                                        # Ensure dir exists
-                                        if not os.path.exists("logs"): os.makedirs("logs")
-                                        with open("logs/forensic_drops.log", "ab") as f:
-                                            # Format: Timestamp | Hex/Bytes
-                                            ts = str(time.time()).encode()
-                                            f.write(ts + b"|" + data + b"\n")
-                                    except: pass
+                                # Strict Tail Drop (No Sampling at Ingress)
+                                pass
                         except BlockingIOError:
                             break
                         except:
@@ -230,15 +230,31 @@ class Brain:
             if mtime > self.last_config_mtime:
                 self.last_config_mtime = mtime
                 old_port = self.config.get("port")
+                old_q_size = self.packet_queue.maxsize
+                
                 print("[System] Config Change Detected. Reloading...")
                 self.load_config()
                 
-                # Note: Changing max_queue_size requires restart, we don't hot-swap queue instance
+                # 1. Hot Update: Forensic Params
+                # (Used later in process_queue, stored in self.config which is reloaded)
+                pass
                 
-                if self.config.get("port") != old_port:
-                    # Restart Receiver
+                # 2. Heavy Update: Port or Queue Size Change (Requires Restart)
+                new_q_size = int(self.config.get("max_queue_size", 10000))
+                
+                if self.config.get("port") != old_port or new_q_size != old_q_size:
+                    print(f"[System] Restarting Receiver (Port/Queue Changed)...")
+                    
+                    # Stop Old
                     self.receiver.running = False
                     self.receiver.join()
+                    
+                    # Re-Init Queue (if size changed)
+                    if new_q_size != old_q_size:
+                        print(f"[System] Resizing Queue: {old_q_size} -> {new_q_size}")
+                        self.packet_queue = queue.Queue(maxsize=new_q_size)
+                        
+                    # Start New
                     self.receiver = PacketReceiver(
                         self.config.get("port"), 
                         self.config.get("protocol"), 
@@ -246,6 +262,8 @@ class Brain:
                         self.config.get("forensic_sample_rate", 100),
                         self.config.get("forensic_sample_mode", "random")
                     )
+                    # Restore Evidence Queue Link
+                    self.receiver.evidence_queue = getattr(self, "evidence_queue", None)
                     self.receiver.start()
         except:
             pass
@@ -284,6 +302,41 @@ class Brain:
         # DDoS Zone Check (Logic Layer)
         if count >= limit:
             print(f"[ALERT] DDoS DETECTED! Count={count} > Limit={limit}. DROPPING BATCH.")
+            
+            # Logic Layer Sampling (Single Layer Protection)
+            # Use 'forensic_sample_rate' from config
+            rate = int(self.config.get("forensic_sample_rate", 10))
+            
+            if self.ai and buffer_batch and rate > 0:
+                 try:
+                     # Calculate exact sample count
+                     # If rate=100, take all. If rate=10, take 10%
+                     batch_len = len(buffer_batch)
+                     sample_count = max(1, int(batch_len * (rate / 100.0)))
+                     
+                     # Random Sample
+                     indices = random.sample(range(batch_len), min(sample_count, batch_len))
+                     sample_data = [buffer_batch[i] for i in indices]
+                     
+                     decoded_sample = []
+                     json_loads = json.loads
+                     for s in sample_data: 
+                         try: decoded_sample.append(json_loads(s))
+                         except: pass
+                     
+                     if decoded_sample:
+                         # Tag Evidence
+                         for d in decoded_sample:
+                             d["_evidence_type"] = "layer2_logic_drop"
+                             d["verdict"] = "DDoS"
+                             d["uuid"] = str(uuid.uuid4())
+                             d["timestamp"] = time.time()
+                             
+                         # Send to Brain -> AI -> DB
+                         self.ai.push_evidence(decoded_sample)
+                 except Exception as e: 
+                     print(f"[Error] DDoS Sampling Failed: {e}")
+
             buffer_batch.clear() # Strict Drop
             return
             
@@ -299,7 +352,39 @@ class Brain:
                 _append(obj)
             except:
                 continue
+        
+        # MISP Threat Check (Layer 3)
+        # Check Decoded logs (Dicts) BEFORE Vectorization
+        if self.misp and self.misp.enabled and decoded_logs:
+             try:
+                 self.misp.check_batch(decoded_logs)
+             except Exception as e:
+                 print(f"[Error] MISP Check Failed: {e}")
+
+        # Process Evidence Queue (Layer 1 Drops)
+        if not self.evidence_queue.empty():
+            evidence_batch = []
+            try:
+                while not self.evidence_queue.empty():
+                    ts, raw_data = self.evidence_queue.get_nowait()
+                    # Try Decode
+                    try:
+                        obj = json_loads(raw_data)
+                        obj["_evidence_type"] = "layer1_ingress_drop"
+                        obj["timestamp"] = ts
+                        obj["verdict"] = "DDoS"
+                        evidence_batch.append(obj)
+                    except: pass
+                    
+                    if len(evidence_batch) > 50: break # Cap flush
+            except: pass
+            
+            if evidence_batch and self.ai:
+                self.ai.push_evidence(evidence_batch)
                 
+            except:
+                continue
+
         # Optimization: Bulk Vectorization
         if decoded_logs:
             vectors, aligned_logs = self.vectorizer.vectorize_batch(decoded_logs)

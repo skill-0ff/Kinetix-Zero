@@ -60,6 +60,7 @@ class FileCreateEvent(BaseEvent):
     type: Literal["file_create"]
     file_type: Optional[str] = None
     path: Optional[str] = None
+    hash: Optional[str] = None
     size: Optional[str] = None
     process: Optional[str] = None
     user: Optional[str] = None
@@ -68,6 +69,7 @@ class FileCreateEvent(BaseEvent):
 class FileModifiedEvent(BaseEvent):
     type: Literal["file_modified"]
     path: Optional[str] = None
+    hash: Optional[str] = None
     process: Optional[str] = None
     size_change: Optional[str] = None
     perm_change: Optional[str] = None

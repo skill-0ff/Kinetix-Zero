@@ -23,6 +23,14 @@ except ImportError:
         print("[Warning] MispClient module could not be imported.")
 
 try:
+    from engine.core.janitor import Janitor
+except ImportError:
+    try:
+        from janitor import Janitor
+    except:
+        Janitor = None
+
+try:
     from inference import UnsupervisedAI # If same dir
     AI_AVAILABLE = True
 except ImportError:
@@ -288,6 +296,7 @@ class Brain:
         while not self.packet_queue.empty():
             try:
                 buffer_batch.append(self.packet_queue.get_nowait())
+                self.counter_in += 1
                 count += 1
                 # If we exceed limit significantly, we might as well stop and drop
                 # But to measure true size we'd need to drain all. 
@@ -307,7 +316,10 @@ class Brain:
             # Use 'forensic_sample_rate' from config
             rate = int(self.config.get("forensic_sample_rate", 10))
             
-            if self.ai and buffer_batch and rate > 0:
+            # CHECK TOGGLE: Only save evidence if enabled
+            save_evidence = self.config.get("storage_policy", {}).get("save_logs", {}).get("ddos_evidence", True)
+            
+            if self.ai and buffer_batch and rate > 0 and save_evidence:
                  try:
                      # Calculate exact sample count
                      # If rate=100, take all. If rate=10, take 10%
@@ -394,11 +406,22 @@ class Brain:
                     try:
                         # Async Push (Fire and Forget)
                         self.ai.push_batch(vectors, aligned_logs)
+                        self.counter_out += len(vectors)
+                        self.counter_out += len(vectors)
+                        self.counter_out += len(vectors)
                     except Exception as e:
                         print(f"[AI Error] {e}")
 
     def run(self):
         print("[Brain] Processor Started.")
+        
+        # Start Janitor Service
+        if self.janitor:
+            try:
+                self.janitor.start()
+            except Exception as e:
+                print(f"[Brain] Janitor Start Failed: {e}")
+            
         try:
             self.last_config_mtime = os.path.getmtime(self.config_path)
             self.last_role_mtime = os.path.getmtime(self.role_map_path)
@@ -420,6 +443,73 @@ class Brain:
                 _process()
                 self.check_hot_reload()
                 next_flush = now + self.time_window
+            
+            # Flush Metrics (1s)
+            if now >= self.last_metrics_flush + self.metrics_interval:
+                try:
+                    # Log to Mongo
+                    if self.ai and hasattr(self.ai, 'mongo_client'):
+                        try:
+                            self.ai.db["metrics"].insert_one({
+                                "timestamp": now,
+                                "eps_in": self.counter_in,
+                                "eps_out": self.counter_out,
+                                "uptime": now - self.start_time
+                            })
+                        except: pass
+                    
+                    # Reset
+                    self.counter_in = 0
+                    self.counter_out = 0
+                    self.last_metrics_flush = now
+                except:
+                   pass
+            
+            # Flush Metrics (1s)
+            if now >= self.last_metrics_flush + self.metrics_interval:
+                try:
+                    # Log to Mongo
+                    if self.ai and hasattr(self.ai, 'mongo_client'):
+                        try:
+                            self.ai.db["metrics"].insert_one({
+                                "timestamp": now,
+                                "eps_in": self.counter_in,
+                                "eps_out": self.counter_out
+                            })
+                        except: pass
+                    
+                    # Reset
+                    self.counter_in = 0
+                    self.counter_out = 0
+                    self.last_metrics_flush = now
+                except:
+                   pass
+            
+            # Flush Metrics (1s)
+            if now >= self.last_metrics_flush + self.metrics_interval:
+                try:
+                    # Calculate EPS
+                    # In real high-performance scenario, use atomic counters or approximate
+                    # Here we just use the local counter since we are single threaded in this specific loop logic
+                    # But wait, self.packet_queue IS populated by Thread.
+                    # Ideally we count what we POPPED.
+                    
+                    # Log to Mongo
+                    if self.ai and hasattr(self.ai, 'mongo_client'):
+                        try:
+                            self.ai.db["metrics"].insert_one({
+                                "timestamp": now,
+                                "eps_in": self.counter_in,
+                                "eps_out": self.counter_out
+                            })
+                        except: pass
+                    
+                    # Reset
+                    self.counter_in = 0
+                    self.counter_out = 0
+                    self.last_metrics_flush = now
+                except:
+                   pass
                 
                 # Watchdog: Single Process Control
                 if not self.receiver.is_alive():

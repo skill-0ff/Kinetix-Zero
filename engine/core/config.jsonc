@@ -41,5 +41,39 @@
     // MISP Threat Intel
     "misp_enabled": false,
     "misp_url": "https://misp.local",
-    "misp_verify_ssl": true
+    "misp_verify_ssl": true,
+    // --- Granular Control Policies ---
+    "storage_policy": {
+        // Qdrant (Memory/Vectors)
+        "save_vectors": {
+            "ai_safe": true, // Save "New Safe" patterns to Qdrant?
+            "anomaly": true // Save "New Anomalies" to Qdrant?
+        },
+        // MongoDB (Logs/docs)
+        "save_logs": {
+            "ai_safe": true, // Save full JSON log for "AI Safe" events?
+            "anomaly": true, // Save full JSON log for "Anomalies"?
+            "ddos_evidence": true // Save dropped packet evidence?
+        }
+    },
+    "alert_policy": {
+        "misp_report": true, // Generate JSON reports for MISP hits?
+        "console_alerts": {
+            "new_anomaly": true, // Print [ALERT] for New Anomalies?
+            "known_threat": true, // Print [ALERT] for Known Threats?
+            "false_positive": false // Print [ALERT] for False Positives? (Default Off)
+        }
+    },
+    "retention_policy": {
+        "enabled": true,
+        "run_interval_hours": 24,
+        "keep_days": {
+            "ai_safe": 30, // Delete Log AND Vector after 30 days
+            "new_anomaly": 90, // Delete Log AND Vector after 90 days
+            "known_threat": 365, // Delete both after 1 year
+            "false_positive": 7, // Delete both after 1 week
+            "misp_alert": 365, // Keep Intel hits for 1 year
+            "ddos_evidence": 3 // Delete dropped packets after 3 days
+        }
+    }
 }

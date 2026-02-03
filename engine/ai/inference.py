@@ -718,48 +718,89 @@ class UnsupervisedAI(threading.Thread):
             
             # Shared ID for Mongo + Qdrant
             event_uuid = uuid.uuid4().hex
-            verdict = "Safe" # Default
             
-            # PATH A: SAFE (High Flow Optimization)
             if not ctx["is_anomaly"]:
                 # If it's safe but "New" (Far from existing memory), learn it!
                 if mem_dist > self.dedup_dist:
                     verdict = "NEW SAFE PATTERN"
-                    points_to_upsert.append(PointStruct(
-                        id=event_uuid,
-                        vector=ctx["vector"],
-                        payload={"type": "ai_safe", "timestamp": time.time(), "log": ctx["log"]}
-                    ))
+                    
+                    storage_cfg = self.config.get("storage_policy", {})
+                    
+                    # 1. Qdrant: Vector + Metadata (NO LOG)
+                    if storage_cfg.get("save_vectors", {}).get("ai_safe", True):
+                        points_to_upsert.append(PointStruct(
+                            id=event_uuid,
+                            vector=ctx["vector"],
+                            payload={"type": "ai_safe", "timestamp": time.time(), "score": ctx["score"]} 
+                        ))
+                    
+                    # 2. Mongo: Full Log + Metadata + UUID Link
+                    if storage_cfg.get("save_logs", {}).get("ai_safe", True):
+                        mongo_docs.append({
+                            "uuid": event_uuid,
+                            "timestamp": time.time(),
+                            "verdict": "ai_safe",
+                            "score": ctx["score"],
+                            "log": ctx["log"]
+                        })
                 # Else: It's just normal safe traffic (matches existing). Ignore.
             
             # PATH B: ANOMALY (Low Flow)
             else:
                 verdict = "NEW ANOMALY"
+                storage_cfg = self.config.get("storage_policy", {})
                 
                 # Scenario 1: False Positive
                 if mem_type == "Safe" and mem_dist < self.query_dist:
                     verdict = "FALSE POSITIVE"
+                    # Optimization: Maybe log FP occurrence in metrics?
                     
                 # Scenario 2: Known Threat
                 elif mem_type == "Threat" and mem_dist < self.query_dist:
                     verdict = "KNOWN THREAT"
                     
-                # Scenario 3: New
+                # Scenario 3: New Threat/Anomaly
                 else:
-                    # Queue for upsert
-                    points_to_upsert.append(PointStruct(
-                        id=event_uuid, 
-                        vector=ctx["vector"], 
-                        payload={"type": "New", "timestamp": time.time(), "log": ctx["log"]}
-                    ))
+                    # 1. Qdrant: Vector + Metadata (NO LOG)
+                    if storage_cfg.get("save_vectors", {}).get("anomaly", True):
+                        points_to_upsert.append(PointStruct(
+                            id=event_uuid, 
+                            vector=ctx["vector"], 
+                            payload={"type": "New", "timestamp": time.time(), "score": ctx["score"]}
+                        ))
+                    
+                    # 2. Mongo: Full Log + Metadata + UUID Link
+                    if storage_cfg.get("save_logs", {}).get("anomaly", True):
+                        mongo_docs.append({
+                            "uuid": event_uuid,
+                            "timestamp": time.time(),
+                            "verdict": verdict, # "NEW ANOMALY"
+                            "score": ctx["score"],
+                            "log": ctx["log"]
+                        })
                 
-                # REPORT
+                # REPORT & ALERT
                 evt = ctx["log"].get("event", {})
                 ts_val = ctx["log"].get("timestamp_ref") or evt.get("timestamp") or ctx["log"].get("_server_ts") or "?"
                 
-                print(f"[AI ALERT] Score: {ctx['score']:.4f}")
-                print(f"  >> [VERDICT] {verdict} (Type: {mem_type or 'None'}, Dist: {mem_dist:.4f})")
-                print(f"  >> [DETAILS] Time: {ts_val}")
+                # Map Verdict to Config Key
+                alert_key = "new_anomaly"
+                if verdict == "FALSE POSITIVE": alert_key = "false_positive"
+                elif verdict == "KNOWN THREAT": alert_key = "known_threat"
+                
+                # check alert policy
+                alert_cfg = self.config.get("alert_policy", {}).get("console_alerts", {})
+                
+                # Support old boolean config or new dict
+                should_alert = True
+                if isinstance(alert_cfg, bool): should_alert = alert_cfg
+                elif isinstance(alert_cfg, dict): 
+                    should_alert = alert_cfg.get(alert_key, True)
+                
+                if should_alert:
+                    print(f"[AI ALERT] Score: {ctx['score']:.4f}")
+                    print(f"  >> [VERDICT] {verdict} (Type: {mem_type or 'None'}, Dist: {mem_dist:.4f})")
+                    print(f"  >> [DETAILS] Time: {ts_val}")
                 print(json.dumps(ctx["log"], indent=2))
 
             # PATH A: SAFE (Auto-Learn)
@@ -813,23 +854,26 @@ class UnsupervisedAI(threading.Thread):
                 }
                 mongo_docs.append(doc)
 
-        # 5. Batch Upsert (One Write Call per DB)
+        # 5. Execute Writes
+        # A. Qdrant (Vectors)
         if points_to_upsert:
-            try:
-                self.memory.upsert(
-                    collection_name=self.mem_collection,
-                    points=points_to_upsert
-                )
-            except Exception as e:
-                print(f"[AI] Memory Upsert Failed: {e}")
-                
+             try:
+                 self.memory.upsert(
+                     collection_name=self.mem_collection,
+                     points=points_to_upsert
+                 )
+                 # Update metric
+                 if hasattr(self, "metrics_accum"):
+                     self.metrics_accum["mem_saved"] += len(points_to_upsert)
+             except Exception as e:
+                 print(f"[AI] Memory Save Failed: {e}")
+                 
+        # B. Mongo (Logs)
         if mongo_docs and self.mongo_events:
             try:
                 self.mongo_events.insert_many(mongo_docs, ordered=False)
             except Exception as e:
-                print(f"[AI] Mongo Insert Failed: {e}")
+                print(f"[AI] Mongo Save Failed: {e}")
         
         # End of memory logic replacement
         return # Skip old logic
-        
-

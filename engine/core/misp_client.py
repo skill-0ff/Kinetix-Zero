@@ -145,6 +145,10 @@ class MispClient:
             return []
 
     def _generate_report(self, log, hit_value, event_id, info):
+        # CHECK TOGGLE: Generate Report File?
+        if not self.config.get("alert_policy", {}).get("misp_report", True):
+            return
+
         try:
             report_id = str(uuid.uuid4())
             filename = f"misp_alert_{int(time.time())}_{report_id}.json"

@@ -3,11 +3,12 @@ import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
 import {
     Activity, ShieldAlert, FileText, Settings, LogOut,
-    ArrowUpRight, ArrowDownRight, Server, Database
+    ArrowUpRight, ArrowDownRight, Server, Database,
+    Home, Layout, Shield, Search, User, Sun, Moon
 } from 'lucide-react';
 import {
     LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer,
-    AreaChart, Area
+    AreaChart, Area, CartesianGrid
 } from 'recharts';
 
 const Dashboard = () => {
@@ -15,32 +16,68 @@ const Dashboard = () => {
     const navigate = useNavigate();
 
     // State for Real Data
-    const [status, setStatus] = useState({ uptime: 0, mongo: false, qdrant: false, vectors: 0, threats_active: 0 });
+    const [status, setStatus] = useState({
+        uptime: 0, mongo: false, qdrant: false, vectors: 0,
+        threats_active: 0, threats_new: 0, threats_known: 0, threats_fp: 0
+    });
     const [threats, setThreats] = useState([]);
-    const [graphData, setGraphData] = useState([]);
+    // Initialize with placeholder data so axes always show
+    const [graphData, setGraphData] = useState(() => {
+        return Array.from({ length: 10 }).map((_, i) => ({
+            time: '00:00', eps: 0, safe: 0, new: 0, known: 0, fp: 0
+        }));
+    });
     const [config, setConfig] = useState(null); // Load config for thresholds
     const [stats, setStats] = useState({ trend_percent: 0 });
+    const [theme, setTheme] = useState('dark');
+    const [timeFilter, setTimeFilter] = useState('1m');
 
+    // Theme Toggle Effect
+    useEffect(() => {
+        if (theme === 'light') {
+            document.body.classList.add('light-theme');
+        } else {
+            document.body.classList.remove('light-theme');
+        }
+    }, [theme]);
+
+    const toggleTheme = () => {
+        setTheme(prev => prev === 'dark' ? 'light' : 'dark');
+    };
+
+    // Poll API
     // Poll API
     useEffect(() => {
         const fetchData = async () => {
             try {
                 const headers = { Authorization: `Bearer ${localStorage.getItem('token')}` };
 
+                // Map filter to limit
+                const limitMap = { '1s': 10, '1m': 60, '1h': 3600 };
+                const limit = limitMap[timeFilter] || 60;
+
                 // 1. Status
                 const statusRes = await axios.get('http://localhost:8000/status', { headers });
                 setStatus(statusRes.data);
 
                 // 2. Metrics (Graph)
-                const metricsRes = await axios.get('http://localhost:8000/metrics?limit=30', { headers });
+                const metricsRes = await axios.get(`http://localhost:8000/metrics?limit=${limit}`, { headers });
                 // Reverse because API returns newest first (desc list) -> Graph needs oldest first (asc x-axis)
-                let rawGraph = metricsRes.data.reverse().map(m => ({
-                    time: new Date(m.timestamp * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-                    eps: m.eps_in
-                }));
+                let rawGraph = metricsRes.data.reverse().map(m => {
+                    // Calculate Total AI Analyzed Count
+                    const aiCount = (m.verdict_safe || 0) + (m.verdict_threat || 0) + (m.verdict_new || 0) + (m.verdict_fp || 0);
+                    return {
+                        time: new Date(m.timestamp * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+                        eps: m.eps_in,
+                        ai_eps: aiCount,
+                        safe: m.verdict_safe || 0,
+                        new: m.verdict_new || 0,
+                        known: m.verdict_threat || 0,
+                        fp: m.verdict_fp || 0
+                    };
+                });
 
-                // Simulation Override REMOVED from inside Try block - moved to after/independent
-                setGraphData(rawGraph);
+                if (rawGraph.length > 0) setGraphData(rawGraph);
 
                 // 3. Threats
                 const threatsRes = await axios.get('http://localhost:8000/threats?limit=5', { headers });
@@ -65,9 +102,10 @@ const Dashboard = () => {
         };
 
         fetchData(); // Initial
-        const interval = setInterval(fetchData, 2000); // Poll every 2s
+        const interval = setInterval(fetchData, 1000); // Poll every 1s
         return () => clearInterval(interval);
-    }, []);
+    }, [timeFilter]); // Re-run when filter changes
+
 
     const formatUptime = (seconds) => {
         const h = Math.floor(seconds / 3600);
@@ -102,29 +140,62 @@ const Dashboard = () => {
     return (
         <div style={{ minHeight: '100vh', paddingBottom: '2rem' }}>
             {/* Navbar */}
+            {/* Navbar */}
             <nav className="glass-panel" style={{
-                position: 'sticky', top: 0, zIndex: 100,
-                padding: '1rem 2rem',
+                position: 'sticky', top: '0.2rem', zIndex: 100,
+                padding: '0.8rem 2rem',
                 display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                margin: '0 0 2rem 0', borderRadius: '0 0 12px 12px'
+                margin: '0.5rem 2rem 0 2rem', borderRadius: '12px'
             }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-                    <ShieldAlert color="var(--primary)" size={32} />
-                    <h2 style={{ fontSize: '1.5rem' }}>KINETIX<span style={{ color: 'var(--primary)' }}>ZERO</span></h2>
+                {/* Left: Logo */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', minWidth: '200px' }}>
+                    <ShieldAlert color="var(--primary)" size={28} />
+                    <h2 style={{ fontSize: '1.4rem' }}>KINETIX<span style={{ color: 'var(--primary)' }}>ZERO</span></h2>
                 </div>
 
-                <div style={{ display: 'flex', gap: '1.5rem', alignItems: 'center' }}>
-                    <button className="glass-card" style={{ padding: '0.5rem', background: 'transparent' }} title="Settings">
-                        <Settings size={20} color="var(--text-muted)" />
-                    </button>
+                {/* Center: Navigation */}
+                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                    {[
+                        { icon: Home, label: 'Home' },
+                        { icon: Layout, label: 'Dashboard', active: true },
+                        { icon: Activity, label: 'Status' },
+                        { icon: Shield, label: 'Threat' },
+                        { icon: Search, label: 'Analysis' },
+                        { icon: Database, label: 'DB' },
+                        { icon: Settings, label: 'Settings' },
+                        { icon: User, label: 'Account' },
+                    ].map((item, idx) => (
+                        <button key={idx} className="glass-card" title={item.label} style={{
+                            padding: '0.6rem',
+                            background: item.active ? 'rgba(0, 240, 255, 0.1)' : 'transparent',
+                            border: item.active ? '1px solid var(--primary)' : '1px solid transparent',
+                            color: item.active ? 'var(--primary)' : 'var(--text-muted)',
+                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                            cursor: 'pointer', transition: 'all 0.2s', borderRadius: '8px'
+                        }}>
+                            <item.icon size={20} />
+                        </button>
+                    ))}
+                </div>
 
+                {/* Right: Actions */}
+                <div style={{ display: 'flex', gap: '1rem', alignItems: 'center', minWidth: '200px', justifyContent: 'flex-end' }}>
+                    <button onClick={toggleTheme} className="glass-card" style={{
+                        padding: '0.6rem',
+                        background: 'transparent',
+                        border: '1px solid var(--glass-border)',
+                        color: 'var(--text-muted)',
+                        cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center'
+                    }} title={theme === 'dark' ? "Switch to Light Mode" : "Switch to Dark Mode"}>
+                        {theme === 'dark' ? <Sun size={20} /> : <Moon size={20} />}
+                    </button>
 
                     <button onClick={handleLogout} className="glass-card" style={{
                         padding: '0.5rem 1rem',
                         background: 'rgba(255, 42, 109, 0.1)',
                         border: '1px solid var(--danger)',
                         color: 'var(--danger)',
-                        display: 'flex', gap: '0.5rem', alignItems: 'center'
+                        display: 'flex', gap: '0.5rem', alignItems: 'center', cursor: 'pointer'
                     }}>
                         <LogOut size={16} /> Disconnect
                     </button>
@@ -136,7 +207,7 @@ const Dashboard = () => {
                 <div className="dashboard-grid">
                     {/* Card 1: EPS (Inbound Traffic) */}
                     <div className="glass-card col-span-3" style={{
-                        padding: '1.5rem',
+                        padding: '1rem',
                         position: 'relative',
                         overflow: 'hidden',
                         border: epsState.pulse ? '2px solid var(--danger)' : undefined,
@@ -145,11 +216,25 @@ const Dashboard = () => {
                     }}>
                         <Activity size={40} style={{ position: 'absolute', right: -5, top: -5, opacity: 0.1 }} />
                         <h4 style={{ color: 'var(--text-muted)', marginBottom: '0.5rem' }}>Inbound Traffic</h4>
-                        <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.5rem' }}>
-                            <span style={{ fontSize: '2.5rem', fontWeight: 700, color: epsState.color }}>
-                                {graphData.length > 0 ? graphData[graphData.length - 1].eps : 0}
-                            </span>
-                            <span style={{ color: 'var(--text-muted)' }}>EPS</span>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: '2.3rem', marginBottom: '1.2rem' }}>
+                            {/* EPS Row */}
+                            <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.8rem' }}>
+                                <span style={{ fontSize: '3.5rem', fontWeight: 700, color: epsState.color, lineHeight: 1 }}>
+                                    {graphData.length > 0 ? graphData[graphData.length - 1].eps : 0}
+                                </span>
+                                <span style={{ color: 'var(--text-muted)' }}>EPS</span>
+                            </div>
+
+                            {/* Separator */}
+                            <div style={{ width: '1px', height: '40px', background: 'rgba(255,255,255,0.1)' }}></div>
+
+                            {/* Analyzed Row */}
+                            <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.8rem' }}>
+                                <span style={{ fontSize: '2rem', fontWeight: 700, color: '#a855f7', lineHeight: 1 }}>
+                                    {graphData.length > 0 ? graphData[graphData.length - 1].ai_eps : 0}
+                                </span>
+                                <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>Analyzed</span>
+                            </div>
                         </div>
                         <div style={{ marginTop: '0.5rem', display: 'flex', gap: '0.5rem', fontSize: '0.8rem', color: epsState.color }}>
                             {stats.trend_percent >= 0 ? <ArrowUpRight size={14} /> : <ArrowDownRight size={14} />}
@@ -158,45 +243,69 @@ const Dashboard = () => {
                     </div>
 
                     {/* Card 2: Threat Detection */}
-                    <div className="glass-card col-span-3" style={{ padding: '1.5rem' }}>
+                    <div className="glass-card col-span-3" style={{ padding: '1rem' }}>
                         <ShieldAlert size={40} style={{ position: 'absolute', right: -5, top: -5, opacity: 0.1 }} />
-                        <h4 style={{ color: 'var(--text-muted)', marginBottom: '0.5rem' }}>Active Threats</h4>
-                        <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.5rem' }}>
-                            <span style={{ fontSize: '2.5rem', fontWeight: 700, color: 'var(--danger)' }}>{status.threats_active}</span>
+                        <h4 style={{ color: 'var(--text-muted)', marginBottom: '0.2rem' }}>Active Threats</h4>
+                        <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.8rem', marginTop: '1rem', marginBottom: '1rem' }}>
+                            <span style={{ fontSize: '3.5rem', fontWeight: 700, color: 'var(--danger)', lineHeight: 1 }}>{status.threats_active}</span>
                             <span style={{ color: 'var(--text-muted)' }}>Detected</span>
                         </div>
-                        <div style={{ marginTop: '0.5rem', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-                            In Archive
+
+                        {/* Breakdown: Minimalist Stat Row */}
+                        <div style={{ display: 'flex', justifyContent: 'space-between', padding: '0 0.5rem', marginTop: 'auto' }}>
+                            {[
+                                { label: 'New', count: status.threats_new, color: 'var(--accent)' },
+                                { label: 'Known', count: status.threats_known, color: 'var(--danger)' },
+                                { label: 'F/P', count: status.threats_fp, color: '#00f0ff' }
+                            ].map((item, idx) => (
+                                <div key={idx} style={{ textAlign: 'center' }}>
+                                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '0.3rem', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                                        <span style={{ display: 'inline-block', width: '6px', height: '6px', borderRadius: '50%', background: item.color, marginRight: '6px', marginBottom: '1px' }}></span>
+                                        {item.label}
+                                    </div>
+                                    <div style={{ fontSize: '1.5rem', fontWeight: 600, color: 'var(--text-main)' }}>
+                                        {item.count || 0}
+                                    </div>
+                                </div>
+                            ))}
                         </div>
                     </div>
 
                     {/* Card 3: Memory Status */}
-                    <div className="glass-card col-span-3" style={{ padding: '1.5rem' }}>
+                    <div className="glass-card col-span-3" style={{ padding: '1rem' }}>
                         <Database size={40} style={{ position: 'absolute', right: -5, top: -5, opacity: 0.1 }} />
-                        <h4 style={{ color: 'var(--text-muted)', marginBottom: '0.5rem' }}>AI Memory</h4>
-                        <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.5rem', marginBottom: '1rem' }}>
-                            <span style={{ fontSize: '2.5rem', fontWeight: 700, color: 'var(--warning)' }}>
+                        <h4 style={{ color: 'var(--text-muted)', marginBottom: '0.2rem' }}>AI Memory</h4>
+                        <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.8rem', marginBottom: '1rem', marginTop: '1rem' }}>
+                            <span style={{ fontSize: '3.5rem', fontWeight: 700, color: 'var(--warning)', lineHeight: 1 }}>
                                 {status.vectors}
                             </span>
                             <span style={{ color: 'var(--text-muted)' }}>Vectors</span>
                         </div>
 
-                        {/* Breakdown */}
-                        <div style={{ display: 'flex', gap: '0.2rem', height: '6px', borderRadius: '3px', overflow: 'hidden', marginBottom: '0.5rem' }}>
-                            <div style={{ flex: stats.memory?.safe || 1, background: 'var(--success)', opacity: 0.7 }} />
-                            <div style={{ flex: stats.memory?.anomaly || 0, background: 'var(--accent)' }} />
-                            <div style={{ flex: stats.memory?.threat || 0, background: 'var(--danger)' }} />
+                        {/* Memory Breakdown: Minimalist Stat Row */}
+                        <div style={{ display: 'flex', justifyContent: 'space-between', padding: '0 0.5rem', marginTop: 'auto' }}>
+                            {[
+                                { label: 'Safe', count: stats.memory?.safe, color: 'var(--success)' },
+                                { label: 'New', count: stats.memory?.anomaly, color: 'var(--accent)' },
+                                { label: 'Threat', count: stats.memory?.threat, color: 'var(--danger)' }
+                            ].map((item, idx) => (
+                                <div key={idx} style={{ textAlign: 'center' }}>
+                                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '0.3rem', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                                        <span style={{ display: 'inline-block', width: '6px', height: '6px', borderRadius: '50%', background: item.color, marginRight: '6px', marginBottom: '1px' }}></span>
+                                        {item.label}
+                                    </div>
+                                    <div style={{ fontSize: '1.5rem', fontWeight: 600, color: 'var(--text-main)' }}>
+                                        {item.count || 0}
+                                    </div>
+                                </div>
+                            ))}
                         </div>
 
-                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                            <span style={{ color: 'var(--success)' }}>{stats.memory?.safe || 0} Safe</span>
-                            <span style={{ color: 'var(--accent)' }}>{stats.memory?.anomaly || 0} New</span>
-                            <span style={{ color: 'var(--danger)' }}>{stats.memory?.threat || 0} Bad</span>
-                        </div>
+
                     </div>
 
                     {/* Card 4: System Status */}
-                    <div className="glass-card col-span-3" style={{ padding: '1.5rem' }}>
+                    <div className="glass-card col-span-3" style={{ padding: '1rem' }}>
                         <Server size={40} style={{ position: 'absolute', right: -5, top: -5, opacity: 0.1 }} />
                         <h4 style={{ color: 'var(--text-muted)', marginBottom: '1rem' }}>System Health</h4>
 
@@ -235,23 +344,72 @@ const Dashboard = () => {
                 {/* Graph Row */}
                 <div className="dashboard-grid">
                     <div className="glass-card col-span-8" style={{ padding: '1.5rem', minHeight: '400px' }}>
-                        <h3 style={{ marginBottom: '1.5rem' }}>Traffic Velocity</h3>
-                        <div style={{ width: '100%', height: '300px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+                            <h3 style={{ margin: 0 }}>Traffic Velocity</h3>
+                            {/* Legend */}
+                            <div style={{ display: 'flex', gap: '0.8rem', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}><span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#00f0ff' }}></span>Total</div>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}><span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#00ff88' }}></span>Safe</div>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}><span style={{ width: '8px', height: '8px', borderRadius: '50%', background: 'var(--accent)' }}></span>AI Detect</div>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}><span style={{ width: '8px', height: '8px', borderRadius: '50%', background: 'var(--danger)' }}></span>Confirm Threat</div>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}><span style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#ffae00' }}></span>FP</div>
+                            </div>
+
+                            {/* Time Filters */}
+                            <div style={{ display: 'flex', gap: '0.5rem', background: 'rgba(0,0,0,0.2)', padding: '0.2rem', borderRadius: '6px' }}>
+                                {['1s', '1m', '1h'].map(tf => (
+                                    <button
+                                        key={tf}
+                                        onClick={() => setTimeFilter(tf)}
+                                        style={{
+                                            padding: '0.2rem 0.5rem',
+                                            fontSize: '0.75rem',
+                                            border: 'none',
+                                            borderRadius: '4px',
+                                            cursor: 'pointer',
+                                            background: timeFilter === tf ? 'var(--primary)' : 'transparent',
+                                            color: timeFilter === tf ? '#000' : 'var(--text-muted)',
+                                            fontWeight: timeFilter === tf ? 600 : 400
+                                        }}
+                                    >
+                                        {tf}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                        <div style={{ width: '100%', height: '400px' }}>
                             <ResponsiveContainer>
-                                <AreaChart data={graphData}>
+                                <AreaChart data={graphData} margin={{ top: 20, right: 10, left: 10, bottom: 50 }}>
                                     <defs>
                                         <linearGradient id="colorEps" x1="0" y1="0" x2="0" y2="1">
-                                            <stop offset="5%" stopColor="#00f0ff" stopOpacity={0.3} />
+                                            <stop offset="5%" stopColor="#00f0ff" stopOpacity={0.1} />
                                             <stop offset="95%" stopColor="#00f0ff" stopOpacity={0} />
                                         </linearGradient>
                                     </defs>
-                                    <XAxis dataKey="time" stroke="#555" />
-                                    <YAxis stroke="#555" />
+                                    <CartesianGrid strokeDasharray="3 3" stroke="#333" vertical={false} />
+                                    <XAxis
+                                        dataKey="time"
+                                        stroke="#888888"
+                                        tick={{ fill: '#888888', fontSize: 13 }}
+                                        tickLine={{ stroke: '#888888' }}
+                                        label={{ value: 'Time (Last Hour)', position: 'insideBottom', offset: -15, fill: '#888888', fontSize: 13 }}
+                                    />
+                                    <YAxis
+                                        stroke="#888888"
+                                        tick={{ fill: '#888888', fontSize: 13 }}
+                                        tickLine={{ stroke: '#888888' }}
+                                        domain={[0, 'auto']}
+                                        label={{ value: 'EPS', angle: -90, position: 'insideLeft', fill: '#888888', fontSize: 13, offset: 5 }}
+                                    />
                                     <Tooltip
                                         contentStyle={{ backgroundColor: '#111', border: '1px solid #333' }}
                                         itemStyle={{ color: '#fff' }}
                                     />
-                                    <Area type="monotone" dataKey="eps" stroke="#00f0ff" fillOpacity={1} fill="url(#colorEps)" isAnimationActive={false} />
+                                    <Area type="monotone" dataKey="eps" stroke="#00f0ff" fill="url(#colorEps)" fillOpacity={1} name="Total EPS" />
+                                    <Area type="monotone" dataKey="safe" stroke="#00ff88" fill="#00ff88" fillOpacity={0.2} name="Safe" />
+                                    <Area type="monotone" dataKey="new" stroke="#b300ff" fill="#b300ff" fillOpacity={0.3} name="AI Detect" />
+                                    <Area type="monotone" dataKey="known" stroke="#ff2a6d" fill="#ff2a6d" fillOpacity={0.4} name="Confirm Threat" />
+                                    <Area type="monotone" dataKey="fp" stroke="#ffae00" fill="#ffae00" fillOpacity={0.5} name="False Positives" />
                                 </AreaChart>
                             </ResponsiveContainer>
                         </div>

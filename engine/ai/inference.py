@@ -12,6 +12,9 @@ import glob
 import re
 import torch.nn as nn
 import uuid
+import psutil
+import shutil
+import subprocess
 from torch.cuda.amp import GradScaler
 from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, VectorParams, PointStruct, SearchRequest
@@ -465,7 +468,106 @@ class UnsupervisedAI(threading.Thread):
                doc["gpu_mem_reserved"] = torch.cuda.memory_reserved(self.device)
                doc["gpu_mem_allocated"] = torch.cuda.memory_allocated(self.device)
             except: pass
+
+        # --- NEW SYSTEM METRICS ---
+        try:
+            sys_metrics = self._get_system_metrics()
+            doc.update(sys_metrics)
+        except Exception as e:
+            print(f"[AI] Metrics Error: {e}")
             
+        # Write to Mongo
+        try:
+            self.mongo_metrics.insert_one(doc)
+
+    def _get_system_metrics(self):
+        """Captures System and Process Resource Usage"""
+        stats = {}
+        
+        # 1. System Level (Host)
+        stats["system_cpu_percent"] = psutil.cpu_percent(interval=None) # Non-blocking
+        
+        mem = psutil.virtual_memory()
+        stats["system_ram_percent"] = mem.percent
+        stats["system_ram_used_gb"] = round(mem.used / (1024**3), 2)
+        stats["system_ram_total_gb"] = round(mem.total / (1024**3), 2)
+        
+        # 2. Process Level (AI Worker)
+        proc = psutil.Process(os.getpid())
+        with proc.oneshot():
+            stats["process_cpu_percent"] = proc.cpu_percent(interval=None)
+            stats["process_ram_rss_mb"] = round(proc.memory_info().rss / (1024**2), 2)
+            stats["process_ram_percent"] = round(proc.memory_percent(), 2)
+
+        # 3. GPU Stats (Nvidia/AMD)
+        # We try to use simple command-line tools to avoid heavy python bindings
+        gpu_stats = self._get_gpu_stats()
+        if gpu_stats:
+            stats.update(gpu_stats)
+            
+        return stats
+
+    def _get_gpu_stats(self):
+        """Heuristic GPU Stats fetching without heavy libraries"""
+        gpus = {}
+        
+        # Check NVIDIA
+        if shutil.which("nvidia-smi"):
+            try:
+                # Get Utilization and Memory in CSV format: utilization.gpu, utilization.memory, memory.total, memory.used
+                result = subprocess.run(
+                    ['nvidia-smi', '--query-gpu=utilization.gpu,utilization.memory,memory.total,memory.used', '--format=csv,noheader,nounits'], 
+                    capture_output=True, text=True, timeout=0.5
+                )
+                if result.returncode == 0:
+                    lines = result.stdout.strip().split('\n')
+                    # We only take the first GPU for "System Summary" or average them?
+                    # Let's take the first one or max.
+                    # User asked for "Total Used".
+                    
+                    # If multiple GPUs, we can average util, sum memory.
+                    total_mem = 0
+                    used_mem = 0
+                    avg_util = 0
+                    
+                    for line in lines:
+                        parts = [float(x.strip()) for x in line.split(',')]
+                        # parts: [gpu_util, mem_util_percent, mem_total_mb, mem_used_mb]
+                        avg_util += parts[0]
+                        total_mem += parts[2]
+                        used_mem += parts[3]
+                        
+                    if len(lines) > 0:
+                        gpus["system_gpu_percent"] = round(avg_util / len(lines), 1)
+                        gpus["system_gpu_mem_percent"] = round((used_mem / total_mem) * 100, 1) if total_mem > 0 else 0
+                        gpus["system_gpu_mem_used_mb"] = int(used_mem)
+                        gpus["gpu_vendor"] = "nvidia"
+                        
+            except Exception as e:
+                # print(f"Nvidia stats failed: {e}")
+                pass
+
+        # Check AMD (ROCm)
+        elif shutil.which("rocm-smi"):
+            try:
+                # rocm-smi --showuse --json
+                # This might be complex to parse if JSON not available or format changes.
+                # Simple CSV approach: rocm-smi --showuse --csv
+                # Output: device, GPU use (%), GFX Clock, ...
+                # Let's try JSON if supported, else skipped for stability unless user has it.
+                # Fallback to simple check?
+                pass
+            except:
+                pass
+                
+        # Fallback: PyTorch (Process specific, but accurate for this worker)
+        if torch.cuda.is_available() and "system_gpu_percent" not in gpus:
+             # We can't get SYSTEM wide load from Torch easily. 
+             # But we can report Allocated as before.
+             pass
+             
+        return gpus
+        
         # Write to Mongo
         try:
             self.mongo_metrics.insert_one(doc)

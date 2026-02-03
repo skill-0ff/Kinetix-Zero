@@ -153,7 +153,12 @@ async def get_status(current_user: User = Depends(get_current_active_user)):
     try:
         mongo_client.admin.command('ping')
         status_data["mongo"] = True
+        
+        # Threat Counts from MongoDB
         status_data["threats_active"] = db["events"].count_documents({"verdict": {"$in": ["KNOWN THREAT", "NEW ANOMALY", "Known Threat (MISP)"]}})
+        status_data["threats_new"] = db["events"].count_documents({"verdict": "NEW ANOMALY"})
+        status_data["threats_known"] = db["events"].count_documents({"verdict": {"$in": ["KNOWN THREAT", "Known Threat (MISP)"]}})
+        status_data["threats_fp"] = db["events"].count_documents({"verdict": "FALSE POSITIVE"})
         
         # Check Brain/AI Liveness via Metrics
         latest_metric = db["metrics"].find_one(sort=[("timestamp", -1)])

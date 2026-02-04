@@ -24,7 +24,7 @@ const Dashboard = () => {
     // Initialize with placeholder data so axes always show
     const [graphData, setGraphData] = useState(() => {
         return Array.from({ length: 10 }).map((_, i) => ({
-            time: '00:00', eps: 0, safe: 0, new: 0, known: 0, fp: 0
+            time: '00:00', eps: 0, safe: 0, new: 0, known: 0, fp: 0, ai_eps: 0
         }));
     });
     const [config, setConfig] = useState(null); // Load config for thresholds
@@ -226,7 +226,7 @@ const Dashboard = () => {
                             </div>
 
                             {/* Separator */}
-                            <div style={{ width: '1px', height: '40px', background: 'rgba(255,255,255,0.1)' }}></div>
+                            <div style={{ height: '40px', borderLeft: 'var(--glass-border)' }}></div>
 
                             {/* Analyzed Row */}
                             <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.8rem' }}>
@@ -331,7 +331,7 @@ const Dashboard = () => {
                             </div>
 
                             {/* Uptime Footer */}
-                            <div style={{ marginTop: '0.5rem', paddingTop: '0.5rem', borderTop: '1px solid rgba(255,255,255,0.1)' }}>
+                            <div style={{ marginTop: '0.5rem', paddingTop: '0.5rem', borderTop: 'var(--glass-border)' }}>
                                 <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>AI Uptime</div>
                                 <div style={{ fontSize: '1.2rem', fontWeight: 600, color: 'var(--text-main)' }}>
                                     {status.core_status ? formatUptime(status.uptime) : "---"}
@@ -399,6 +399,7 @@ const Dashboard = () => {
                                         tick={{ fill: '#888888', fontSize: 13 }}
                                         tickLine={{ stroke: '#888888' }}
                                         domain={[0, 'auto']}
+                                        tickFormatter={(value) => value === 0 ? "" : value}
                                         label={{ value: 'EPS', angle: -90, position: 'insideLeft', fill: '#888888', fontSize: 13, offset: 5 }}
                                     />
                                     <Tooltip
@@ -417,7 +418,7 @@ const Dashboard = () => {
 
                     <div className="glass-card col-span-4" style={{ padding: '0', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
                         {/* Header Stats */}
-                        <div style={{ padding: '1.5rem', borderBottom: '1px solid rgba(255,255,255,0.1)', background: 'rgba(0,0,0,0.2)' }}>
+                        <div style={{ padding: '1.5rem', borderBottom: 'var(--glass-border)', background: 'rgba(0,0,0,0.02)' }}>
                             <h3 style={{ marginBottom: '1rem' }}>Active Threat Monitor</h3>
                             <div style={{ display: 'flex', gap: '1rem' }}>
                                 <div style={{ flex: 1, padding: '0.8rem', background: 'rgba(112, 0, 255, 0.1)', borderRadius: '8px', border: '1px solid var(--accent)' }}>

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import {
     Activity, ShieldAlert, FileText, Settings, LogOut,
     ArrowUpRight, ArrowDownRight, Server, Database,
@@ -14,6 +14,7 @@ import {
 const Dashboard = () => {
 
     const navigate = useNavigate();
+    const location = useLocation();
 
     // State for Real Data
     const [status, setStatus] = useState({
@@ -152,30 +153,37 @@ const Dashboard = () => {
                     <ShieldAlert color="var(--primary)" size={28} />
                     <h2 style={{ fontSize: '1.4rem' }}>KINETIX<span style={{ color: 'var(--primary)' }}>ZERO</span></h2>
                 </div>
-
                 {/* Center: Navigation */}
                 <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
                     {[
-                        { icon: Home, label: 'Home' },
-                        { icon: Layout, label: 'Dashboard', active: true },
-                        { icon: Activity, label: 'Status' },
-                        { icon: Shield, label: 'Threat' },
-                        { icon: Search, label: 'Analysis' },
-                        { icon: Database, label: 'DB' },
-                        { icon: Settings, label: 'Settings' },
-                        { icon: User, label: 'Account' },
-                    ].map((item, idx) => (
-                        <button key={idx} className="glass-card" title={item.label} style={{
-                            padding: '0.6rem',
-                            background: item.active ? 'rgba(0, 240, 255, 0.1)' : 'transparent',
-                            border: item.active ? '1px solid var(--primary)' : '1px solid transparent',
-                            color: item.active ? 'var(--primary)' : 'var(--text-muted)',
-                            display: 'flex', alignItems: 'center', justifyContent: 'center',
-                            cursor: 'pointer', transition: 'all 0.2s', borderRadius: '8px'
-                        }}>
-                            <item.icon size={20} />
-                        </button>
-                    ))}
+                        { icon: Home, label: 'Home', path: '/' },
+                        { icon: Layout, label: 'Dashboard', path: '/' },
+                        { icon: Activity, label: 'Status', path: '/status' },
+                        { icon: Shield, label: 'Threat', path: '/threat' },
+                        { icon: Search, label: 'Analysis', path: '/analysis' },
+                        { icon: Database, label: 'DB', path: '/db' },
+                        { icon: Settings, label: 'Settings', path: '/settings' },
+                        { icon: User, label: 'Account', path: '/account' },
+                    ].map((item, idx) => {
+                        const isActive = location.pathname === item.path || (item.path !== '/' && location.pathname.startsWith(item.path));
+                        return (
+                            <button
+                                key={idx}
+                                onClick={() => navigate(item.path)}
+                                className="glass-card"
+                                title={item.label}
+                                style={{
+                                    padding: '0.6rem',
+                                    background: isActive ? 'rgba(0, 240, 255, 0.1)' : 'transparent',
+                                    border: isActive ? '1px solid var(--primary)' : '1px solid transparent',
+                                    color: isActive ? 'var(--primary)' : 'var(--text-muted)',
+                                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                    cursor: 'pointer', transition: 'all 0.2s', borderRadius: '8px'
+                                }}>
+                                <item.icon size={20} />
+                            </button>
+                        );
+                    })}
                 </div>
 
                 {/* Right: Actions */}
@@ -243,7 +251,7 @@ const Dashboard = () => {
                     </div>
 
                     {/* Card 2: Threat Detection */}
-                    <div className="glass-card col-span-3" style={{ padding: '1rem' }}>
+                    <div className="glass-card col-span-3" style={{ padding: '1rem', display: 'flex', flexDirection: 'column' }}>
                         <ShieldAlert size={40} style={{ position: 'absolute', right: -5, top: -5, opacity: 0.1 }} />
                         <h4 style={{ color: 'var(--text-muted)', marginBottom: '0.2rem' }}>Active Threats</h4>
                         <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.8rem', marginTop: '1rem', marginBottom: '1rem' }}>
@@ -272,7 +280,7 @@ const Dashboard = () => {
                     </div>
 
                     {/* Card 3: Memory Status */}
-                    <div className="glass-card col-span-3" style={{ padding: '1rem' }}>
+                    <div className="glass-card col-span-3" style={{ padding: '1rem', display: 'flex', flexDirection: 'column' }}>
                         <Database size={40} style={{ position: 'absolute', right: -5, top: -5, opacity: 0.1 }} />
                         <h4 style={{ color: 'var(--text-muted)', marginBottom: '0.2rem' }}>AI Memory</h4>
                         <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.8rem', marginBottom: '1rem', marginTop: '1rem' }}>
@@ -305,7 +313,7 @@ const Dashboard = () => {
                     </div>
 
                     {/* Card 4: System Status */}
-                    <div className="glass-card col-span-3" style={{ padding: '1rem' }}>
+                    <div className="glass-card col-span-3" style={{ padding: '1rem', display: 'flex', flexDirection: 'column' }}>
                         <Server size={40} style={{ position: 'absolute', right: -5, top: -5, opacity: 0.1 }} />
                         <h4 style={{ color: 'var(--text-muted)', marginBottom: '1rem' }}>System Health</h4>
 

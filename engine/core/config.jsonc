@@ -1,6 +1,6 @@
 {
     // --- Network Configuration ---
-    // UDP Port to listen on (0.0.0.0:5001)
+    // UDP Port to listen on (Internal Python Port is 5001, Collector Port is 5000)
     "port": 5001,
     // --- Brain Logic (Aggregation & Protection) ---
     // Time in seconds to buffer logs (Aggregation Window)

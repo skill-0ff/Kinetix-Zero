@@ -1,5 +1,7 @@
 import os
 import sqlite3
+import secrets
+import string
 from jose import jwt
 from datetime import datetime, timedelta
 from typing import Optional
@@ -7,7 +9,7 @@ from passlib.context import CryptContext
 from pydantic import BaseModel
 
 # Configuration
-SECRET_KEY = os.getenv("JWT_SECRET", "kinetix_secret_change_me")
+SECRET_KEY = os.getenv("JWT_SECRET", secrets.token_urlsafe(32))
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 # 24 Hours
 DB_PATH = "DB/users.db"
@@ -50,11 +52,17 @@ def init_auth_db():
     # Check if empty, create default admin
     cursor.execute("SELECT count(*) FROM users")
     if cursor.fetchone()[0] == 0:
-        default_pass = "admin" # Change on first login!
+        # Generate a secure random password for the first run
+        alphabet = string.ascii_letters + string.digits + "!@#$%^&*"
+        default_pass = ''.join(secrets.choice(alphabet) for i in range(16))
         hashed = get_password_hash(default_pass)
         cursor.execute("INSERT INTO users (username, hashed_password) VALUES (?, ?)", ("admin", hashed))
         conn.commit()
-        print(f"[Auth] Created default user 'admin' with password '{default_pass}'")
+        print("\n" + "="*50)
+        print(f"[Auth Security] Created default user 'admin'")
+        print(f"[Auth Security] GENERATED PASSWORD: {default_pass}")
+        print("[Auth Security] Please save this password immediately.")
+        print("="*50 + "\n")
     
     conn.close()
 

@@ -42,44 +42,6 @@ except ImportError:
         print(f"[Warning] AI Module not found: {e}")
         AI_AVAILABLE = False
 
-class Brain:
-    def __init__(self, config_path="engine/core/config.jsonc", role_map_path="engine/core/role_mapping.json"):
-        self.config_path = config_path
-        self.role_map_path = role_map_path
-        self.config = {}
-        self.running = True
-        self.buffer = []
-        self.last_flush = time.time()
-        
-        # Load initial config
-        self.load_config()
-        self.load_roles()
-        
-        # Initialize Vectorizer
-        self.vectorizer = LogNormalizer(config_path)
-        
-        # Initialize AI
-        self.ai = None
-        if AI_AVAILABLE:
-            try:
-                self.ai = UnsupervisedAI(config_path)
-            except Exception as e:
-                print(f"[Error] AI Init Failed: {e}")
-                
-        # Initialize MISP (Optional)
-        self.misp = None
-        if MispClient:
-            try:
-                self.misp = MispClient(self.config)
-                if self.misp.enabled:
-                    print(f"[Brain] MISP Integration Enabled: {self.misp.url}")
-            except Exception as e:
-                print(f"[Error] MISP Init Failed: {e}")
-        
-        # State monitoring
-        self.last_config_mtime = 0
-        self.last_role_mtime = 0
-        
 import queue
 
 class PacketReceiver(threading.Thread):
@@ -171,7 +133,15 @@ class Brain:
         # Enforce memory limit via maxsize
         q_size = int(self.config.get("max_queue_size", 10000))
         self.packet_queue = queue.Queue(maxsize=q_size)
+        self.evidence_queue = queue.Queue()
         self.last_flush = time.time()
+        
+        # Metrics Tracking
+        self.counter_in = 0
+        self.counter_out = 0
+        self.last_metrics_flush = time.time()
+        self.metrics_interval = 1.0
+        self.start_time = time.time()
         
         # Initialize Vectorizer
         self.vectorizer = LogNormalizer(config_path)
@@ -183,6 +153,24 @@ class Brain:
                 self.ai = UnsupervisedAI(config_path)
             except Exception as e:
                 print(f"[Error] AI Init Failed: {e}")
+                
+        # Initialize MISP (Optional)
+        self.misp = None
+        if MispClient:
+            try:
+                self.misp = MispClient(self.config)
+                if self.misp.enabled:
+                    print(f"[Brain] MISP Integration Enabled: {self.misp.url}")
+            except Exception as e:
+                print(f"[Error] MISP Init Failed: {e}")
+                
+        # Initialize Janitor
+        self.janitor = None
+        if Janitor:
+            try:
+                self.janitor = Janitor(self.config_path)
+            except Exception as e:
+                print(f"[Error] Janitor Init Failed: {e}")
         
         # State monitoring
         self.last_config_mtime = 0
@@ -374,7 +362,7 @@ class Brain:
                  print(f"[Error] MISP Check Failed: {e}")
 
         # Process Evidence Queue (Layer 1 Drops)
-        if not self.evidence_queue.empty():
+        if hasattr(self, "evidence_queue") and not self.evidence_queue.empty():
             evidence_batch = []
             try:
                 while not self.evidence_queue.empty():
@@ -392,10 +380,10 @@ class Brain:
             except: pass
             
             if evidence_batch and self.ai:
-                self.ai.push_evidence(evidence_batch)
-                
-            except:
-                continue
+                try:
+                    self.ai.push_evidence(evidence_batch)
+                except:
+                    pass
 
         # Optimization: Bulk Vectorization
         if decoded_logs:
@@ -448,9 +436,9 @@ class Brain:
             if now >= self.last_metrics_flush + self.metrics_interval:
                 try:
                     # Log to Mongo
-                    if self.ai and hasattr(self.ai, 'mongo_client'):
+                    if self.ai and hasattr(self.ai, 'mongo_metrics') and self.ai.mongo_metrics is not None:
                         try:
-                            self.ai.db["metrics"].insert_one({
+                            self.ai.mongo_metrics.insert_one({
                                 "timestamp": now,
                                 "eps_in": self.counter_in,
                                 "eps_out": self.counter_out,

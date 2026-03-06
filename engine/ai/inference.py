@@ -479,6 +479,8 @@ class UnsupervisedAI(threading.Thread):
         # Write to Mongo
         try:
             self.mongo_metrics.insert_one(doc)
+        except Exception as e:
+            print(f"Error saving to db {e}")
 
     def _get_system_metrics(self):
         """Captures System and Process Resource Usage"""
@@ -567,12 +569,6 @@ class UnsupervisedAI(threading.Thread):
              pass
              
         return gpus
-        
-        # Write to Mongo
-        try:
-            self.mongo_metrics.insert_one(doc)
-        except Exception as e:
-            print(f"[AI] Metric Write Failed: {e}")
             
         # Reset Accumulator
         for k in self.metrics_accum:
@@ -640,16 +636,16 @@ class UnsupervisedAI(threading.Thread):
             
         # Alerting Check
         if enforce_mask.any():
-        # Logic: We invert it to get the Loss Threshold
-        # Config 0.9 (Sensitive) -> Threshold 0.1 (Low Bar)
-        sensitivity = self.config.get("ai_anomaly_threshold", 0.5)
-        # Clamp to 0.01-0.99 to avoid div by zero or infinite alerts
-        sensitivity = max(0.01, min(0.99, sensitivity))
-        
-        # Formula: Higher Sensitivity = Lower Threshold
-        threshold = 1.0 - sensitivity
-        
-        enforced_losses = raw_loss_map * enforce_mask.float()
+            # Logic: We invert it to get the Loss Threshold
+            # Config 0.9 (Sensitive) -> Threshold 0.1 (Low Bar)
+            sensitivity = self.config.get("ai_anomaly_threshold", 0.5)
+            # Clamp to 0.01-0.99 to avoid div by zero or infinite alerts
+            sensitivity = max(0.01, min(0.99, sensitivity))
+            
+            # Formula: Higher Sensitivity = Lower Threshold
+            threshold = 1.0 - sensitivity
+            
+            enforced_losses = raw_loss_map * enforce_mask.float()
         
         # --- MEMORY LOGIC START ---
         
@@ -904,21 +900,6 @@ class UnsupervisedAI(threading.Thread):
                     print(f"  >> [VERDICT] {verdict} (Type: {mem_type or 'None'}, Dist: {mem_dist:.4f})")
                     print(f"  >> [DETAILS] Time: {ts_val}")
                 print(json.dumps(ctx["log"], indent=2))
-
-            # PATH A: SAFE (Auto-Learn)
-            else:
-                 verdict = "Safe"
-                 # Deduplication
-                 # If Safe Neighbor Exists (Low Dist), Skip Qdrant Save
-                 if not (mem_type == "Safe" and mem_dist < self.dedup_dist):
-                     points_to_upsert.append(PointStruct(
-                        id=event_uuid, 
-                        vector=ctx["vector"], 
-                        payload={"type": "Safe", "timestamp": time.time(), "log": ctx["log"]}
-                    ))
-                     if hasattr(self, "metrics_accum"): self.metrics_accum["mem_saved"] += 1
-                 else:
-                     if hasattr(self, "metrics_accum"): self.metrics_accum["mem_dropped"] += 1
 
             # Update Metric Counters
             if hasattr(self, "metrics_accum"):

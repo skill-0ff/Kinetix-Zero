@@ -11,7 +11,7 @@ import uuid
 
 # Add engine path
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-from engine.core.vectorizer import LogNormalizer
+from engine.core.vectorizer import LogNormalizer, VectorLibrary
 try:
     from engine.core.misp_client import MispClient # Attempt relative/module import
 except ImportError:
@@ -49,7 +49,6 @@ class PacketReceiver(threading.Thread):
         super().__init__()
         self.port = port
         self.protocol = protocol
-        self.queue = buffer_queue
         self.queue = buffer_queue
         # Sample Rate/Mode now only used for Logic Layer config, not here
         self.running = True
@@ -395,8 +394,6 @@ class Brain:
                         # Async Push (Fire and Forget)
                         self.ai.push_batch(vectors, aligned_logs)
                         self.counter_out += len(vectors)
-                        self.counter_out += len(vectors)
-                        self.counter_out += len(vectors)
                     except Exception as e:
                         print(f"[AI Error] {e}")
 
@@ -435,7 +432,6 @@ class Brain:
             # Flush Metrics (1s)
             if now >= self.last_metrics_flush + self.metrics_interval:
                 try:
-                    # Log to Mongo
                     if self.ai and hasattr(self.ai, 'mongo_metrics') and self.ai.mongo_metrics is not None:
                         try:
                             self.ai.mongo_metrics.insert_one({
@@ -444,79 +440,33 @@ class Brain:
                                 "eps_out": self.counter_out,
                                 "uptime": now - self.start_time
                             })
-                        except: pass
-                    
-                    # Reset
+                        except:
+                            pass
+
                     self.counter_in = 0
                     self.counter_out = 0
                     self.last_metrics_flush = now
                 except:
-                   pass
-            
-            # Flush Metrics (1s)
-            if now >= self.last_metrics_flush + self.metrics_interval:
+                    pass
+
+            # Watchdog: Single Process Control
+            if not self.receiver.is_alive():
+                print("[System ALERT] Receiver Thread Died! Restarting...")
+                self.receiver = PacketReceiver(
+                    self.config.get("port"),
+                    self.config.get("protocol"),
+                    self.packet_queue,
+                    self.config.get("forensic_sample_rate", 100),
+                    self.config.get("forensic_sample_mode", "random")
+                )
+                self.receiver.start()
+
+            if self.ai and not self.ai.is_alive():
+                print("[System ALERT] AI Thread Died! Restarting...")
                 try:
-                    # Log to Mongo
-                    if self.ai and hasattr(self.ai, 'mongo_client'):
-                        try:
-                            self.ai.db["metrics"].insert_one({
-                                "timestamp": now,
-                                "eps_in": self.counter_in,
-                                "eps_out": self.counter_out
-                            })
-                        except: pass
-                    
-                    # Reset
-                    self.counter_in = 0
-                    self.counter_out = 0
-                    self.last_metrics_flush = now
-                except:
-                   pass
-            
-            # Flush Metrics (1s)
-            if now >= self.last_metrics_flush + self.metrics_interval:
-                try:
-                    # Calculate EPS
-                    # In real high-performance scenario, use atomic counters or approximate
-                    # Here we just use the local counter since we are single threaded in this specific loop logic
-                    # But wait, self.packet_queue IS populated by Thread.
-                    # Ideally we count what we POPPED.
-                    
-                    # Log to Mongo
-                    if self.ai and hasattr(self.ai, 'mongo_client'):
-                        try:
-                            self.ai.db["metrics"].insert_one({
-                                "timestamp": now,
-                                "eps_in": self.counter_in,
-                                "eps_out": self.counter_out
-                            })
-                        except: pass
-                    
-                    # Reset
-                    self.counter_in = 0
-                    self.counter_out = 0
-                    self.last_metrics_flush = now
-                except:
-                   pass
-                
-                # Watchdog: Single Process Control
-                if not self.receiver.is_alive():
-                    print("[System ALERT] Receiver Thread Died! Restarting...")
-                    self.receiver = PacketReceiver(
-                        self.config.get("port"), 
-                        self.config.get("protocol"), 
-                        self.packet_queue,
-                        self.config.get("forensic_sample_rate", 100),
-                        self.config.get("forensic_sample_mode", "random")
-                    )
-                    self.receiver.start()
-                    
-                if self.ai and not self.ai.is_alive():
-                    print("[System ALERT] AI Thread Died! Restarting...")
-                    try:
-                        self.ai = UnsupervisedAI(self.config_path)
-                    except Exception as e:
-                        print(f"[System] AI Restart Failed: {e}")
+                    self.ai = UnsupervisedAI(self.config_path)
+                except Exception as e:
+                    print(f"[System] AI Restart Failed: {e}")
 
 if __name__ == "__main__":
     brain = Brain()

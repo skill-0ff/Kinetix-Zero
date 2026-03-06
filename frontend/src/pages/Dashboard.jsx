@@ -47,11 +47,10 @@ const Dashboard = () => {
     };
 
     // Poll API
-    // Poll API
     useEffect(() => {
         const fetchData = async () => {
             try {
-                const headers = { Authorization: `Bearer ${localStorage.getItem('token')}` };
+                const headers = { Authorization: `Bearer ${sessionStorage.getItem('token')}` };
 
                 // Map filter to limit
                 const limitMap = { '1s': 10, '1m': 60, '1h': 3600 };
@@ -69,7 +68,7 @@ const Dashboard = () => {
                     const aiCount = (m.verdict_safe || 0) + (m.verdict_threat || 0) + (m.verdict_new || 0) + (m.verdict_fp || 0);
                     return {
                         time: new Date(m.timestamp * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-                        eps: m.eps_in,
+                        eps: m.eps_in ?? m.eps ?? 0,
                         ai_eps: aiCount,
                         safe: m.verdict_safe || 0,
                         new: m.verdict_new || 0,
@@ -134,7 +133,7 @@ const Dashboard = () => {
     const epsState = getEpsState();
 
     const handleLogout = () => {
-        localStorage.removeItem('token');
+        sessionStorage.removeItem('token');
         navigate('/login');
     };
 

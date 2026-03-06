@@ -20,6 +20,7 @@ from datetime import timedelta
 init_auth_db()
 
 START_TIME = time.time()
+QDRANT_COLLECTION = "brain_memory"
 
 app = FastAPI(title="Kinetix-Zero API", version="1.0.0")
 
@@ -166,14 +167,14 @@ async def get_status(current_user: User = Depends(get_current_active_user)):
             lag = time.time() - latest_metric.get("timestamp", 0)
             if lag < 5: # If metrics logged within last 5s, it is ALIVE
                 status_data["core_status"] = True
-                status_data["uptime"] = int(latest_metric.get("uptime", 0))
+                status_data["uptime"] = int(latest_metric.get("uptime", latest_metric.get("uptime_seconds", 0)))
     except:
         pass
         
     # Check Qdrant
     try:
         # Check collection info
-        coll = qdrant.get_collection("network_patterns")
+        coll = qdrant.get_collection(QDRANT_COLLECTION)
         status_data["qdrant"] = True
         status_data["vectors"] = coll.points_count
     except:
@@ -189,7 +190,7 @@ async def get_stats(current_user: User = Depends(get_current_active_user)):
     # 1. Current EPS (Avg of last 10s)
     current_cursor = db["metrics"].find({"timestamp": {"$gt": now - 10}})
     current_points = list(current_cursor)
-    current_eps = sum(p["eps_in"] for p in current_points) / max(1, len(current_points))
+    current_eps = sum(p.get("eps_in", p.get("eps", 0)) for p in current_points) / max(1, len(current_points))
     
     # 2. Last Hour EPS (Avg of last 3600s)
     hour_cursor = db["metrics"].find({"timestamp": {"$gt": now - 3600}})
@@ -197,7 +198,7 @@ async def get_stats(current_user: User = Depends(get_current_active_user)):
     if not hour_points:
         hour_avg = 0
     else:
-        hour_avg = sum(p["eps_in"] for p in hour_points) / len(hour_points)
+        hour_avg = sum(p.get("eps_in", p.get("eps", 0)) for p in hour_points) / len(hour_points)
         
     # Calculate Trend
     if hour_avg == 0:
@@ -209,21 +210,21 @@ async def get_stats(current_user: User = Depends(get_current_active_user)):
     vec_counts = {"safe": 0, "anomaly": 0, "threat": 0}
     try:
         # Check if collection exists first to avoid error
-        qdrant.get_collection("network_patterns")
+        qdrant.get_collection(QDRANT_COLLECTION)
         
         vec_counts["safe"] = qdrant.count(
-            "network_patterns", 
+            QDRANT_COLLECTION, 
             filter=Filter(must=[FieldCondition(key="type", match=MatchValue(value="ai_safe"))])
         ).count
         
         vec_counts["anomaly"] = qdrant.count(
-            "network_patterns", 
-            filter=Filter(must=[FieldCondition(key="type", match=MatchValue(value="New"))])
+            QDRANT_COLLECTION, 
+            filter=Filter(must=[FieldCondition(key="type", match=MatchValue(value="new"))])
         ).count
         
         vec_counts["threat"] = qdrant.count(
-            "network_patterns", 
-            filter=Filter(must=[FieldCondition(key="type", match=MatchValue(value="Threat"))])
+            QDRANT_COLLECTION, 
+            filter=Filter(must=[FieldCondition(key="type", match=MatchValue(value="threat"))])
         ).count
     except:
         pass

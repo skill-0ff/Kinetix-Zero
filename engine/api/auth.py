@@ -9,10 +9,33 @@ from passlib.context import CryptContext
 from pydantic import BaseModel
 
 # Configuration
-SECRET_KEY = os.getenv("JWT_SECRET", secrets.token_urlsafe(32))
+BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+DB_DIR = os.path.join(BASE_DIR, "DB")
+DB_PATH = os.path.join(DB_DIR, "users.db")
+SECRET_PATH = os.path.join(DB_DIR, ".jwt_secret")
+
+
+def _load_or_create_secret():
+    env_secret = os.getenv("JWT_SECRET")
+    if env_secret:
+        return env_secret
+
+    os.makedirs(DB_DIR, exist_ok=True)
+    if os.path.exists(SECRET_PATH):
+        with open(SECRET_PATH, "r", encoding="utf-8") as f:
+            secret = f.read().strip()
+            if secret:
+                return secret
+
+    secret = secrets.token_urlsafe(32)
+    with open(SECRET_PATH, "w", encoding="utf-8") as f:
+        f.write(secret)
+    return secret
+
+
+SECRET_KEY = _load_or_create_secret()
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 # 24 Hours
-DB_PATH = "DB/users.db"
 
 # Password Hashing
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -34,8 +57,8 @@ class UserInDB(User):
 
 def init_auth_db():
     """Ensure User DB exists and has default admin if empty"""
-    if not os.path.exists("DB"):
-        os.makedirs("DB", exist_ok=True)
+    if not os.path.exists(DB_DIR):
+        os.makedirs(DB_DIR, exist_ok=True)
         
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()

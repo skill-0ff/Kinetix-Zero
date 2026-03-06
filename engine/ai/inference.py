@@ -104,6 +104,7 @@ class UnsupervisedAI(threading.Thread):
 
         # Log Store & Memory (Init)
         self._init_databases()
+        self._init_metrics()
 
         print(f"[AI] Async Worker Initialized on {self.device} (AMP Enabled). Context={self.context_epochs}")
         
@@ -357,6 +358,27 @@ class UnsupervisedAI(threading.Thread):
         """Non-blocking push from Brain"""
         self.input_queue.put((vectors, logs))
 
+    def push_evidence(self, evidence_logs):
+        """Store DDoS/drop evidence directly in MongoDB."""
+        if not evidence_logs or not self.mongo_ddos:
+            return
+
+        docs = []
+        now = time.time()
+        for log in evidence_logs:
+            docs.append({
+                "uuid": log.get("uuid", uuid.uuid4().hex),
+                "timestamp": log.get("timestamp", now),
+                "verdict": log.get("verdict", "DDoS"),
+                "type": log.get("_evidence_type", "drop_evidence"),
+                "full_log": log
+            })
+
+        try:
+            self.mongo_ddos.insert_many(docs, ordered=False)
+        except Exception as e:
+            print(f"[AI] Evidence Save Failed: {e}")
+
     def run(self):
         print("[AI] Worker Loop Started.")
         while self.running:
@@ -421,8 +443,8 @@ class UnsupervisedAI(threading.Thread):
             
     def _flush_metrics(self, timestamp):
         """Flushes 1s of accumulated stats to MongoDB"""
-        if not hasattr(self, "metrics_accum"): return
-        if not self.mongo_metrics: return # Should we reset anyway?
+        if not hasattr(self, "metrics_accum"):
+            return
         
         # Calculate rates
         # If interval > 1.0s, counts are total over interval.
@@ -477,10 +499,16 @@ class UnsupervisedAI(threading.Thread):
             print(f"[AI] Metrics Error: {e}")
             
         # Write to Mongo
-        try:
-            self.mongo_metrics.insert_one(doc)
-        except Exception as e:
-            print(f"Error saving to db {e}")
+        if self.mongo_metrics:
+            try:
+                self.mongo_metrics.insert_one(doc)
+            except Exception as e:
+                print(f"Error saving to db {e}")
+
+        # Reset accumulator after each flush cycle
+        for k in self.metrics_accum:
+            self.metrics_accum[k] = 0
+        self.last_metric_time = timestamp
 
     def _get_system_metrics(self):
         """Captures System and Process Resource Usage"""
@@ -569,12 +597,6 @@ class UnsupervisedAI(threading.Thread):
              pass
              
         return gpus
-            
-        # Reset Accumulator
-        for k in self.metrics_accum:
-            self.metrics_accum[k] = 0
-            
-        self.last_metric_time = timestamp
 
     def process_batch(self, new_window, new_logs=None):
         # Optimization: Convert to tensor ONCE here
@@ -812,17 +834,20 @@ class UnsupervisedAI(threading.Thread):
             top_match = result[0] if result else None
             
             mem_type = top_match.payload.get("type") if top_match else None
+            mem_type_norm = (mem_type or "").strip().lower()
             mem_dist = (1.0 - top_match.score) if top_match else 1.0
             
             # Shared ID for Mongo + Qdrant
             event_uuid = uuid.uuid4().hex
+            storage_cfg = self.config.get("storage_policy", {})
+            verdict = "SAFE"
+            should_persist_log = False
             
             if not ctx["is_anomaly"]:
                 # If it's safe but "New" (Far from existing memory), learn it!
                 if mem_dist > self.dedup_dist:
                     verdict = "NEW SAFE PATTERN"
-                    
-                    storage_cfg = self.config.get("storage_policy", {})
+                    should_persist_log = storage_cfg.get("save_logs", {}).get("ai_safe", True)
                     
                     # 1. Qdrant: Vector + Metadata (NO LOG)
                     if storage_cfg.get("save_vectors", {}).get("ai_safe", True):
@@ -831,30 +856,20 @@ class UnsupervisedAI(threading.Thread):
                             vector=ctx["vector"],
                             payload={"type": "ai_safe", "timestamp": time.time(), "score": ctx["score"]} 
                         ))
-                    
-                    # 2. Mongo: Full Log + Metadata + UUID Link
-                    if storage_cfg.get("save_logs", {}).get("ai_safe", True):
-                        mongo_docs.append({
-                            "uuid": event_uuid,
-                            "timestamp": time.time(),
-                            "verdict": "ai_safe",
-                            "score": ctx["score"],
-                            "log": ctx["log"]
-                        })
                 # Else: It's just normal safe traffic (matches existing). Ignore.
             
             # PATH B: ANOMALY (Low Flow)
             else:
                 verdict = "NEW ANOMALY"
-                storage_cfg = self.config.get("storage_policy", {})
+                should_persist_log = storage_cfg.get("save_logs", {}).get("anomaly", True)
                 
                 # Scenario 1: False Positive
-                if mem_type == "Safe" and mem_dist < self.query_dist:
+                if mem_type_norm == "ai_safe" and mem_dist < self.query_dist:
                     verdict = "FALSE POSITIVE"
                     # Optimization: Maybe log FP occurrence in metrics?
                     
                 # Scenario 2: Known Threat
-                elif mem_type == "Threat" and mem_dist < self.query_dist:
+                elif mem_type_norm == "threat" and mem_dist < self.query_dist:
                     verdict = "KNOWN THREAT"
                     
                 # Scenario 3: New Threat/Anomaly
@@ -864,18 +879,8 @@ class UnsupervisedAI(threading.Thread):
                         points_to_upsert.append(PointStruct(
                             id=event_uuid, 
                             vector=ctx["vector"], 
-                            payload={"type": "New", "timestamp": time.time(), "score": ctx["score"]}
+                            payload={"type": "new", "timestamp": time.time(), "score": ctx["score"]}
                         ))
-                    
-                    # 2. Mongo: Full Log + Metadata + UUID Link
-                    if storage_cfg.get("save_logs", {}).get("anomaly", True):
-                        mongo_docs.append({
-                            "uuid": event_uuid,
-                            "timestamp": time.time(),
-                            "verdict": verdict, # "NEW ANOMALY"
-                            "score": ctx["score"],
-                            "log": ctx["log"]
-                        })
                 
                 # REPORT & ALERT
                 evt = ctx["log"].get("event", {})
@@ -903,7 +908,7 @@ class UnsupervisedAI(threading.Thread):
 
             # Update Metric Counters
             if hasattr(self, "metrics_accum"):
-                if verdict == "Safe": self.metrics_accum["verdict_safe"] += 1
+                if verdict in ("SAFE", "NEW SAFE PATTERN"): self.metrics_accum["verdict_safe"] += 1
                 elif verdict == "NEW ANOMALY": self.metrics_accum["verdict_new"] += 1
                 elif verdict == "KNOWN THREAT": self.metrics_accum["verdict_threat"] += 1
                 elif verdict == "FALSE POSITIVE": self.metrics_accum["verdict_fp"] += 1
@@ -914,7 +919,7 @@ class UnsupervisedAI(threading.Thread):
                 except: pass
             
             # --- MONGO STORE (Save Everything) ---
-            if self.mongo_events:
+            if self.mongo_events and should_persist_log:
                 # Prepare Relational Doc
                 # Enrich Log
                 enriched_log = ctx["log"].copy()

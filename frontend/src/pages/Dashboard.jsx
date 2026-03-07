@@ -478,9 +478,9 @@ const Dashboard = () => {
                                                         <span style={{ fontSize: '0.75rem', opacity: 0.7 }}>{t.timestamp ? new Date(t.timestamp * 1000).toLocaleTimeString() : 'Now'}</span>
                                                     </div>
                                                     <div style={{ fontSize: '0.8rem', fontFamily: 'monospace', color: 'var(--text-muted)' }}>
-                                                        SRC: <span style={{ color: color }}>{t.src_ip || '???.???.???.???'}</span>
+                                                        SRC: <span style={{ color: color }}>{t.full_log?.event?.src_ip || t.src_ip || '???.???.???.???'}</span>
                                                         <span style={{ margin: '0 0.5rem', opacity: 0.3 }}>|</span>
-                                                        DST: {t.event?.dest_port || '???'} {t.event?.proto ? `(${t.event.proto})` : ''}
+                                                        DST: {(t.full_log?.event?.dst_port || t.event?.dst_port || '???')} {(t.full_log?.event?.proto || t.event?.proto) ? `(${t.full_log?.event?.proto || t.event?.proto})` : ''}
                                                     </div>
                                                 </div>
                                             </div>

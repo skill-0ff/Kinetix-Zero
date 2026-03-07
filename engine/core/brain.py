@@ -9,9 +9,16 @@ import select
 import random
 import uuid
 
-# Add engine path
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-from engine.core.vectorizer import LogNormalizer, VectorLibrary
+# Add project root to path for direct script usage (python engine/core/brain.py)
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(os.path.dirname(CURRENT_DIR))
+if PROJECT_ROOT not in sys.path:
+    sys.path.append(PROJECT_ROOT)
+
+try:
+    from engine.core.vectorizer import LogNormalizer, VectorLibrary
+except ImportError:
+    from vectorizer import LogNormalizer, VectorLibrary
 try:
     from engine.core.misp_client import MispClient # Attempt relative/module import
 except ImportError:
@@ -43,6 +50,52 @@ except ImportError:
         AI_AVAILABLE = False
 
 import queue
+
+def _strip_jsonc_comments(text):
+    in_string = False
+    escaped = False
+    out = []
+    i = 0
+    n = len(text)
+
+    while i < n:
+        ch = text[i]
+        nxt = text[i + 1] if i + 1 < n else ""
+
+        if in_string:
+            out.append(ch)
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == "\"":
+                in_string = False
+            i += 1
+            continue
+
+        if ch == "\"":
+            in_string = True
+            out.append(ch)
+            i += 1
+            continue
+
+        if ch == "/" and nxt == "/":
+            i += 2
+            while i < n and text[i] not in ("\n", "\r"):
+                i += 1
+            continue
+
+        if ch == "/" and nxt == "*":
+            i += 2
+            while i + 1 < n and not (text[i] == "*" and text[i + 1] == "/"):
+                i += 1
+            i += 2
+            continue
+
+        out.append(ch)
+        i += 1
+
+    return "".join(out)
 
 class PacketReceiver(threading.Thread):
     def __init__(self, port, protocol, buffer_queue, sample_rate=100, sample_mode="random"):
@@ -198,12 +251,7 @@ class Brain:
     def load_config(self):
         try:
             with open(self.config_path, 'r') as f:
-                lines = []
-                for line in f:
-                    if "//" in line: line = line.split("//")[0]
-                    line = line.strip()
-                    if line: lines.append(line)
-                self.config = json.loads("".join(lines))
+                self.config = json.loads(_strip_jsonc_comments(f.read()))
                 # Update cached values
                 self._update_local_config()
                 print(f"[Config] Loaded: Port={self.config.get('port')}, Window={self.time_window}s")

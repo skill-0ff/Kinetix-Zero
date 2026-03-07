@@ -36,13 +36,56 @@ app.add_middleware(
 # --- Configuration ---
 CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "core/config.jsonc")
 
+def _strip_jsonc_comments(text):
+    in_string = False
+    escaped = False
+    out = []
+    i = 0
+    n = len(text)
+
+    while i < n:
+        ch = text[i]
+        nxt = text[i + 1] if i + 1 < n else ""
+
+        if in_string:
+            out.append(ch)
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == "\"":
+                in_string = False
+            i += 1
+            continue
+
+        if ch == "\"":
+            in_string = True
+            out.append(ch)
+            i += 1
+            continue
+
+        if ch == "/" and nxt == "/":
+            i += 2
+            while i < n and text[i] not in ("\n", "\r"):
+                i += 1
+            continue
+
+        if ch == "/" and nxt == "*":
+            i += 2
+            while i + 1 < n and not (text[i] == "*" and text[i + 1] == "/"):
+                i += 1
+            i += 2
+            continue
+
+        out.append(ch)
+        i += 1
+
+    return "".join(out)
+
 def load_config():
     try:
         with open(CONFIG_PATH, 'r') as f:
-            content = f.read()
-            import re
-            content = re.sub(r'//.*', '', content)
-            return json.loads(content)
+            return json.loads(_strip_jsonc_comments(f.read()))
     except:
         return {}
 

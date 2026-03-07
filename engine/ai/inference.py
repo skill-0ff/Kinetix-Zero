@@ -25,6 +25,52 @@ from dotenv import load_dotenv
 # Load Environment Variables from .env (if present)
 load_dotenv()
 
+def _strip_jsonc_comments(text):
+    in_string = False
+    escaped = False
+    out = []
+    i = 0
+    n = len(text)
+
+    while i < n:
+        ch = text[i]
+        nxt = text[i + 1] if i + 1 < n else ""
+
+        if in_string:
+            out.append(ch)
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == "\"":
+                in_string = False
+            i += 1
+            continue
+
+        if ch == "\"":
+            in_string = True
+            out.append(ch)
+            i += 1
+            continue
+
+        if ch == "/" and nxt == "/":
+            i += 2
+            while i < n and text[i] not in ("\n", "\r"):
+                i += 1
+            continue
+
+        if ch == "/" and nxt == "*":
+            i += 2
+            while i + 1 < n and not (text[i] == "*" and text[i + 1] == "/"):
+                i += 1
+            i += 2
+            continue
+
+        out.append(ch)
+        i += 1
+
+    return "".join(out)
+
 # Relative import fix for direct usage vs module usage
 try:
     from .model import VAETransformer, VAELoss
@@ -128,8 +174,7 @@ class UnsupervisedAI(threading.Thread):
         try:
             if os.path.exists(self.config_path):
                 with open(self.config_path, 'r') as f:
-                    lines = [l for l in f.readlines() if not l.strip().startswith("//")]
-                    new_config = json.loads("".join(lines))
+                    new_config = json.loads(_strip_jsonc_comments(f.read()))
                     
                     old_config = self.config
                     self.config = new_config

@@ -7,6 +7,52 @@ from pymongo import MongoClient
 from qdrant_client import QdrantClient
 from qdrant_client.http import models
 
+def _strip_jsonc_comments(text):
+    in_string = False
+    escaped = False
+    out = []
+    i = 0
+    n = len(text)
+
+    while i < n:
+        ch = text[i]
+        nxt = text[i + 1] if i + 1 < n else ""
+
+        if in_string:
+            out.append(ch)
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == "\"":
+                in_string = False
+            i += 1
+            continue
+
+        if ch == "\"":
+            in_string = True
+            out.append(ch)
+            i += 1
+            continue
+
+        if ch == "/" and nxt == "/":
+            i += 2
+            while i < n and text[i] not in ("\n", "\r"):
+                i += 1
+            continue
+
+        if ch == "/" and nxt == "*":
+            i += 2
+            while i + 1 < n and not (text[i] == "*" and text[i + 1] == "/"):
+                i += 1
+            i += 2
+            continue
+
+        out.append(ch)
+        i += 1
+
+    return "".join(out)
+
 class Janitor(threading.Thread):
     def __init__(self, config_path):
         super().__init__()
@@ -22,13 +68,7 @@ class Janitor(threading.Thread):
     def load_config(self):
         try:
             with open(self.config_path, 'r') as f:
-                # Remove comments manually if needed, or use a comment-supporting parser
-                # Using standard json for now, assuming stripped/valid jsonc
-                content = f.read()
-                # fast & dirty comment stripper
-                import re
-                content = re.sub(r'//.*', '', content)
-                self.config = json.loads(content)
+                self.config = json.loads(_strip_jsonc_comments(f.read()))
         except Exception as e:
             print(f"[Janitor] Config Load Failed: {e}")
 

@@ -13,6 +13,52 @@ from functools import lru_cache
 from typing import Optional, Dict, Any, List, Union, Literal
 from pydantic import BaseModel, Field, ValidationError, Extra, ConfigDict
 
+def _strip_jsonc_comments(text):
+    in_string = False
+    escaped = False
+    out = []
+    i = 0
+    n = len(text)
+
+    while i < n:
+        ch = text[i]
+        nxt = text[i + 1] if i + 1 < n else ""
+
+        if in_string:
+            out.append(ch)
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == "\"":
+                in_string = False
+            i += 1
+            continue
+
+        if ch == "\"":
+            in_string = True
+            out.append(ch)
+            i += 1
+            continue
+
+        if ch == "/" and nxt == "/":
+            i += 2
+            while i < n and text[i] not in ("\n", "\r"):
+                i += 1
+            continue
+
+        if ch == "/" and nxt == "*":
+            i += 2
+            while i + 1 < n and not (text[i] == "*" and text[i + 1] == "/"):
+                i += 1
+            i += 2
+            continue
+
+        out.append(ch)
+        i += 1
+
+    return "".join(out)
+
 # ==========================================
 # 1. Pydantic Models (Strict Input Validation)
 # ==========================================
@@ -404,16 +450,7 @@ class LogNormalizer:
         if not os.path.exists(path): return {}
         try:
             with open(path, 'r') as f:
-                # Robust comment stripping
-                lines = []
-                for line in f:
-                    # Strip // comments
-                    if "//" in line:
-                        line = line.split("//")[0]
-                    line = line.strip()
-                    if line:
-                        lines.append(line)
-                return json.loads("".join(lines))
+                return json.loads(_strip_jsonc_comments(f.read()))
         except Exception as e:
             print(f"[Warning] Config load error: {e}")
             return {}

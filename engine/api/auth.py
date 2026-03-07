@@ -2,10 +2,10 @@ import os
 import sqlite3
 import secrets
 import string
+import bcrypt
 from jose import jwt
 from datetime import datetime, timedelta
 from typing import Optional
-from passlib.context import CryptContext
 from pydantic import BaseModel
 
 # Configuration
@@ -36,9 +36,6 @@ def _load_or_create_secret():
 SECRET_KEY = _load_or_create_secret()
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 # 24 Hours
-
-# Password Hashing
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 class Token(BaseModel):
     access_token: str
@@ -94,11 +91,15 @@ def get_db_connection():
     conn.row_factory = sqlite3.Row
     return conn
 
-def verify_password(plain_password, hashed_password):
-    return pwd_context.verify(plain_password, hashed_password)
+def verify_password(plain_password: str, hashed_password: str):
+    try:
+        return bcrypt.checkpw(plain_password.encode('utf-8'), hashed_password.encode('utf-8'))
+    except Exception:
+        return False
 
-def get_password_hash(password):
-    return pwd_context.hash(password)
+def get_password_hash(password: str):
+    # For bcrypt, we need to return a string
+    return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
 
 def get_user(username: str):
     conn = get_db_connection()

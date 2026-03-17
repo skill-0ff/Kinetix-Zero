@@ -1,0 +1,79 @@
+{
+    // --- Network Configuration ---
+    // UDP Port to listen on (Internal Python Port is 5001, Collector Port is 5000)
+    "port": 5001,
+    // --- Brain Logic (Aggregation & Protection) ---
+    // Time in seconds to buffer logs (Aggregation Window)
+    "time_window": 5.0,
+    // Baseline max logs expected per window (Normal Traffic)
+    "max_sequence": 100,
+    // Buffer above baseline. Traffic > (Max+Threshold) is DROPPED.
+    "ddos_threshold": 50,
+    // Ingress Queue Limit (Packets). Prevents Memory Overflow (Tail Drop).
+    "max_queue_size": 10000,
+    // --- AI Engine (Vectorization & Inference) ---
+    // Memory Depth: How many past windows the AI remembers.
+    "ai_context_epochs": 5,
+    // Sensitivity: 0.0 (Relaxed) to 1.0 (Paranoid). Higher = More Alerts.
+    "ai_anomaly_threshold": 0.9,
+    // --- Database Storage ---
+    // NOTE: Environment Variables (MONGO_URI, QDRANT_URL, QDRANT_API_KEY) take priority if set.
+    // Qdrant: Use 'qdrant_path' (Local) OR 'qdrant_url' (Remote/Cluster).
+    "qdrant_path": "DB/vector", // (Priority 1) Local Path (e.g. "DB/vector")
+    "qdrant_url": null, // (Priority 2) Remote URL (e.g. "http://localhost:6333" or "http://node1,node2")
+    // MongoDB: Connection String (Local OR Remote)
+    "mongo_uri": "mongodb://localhost:27017/",
+    // --- Memory Logic (Vector DB) ---
+    // Deduplication (Peace Time): If distance < X, considered duplicate.
+    "memory_dedup_dist": 0.05,
+    // Query Match (Alert Time): If distance < X, considered a match (FP/Threat).
+    "memory_query_dist": 0.10,
+    // --- Persistence (Saving State) ---
+    // "auto" (Load Newest) or "path/to/specific.pth".
+    "ai_checkpoint_file": "auto",
+    // How often to auto-save the model model to disk (Seconds).
+    "checkpoint_interval_seconds": 3600,
+    // Rotation: Keep only the last N checkpoint files.
+    "max_checkpoints_history": 10,
+    // --- Forensics ---
+    "forensic_sample_rate": 100, // Percentage (0-100).
+    "forensic_sample_mode": "random", // "random" (Probabilistic) OR "sequence" (Deterministic every Nth).
+    // MISP Threat Intel
+    "misp_enabled": false,
+    "misp_url": "https://misp.local",
+    "misp_verify_ssl": true,
+    // --- Granular Control Policies ---
+    "storage_policy": {
+        // Qdrant (Memory/Vectors)
+        "save_vectors": {
+            "ai_safe": true, // Save "New Safe" patterns to Qdrant?
+            "anomaly": true // Save "New Anomalies" to Qdrant?
+        },
+        // MongoDB (Logs/docs)
+        "save_logs": {
+            "ai_safe": true, // Save full JSON log for "AI Safe" events?
+            "anomaly": true, // Save full JSON log for "Anomalies"?
+            "ddos_evidence": true // Save dropped packet evidence?
+        }
+    },
+    "alert_policy": {
+        "misp_report": true, // Generate JSON reports for MISP hits?
+        "console_alerts": {
+            "new_anomaly": true, // Print [ALERT] for New Anomalies?
+            "known_threat": true, // Print [ALERT] for Known Threats?
+            "false_positive": false // Print [ALERT] for False Positives? (Default Off)
+        }
+    },
+    "retention_policy": {
+        "enabled": true,
+        "run_interval_hours": 24,
+        "keep_days": {
+            "ai_safe": 30, // Delete Log AND Vector after 30 days
+            "new_anomaly": 90, // Delete Log AND Vector after 90 days
+            "known_threat": 365, // Delete both after 1 year
+            "false_positive": 7, // Delete both after 1 week
+            "misp_alert": 365, // Keep Intel hits for 1 year
+            "ddos_evidence": 3 // Delete dropped packets after 3 days
+        }
+    }
+}

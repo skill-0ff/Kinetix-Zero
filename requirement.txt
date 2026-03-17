@@ -1,0 +1,7 @@
+numpy
+pydantic
+torch
+qdrant-client
+pymongo[srv]
+python-dotenv
+psutil

@@ -1,0 +1,43 @@
+{
+    // Kinetix-Zero V2 Canonical Mapping (32-Dimensional - Sparse)
+    // Strictly mapped to fields in event_structure_example.txt
+    // 00-05: Identity Context
+    "00": "Identity_Role_Map", // Role Enum
+    "01": "Identity_ID_Hash", // Machine ID
+    "02": "Identity_OS_Map", // OS Type
+    "03": "Identity_IP_Int", // Internal IP Hash
+    "04": "Identity_MAC_Hash", // MAC Address
+    "05": "Identity_Maturity", // Host Maturity Score
+    // 06-07: Cyclical Time
+    "06": "Time_Sine", // sin(2*pi*t/86400)
+    "07": "Time_Cosine", // cos(2*pi*t/86400)
+    // 08-10: System Status (Normalized Log10)
+    "08": "Status_CPU_Usage",
+    "09": "Status_RAM_Usage",
+    "10": "Status_Disk_Usage",
+    // 11-15: Event Meta
+    "11": "Event_Type_Hash",
+    "12": "Event_User_Hash",
+    "13": "Event_Action_Enum",
+    "14": "Event_Global_Rarity", // Global Rarity Score
+    "15": "Event_Direction_Flag", // Inbound/Outbound/Lateral
+    // 16-20: Process/File (Mutually Exclusive with Network)
+    "16": "Proc_Name_TopK", // Process Name (Dictionary/Hash)
+    "17": "Proc_Path_Entropy", // Path Entropy
+    "18": "Proc_Parent_Hash", // Parent Process Name
+    "19": "Proc_CmdLine_Entropy", // Command Line Entropy
+    "20": "File_Size_Log10", // File/Data Size
+    // 21-25: Network (Mutually Exclusive with Process)
+    "21": "Net_Protocol_Map", // TCP/UDP/ICMP
+    "22": "Net_SrcIP_Hash", // Source IP
+    "23": "Net_DstIP_Hash", // Dest IP
+    "24": "Net_SrcPort_Norm", // Source Port (Normalized)
+    "25": "Net_DstPort_Norm", // Dest Port (Normalized)
+    // 26-31: Registry / Service / Global
+    "26": "Reg_Key_Hash", // Registry Path
+    "27": "Reg_Val_Hash", // Registry Value
+    "28": "Service_Name_Hash", // Service Name
+    "29": "DNS_Query_Hash", // DNS Query String
+    "30": "Data_Sent_Log10", // Bytes Sent
+    "31": "Data_Recv_Log10" // Bytes Received
+}

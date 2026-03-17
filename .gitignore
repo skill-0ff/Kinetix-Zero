@@ -1,0 +1,7 @@
+temp_build_dir/
+node_modules/
+dist/
+build/
+.env
+__pycache__/
+*.pyc

@@ -1,0 +1,273 @@
+##########################
+#  HOST_EVENTS_STRUCTURE #
+##########################
+
+# ATOMIC STRUCTURE (One Event Per JSON Object)
+   {"time_of_packet":"hh:mm:ss:ms"},
+# Example 1: Server Event
+{
+    "role": "POST_SERV",
+    "timestamp_ref": "hh:mm:ss.ms",
+    "host": {
+        "id": "HEX",
+        "os": "Linux/Windows",
+        "ip": "...",
+        "mac": "..."
+    },
+    "event": {
+        "type": "event_type",
+        "timestamp": "hh:mm:ss.ms",
+        "details": "..."
+    }
+}
+
+#######################
+# EVENTS_TYPE/DETAILS #
+#######################
+
+# Note: In the atomic structure, these details appear inside the "event" object.
+
+- event_type:
+    - process_start:
+        - timestamp: hh:mm:ss.ms
+        - process:*
+        - path:*
+        - sha256:*
+        - cmdline:*
+        - parent:*
+        - parent_path:
+        - parent_sha_256:
+        - user "administrator ,user ,guest":
+        - cpu: (eg: 100%)
+        - gpu: (eg: 100%)
+        - ram: (eg: 100%)
+        - disk: (eg: 100%)
+
+    - process_kill:
+        - timestamp: hh:mm:ss.ms
+        - process:*
+        - path:*
+        - sha256:*
+        - term_type:*
+        - exit_code:*
+
+    - file_create:
+        - timestamp: hh:mm:ss.ms
+        - file_type: (eg: ".exe, .txt")*
+        - path:*
+        - size:*
+        - process:*
+        - user:
+        - owner:
+
+    - file_modified:
+        - timestamp: hh:mm:ss.ms
+        - path:*
+        - process:*
+        - size_change:*
+        - perm_change: (eg: "+w", "-r", "+x")*
+        - user:
+        - owner:
+
+    - file_delete:
+        - timestamp: hh:mm:ss.ms
+        - path:*
+        - process:*
+        - size:*
+        - user:
+        - perm:*
+        - owner:
+
+    - service_create:
+        - timestamp: hh:mm:ss.ms
+        - name:*
+        - path:*
+        - start_type:*
+        - account:
+        - creator:
+
+    - service_delete:
+        - timestamp: hh:mm:ss.ms
+        - name:*
+        - path:*
+        - account:
+        - deleter:
+
+    - service_modified:
+        - timestamp: hh:mm:ss.ms
+        - name:*
+        - path:*
+        - account:
+        - user:
+
+    - registry:
+        - timestamp: hh:mm:ss.ms
+        - op_type:*
+        - reg_path:*
+        - reg_val:*
+        - reg_type:*
+        - reg_user:
+        - reg_owner:
+        - reg_perm:*
+
+    - network_connection:
+        - timestamp: hh:mm:ss.ms
+        - process:*
+        - protocol:*
+        - ip_local: true/false
+        - dst_ip:
+        - src_port:
+        - dst_port:
+        - sent:
+        - recv:
+
+    - dns_query:
+        - timestamp: hh:mm:ss.ms
+        - q_name: (eg: "google.com")*
+        - q_type: (eg: ".com, .org")*
+        - q_res: (eg: "ip")
+        - q_port:
+        - q_proto:*
+
+    - session:
+        - timestamp: hh:mm:ss.ms
+        - session_id:*
+        - user:*
+        - status: (Start/End)*
+        - logon_type:
+        - source_network_address:
+
+    - console_login:
+        - timestamp: hh:mm:ss.ms
+        - user:*
+        - action: (Login, Logout, Unlock)*
+        - method: (Password, Biometric, Pin)
+        - terminal: (Console, TTY)*
+        - result: (Success, Failure)*
+
+    - auth_login:
+        - timestamp: hh:mm:ss.ms
+        - user:*
+        - domain:
+        - src_ip:
+        - logon_type:
+        - auth_package:
+        - result: (Success/Failure)*
+        - failure_reason:
+
+    - scheduled_task:
+        - timestamp: hh:mm:ss.ms
+        - task_name:*
+        - action:*
+        - path:
+        - user:
+
+    - account_management:
+        - timestamp: hh:mm:ss.ms
+        - action: (Created, Deleted, Locked, Changed)*
+        - target_user:*
+        - subject_user:*
+        - domain:
+
+    - group_management:
+        - timestamp: hh:mm:ss.ms
+        - action: (MemberAdded, MemberRemoved)*
+        - group_name:*
+        - member_user:*
+        - subject_user:
+
+    - module_load:
+        - timestamp: hh:mm:ss.ms
+        - process:*
+        - image_path:*
+        - sha256:
+        - signed: (True/False)
+
+    - pipe_event:
+        - timestamp: hh:mm:ss.ms
+        - pipe_name:*
+        - op_type: (Create, Connect)*
+        - process:
+        - handle_id:
+
+    - wmi_event:
+        - timestamp: hh:mm:ss.ms
+        - query:*
+        - user:
+        - namespace:
+
+#########################
+#  ROUTER/SWITCH EVENTS #
+#########################
+
+# Example Router
+{
+    "role": "POST_ROUTER",
+    "timestamp_ref": "0s-60s",
+    "host": {
+        "id": "HEX"
+    },
+    "status": {
+        "cpu": "100%",
+        "ram": "100%"
+    },
+    "event": {
+        "type": "traffic",
+        "timestamp": "hh:mm:ss.ms",
+        "src_ip": "...",
+        "dst_ip": "...",
+        "src_iface": "...",
+        "dst_iface": "...",
+        "src_port": "...",
+        "dst_port": "...",
+        "proto": "..."*
+    }
+}
+
+# Example Switch
+{
+    "role": "POST_SWITCH",
+    "timestamp_ref": "0s-60s",
+    "host": {
+        "id": "HEX"
+    },
+    "status": {
+        "cpu": "100%",
+        "ram": "100%"
+    },
+    "event": {
+        "type": "traffic",
+        "timestamp": "hh:mm:ss.ms",
+        "src_mac": "...",
+        "dst_mac": "...",
+        "src_iface": "...",
+        "dst_iface": "...",
+        "proto": "...",
+        "vlan_src": "...",
+        "vlan_dst": "..."
+    }
+},
+# Example firewall
+{
+        "role": "EDGE_FW",
+        "timestamp_ref": "12:00:00.800",
+        "host": {
+            "id": "HEX"
+        },
+        "status": {
+            "cpu": "100%",
+            "ram": "100%"
+        },
+        "event": {
+            "type": "traffic",
+            "timestamp": "...",
+            "src_ip": "...",
+            "dst_ip": "...",
+            "src_port": "...",
+            "dst_port": "...",
+            "proto": "...",*
+            "action": "...",
+            "src_iface": "...",
+            "dst_iface": "..."
+        }
+}

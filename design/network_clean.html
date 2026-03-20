@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary": "#256af4",
+                        "background-light": "#f5f6f8",
+                        "background-dark": "#080a12",
+                        "accent-purple": "#a855f7",
+                    },
+                    fontFamily: {
+                        "display": ["Space Grotesk", "sans-serif"]
+                    },
+                    borderRadius: {
+                        "DEFAULT": "0.25rem",
+                        "lg": "0.5rem",
+                        "xl": "0.75rem",
+                        "2xl": "1rem",
+                        "full": "9999px"
+                    },
+                },
+            },
+        }
+    </script>
+<style>
+        .glass-panel {
+            background: rgba(255, 255, 255, 0.03);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 256, 0.08);
+        }
+        .glass-card {
+            background: rgba(15, 23, 42, 0.6);
+            backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        .bg-dynamic {
+            background: radial-gradient(circle at 20% 30%, rgba(37, 106, 244, 0.15) 0%, transparent 50%),
+                        radial-gradient(circle at 80% 70%, rgba(168, 85, 247, 0.15) 0%, transparent 50%),
+                        #080a12;
+        }
+        .neo-glow {
+            box-shadow: 0 0 15px rgba(37, 106, 244, 0.3);
+        }
+    </style>
+</head>
+<body class="bg-background-light dark:bg-background-dark font-display text-slate-900 dark:text-slate-100 min-h-screen bg-dynamic">
+<div class="relative flex min-h-screen w-full flex-col">
+<!-- Top Navigation Bar -->
+<header class="fixed top-0 left-1/2 -translate-x-1/2 z-50 w-[96%] max-w-[1440px] border-x border-b border-white/10 glass-panel px-8 py-2 rounded-b-[32px] shadow-2xl shadow-primary/5">
+<div class="max-w-full mx-auto flex items-center justify-between h-12">
+<!-- Logo -->
+<div class="flex items-center gap-3.5">
+<div class="size-8 bg-primary rounded-lg flex items-center justify-center shadow-lg shadow-primary/20">
+<span class="material-symbols-outlined text-white text-xl">deployed_code</span>
+</div>
+<h1 class="text-xl font-bold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-white to-white/60">
+                        Kinetix-Zero
+                    </h1>
+</div>
+<!-- Nav Center -->
+<nav class="hidden lg:flex items-center gap-1 bg-white/5 p-1 rounded-xl border border-white/10">
+<a class="px-3 py-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/5 flex items-center gap-2 transition-all" href="#">
+<span class="material-symbols-outlined text-[20px]">space_dashboard</span>
+<span class="text-[13px] font-medium">Overview</span>
+</a>
+<a class="px-3 py-1.5 rounded-lg bg-primary/20 text-primary border border-primary/20 flex items-center gap-2 transition-all neo-glow" href="#">
+<span class="material-symbols-outlined text-[20px]">hub</span>
+<span class="text-[13px] font-semibold">Network</span>
+</a>
+<a class="px-3 py-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/5 flex items-center gap-2 transition-all" href="#">
+<span class="material-symbols-outlined text-[20px]">gpp_maybe</span>
+<span class="text-[13px] font-medium">Threat</span>
+</a>
+<a class="px-3 py-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/5 flex items-center gap-2 transition-all" href="#">
+<span class="material-symbols-outlined text-[20px]">memory</span>
+<span class="text-[13px] font-medium">Agent</span>
+</a>
+<a class="px-3 py-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-white/5 flex items-center gap-2 transition-all" href="#">
+<span class="material-symbols-outlined text-[20px]">auto_awesome</span>
+<span class="text-[13px] font-medium">AI Intelligence</span>
+</a>
+</nav>
+<!-- Actions -->
+<div class="flex items-center gap-2">
+<button class="size-9 flex items-center justify-center rounded-lg glass-panel hover:bg-white/10 transition-colors group">
+<span class="material-symbols-outlined text-[20px] text-slate-300 group-hover:text-white">notifications_active</span>
+</button>
+<button class="size-9 flex items-center justify-center rounded-lg glass-panel hover:bg-white/10 transition-colors group">
+<span class="material-symbols-outlined text-[20px] text-slate-300 group-hover:text-white">manage_accounts</span>
+</button>
+<button class="size-9 flex items-center justify-center rounded-lg glass-panel hover:bg-white/10 transition-colors group">
+<span class="material-symbols-outlined text-[20px] text-slate-300 group-hover:text-white">settings</span>
+</button>
+<div class="h-8 w-px bg-white/10 mx-1"></div>
+<div class="size-9 rounded-lg bg-gradient-to-br from-primary to-accent-purple p-[1px] cursor-pointer hover:scale-105 transition-transform">
+<div class="w-full h-full rounded-lg bg-background-dark flex items-center justify-center overflow-hidden">
+<img alt="User" class="w-full h-full object-cover" data-alt="Futuristic user profile avatar graphic" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAzNX_cgKJydEN4x4Q828tDAfjXWLNOkYBfYK7oREmuqwEoqpu_KXQx8Emhn1Y_9nL1IaCGwNJvo4yyCZyMGwmeomYRl9pEIBM1tbq0WxeWRKJM0AjN1DEpIvQLi2IEB_xZAFhRwm4x201ghevG_Rgrw_Tcfpw-m7VYpf35zOK6fqMUuy0fHEdTplpymFMx5L05laQSxjYxelJTOl2tBW3lM8tD4KepovsbMnpP_PqQIKB9AnQByRN_RX_Pw0-hdM3D4jMsjIteOVM"/>
+</div>
+</div>
+</div>
+</div>
+</header>
+<!-- Main Content -->
+<main class="flex-1 pt-24 pb-12 px-6 lg:px-12 max-w-[1440px] mx-auto w-full">
+<!-- Premium System Status Panel -->
+</main>
+</div>
+</body></html>

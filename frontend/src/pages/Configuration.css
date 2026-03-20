@@ -1,5 +1,6 @@
 input[type="range"] {
     -webkit-appearance: none;
+    appearance: none;
     width: 100%;
     background: transparent;
 }
@@ -99,10 +100,12 @@ input[type="range"]::-webkit-slider-thumb {
 input::-webkit-outer-spin-button,
 input::-webkit-inner-spin-button {
     -webkit-appearance: none;
+    appearance: none;
     margin: 0;
 }
 
 /* Hide arrows in Firefox */
 input[type=number] {
     -moz-appearance: textfield;
+    appearance: textfield;
 }

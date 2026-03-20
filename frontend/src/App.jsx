@@ -7,6 +7,7 @@ import Threat from './pages/Threat';
 import Agent from './pages/Agent';
 import AIIntelligence from './pages/AIIntelligence';
 import Login from './pages/Login';
+import Configuration from './pages/Configuration';
 
 function App() {
   return (
@@ -16,6 +17,7 @@ function App() {
           <Route index element={<Overview />} />
           <Route path="network" element={<Network />} />
           <Route path="threat" element={<Threat />} />
+          <Route path="config" element={<Configuration />} />
           <Route path="agent" element={<Agent />} />
           <Route path="ai" element={<AIIntelligence />} />
           <Route path="login" element={<Login />} />

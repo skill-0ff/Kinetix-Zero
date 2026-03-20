@@ -7,7 +7,7 @@ LDFLAGS = -lws2_32
 TARGET = collector.exe
 
 # Source files
-SRCS = collector.c
+SRCS = collector.c aes.c
 
 # Build target
 all: $(TARGET)

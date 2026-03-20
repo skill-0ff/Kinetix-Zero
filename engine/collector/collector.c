@@ -4,12 +4,14 @@
 #include <ctype.h>
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include "aes.h"
 
 #pragma comment(lib, "ws2_32.lib")
 
 #define BUFFER_SIZE 65535
 #define INTERNAL_PORT 5001
 #define LISTENING_PORT 5000
+#define PSK_AES_KEY "KinetixZeroSuper" // 16 bytes
 
 typedef struct {
     char value[256];
@@ -334,7 +336,41 @@ int main() {
             continue;
         }
 
-        buffer[recv_len] = '\0';
+        // AES-128-CBC Decryption
+        // Require at least 16 bytes for IV + 16 bytes for cipher text
+        if (recv_len >= 32) {
+            uint8_t iv[16];
+            struct AES_ctx ctx;
+            int cipher_len = recv_len - 16;
+            
+            // CBC requires length to be multiple of 16
+            if (cipher_len % 16 == 0) {
+                memcpy(iv, buffer, 16);
+                AES_init_ctx_iv(&ctx, (const uint8_t*)PSK_AES_KEY, iv);
+                
+                // Decrypt in-place
+                AES_CBC_decrypt_buffer(&ctx, (uint8_t*)(buffer + 16), cipher_len);
+                
+                // Shift decrypted JSON to the front of buffer
+                memmove(buffer, buffer + 16, cipher_len);
+                
+                // PKCS7 padding removal (optional, but checking first char is easier)
+                buffer[cipher_len] = '\0'; 
+                recv_len = cipher_len;
+                
+                // Extremely fast sanity check to prevent processing garbage (tampered keys)
+                if (buffer[0] != '{') {
+                    // printf("Dropped: Decryption failed (Tampered or wrong key)\n");
+                    continue;
+                }
+            } else {
+                // printf("Dropped: Invalid AES block size\n");
+                continue;
+            }
+        } else {
+            // Not encrypted or missing IV
+            continue;
+        }
 
         if (has_json_key(buffer, "role") && has_json_key(buffer, "host") && has_json_key(buffer, "event")) {
             payload = buffer;

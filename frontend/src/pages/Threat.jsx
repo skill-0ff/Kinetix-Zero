@@ -1,7 +1,14 @@
-import React from 'react';
-import './Threat.css';
+import { useKinetixData } from '../hooks/useKinetixData';
 
 export default function Threat() {
+    const { data: events, loading } = useKinetixData('events', { limit: 20 });
+
+    const getVerdictColor = (verdict) => {
+        if (verdict.includes('THREAT')) return 'danger';
+        if (verdict.includes('ANOMALY')) return 'warning';
+        return 'primary';
+    };
+
     return (
         <main className="flex-1 mt-24 px-8 pb-12 max-w-[1440px] mx-auto w-full">
             {/* Professional Filter Control Center */}
@@ -86,138 +93,49 @@ export default function Threat() {
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-white/[0.04]">
-                            {/* Row 1 */}
-                            <tr className="hover:bg-white/[0.04] transition-all group">
-                                <td className="px-8 py-6">
-                                    <div className="text-[13px] font-semibold text-white mb-0.5">May 24, 2024</div>
-                                    <div className="text-[11px] font-mono text-slate-500">14:23:45.092</div>
-                                </td>
-                                <td className="px-8 py-6">
-                                    <div className="flex items-center gap-3">
-                                        <div className="size-2 rounded-full bg-danger shadow-[0_0_8px_rgba(239,68,68,0.6)]"></div>
-                                        <span className="text-[14px] font-bold text-slate-200">Brute Force Attempt</span>
-                                    </div>
-                                </td>
-                                <td className="px-8 py-6">
-                                    <span className="px-3 py-1 rounded-full bg-danger/10 border border-danger/20 text-[10px] font-bold text-danger uppercase tracking-wider">Critical</span>
-                                </td>
-                                <td className="px-8 py-6">
-                                    <span className="px-3 py-1.5 rounded-lg bg-white/5 text-[11px] font-bold text-slate-400 border border-white/5 uppercase tracking-wider">Edge-Node-Gamma-04</span>
-                                </td>
-                                <td className="px-8 py-6">
-                                    <div className="flex items-center gap-4 w-48">
-                                        <div className="flex-1 h-2 bg-white/5 rounded-full overflow-hidden border border-white/5 p-[1px]">
-                                            <div className="h-full rounded-full liquid-neon-danger w-[92%]"></div>
+                            {events.map((event, idx) => (
+                                <tr key={event._id || idx} className="hover:bg-white/[0.04] transition-all group">
+                                    <td className="px-8 py-6">
+                                        <div className="text-[13px] font-semibold text-white mb-0.5">{new Date(event.timestamp * 1000).toLocaleDateString()}</div>
+                                        <div className="text-[11px] font-mono text-slate-500">{new Date(event.timestamp * 1000).toLocaleTimeString()}</div>
+                                    </td>
+                                    <td className="px-8 py-6">
+                                        <div className="flex items-center gap-3">
+                                            <div className={`size-2 rounded-full bg-${getVerdictColor(event.verdict)} shadow-[0_0_8px_rgba(var(--color-${getVerdictColor(event.verdict)}),0.6)]`}></div>
+                                            <span className="text-[14px] font-bold text-slate-200">{event.verdict}</span>
                                         </div>
-                                        <span className="text-[13px] font-bold text-danger w-8 text-right">92%</span>
-                                    </div>
-                                </td>
-                                <td className="px-8 py-6 text-right">
-                                    <button className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-white/5 hover:bg-primary hover:text-white text-primary text-[13px] font-bold transition-all border border-transparent hover:border-primary/20">
-                                        Details
-                                        <span className="material-symbols-outlined text-[16px]">arrow_forward_ios</span>
-                                    </button>
-                                </td>
-                            </tr>
-                            {/* Row 2 */}
-                            <tr className="hover:bg-white/[0.04] transition-all group">
-                                <td className="px-8 py-6">
-                                    <div className="text-[13px] font-semibold text-white mb-0.5">May 24, 2024</div>
-                                    <div className="text-[11px] font-mono text-slate-500">14:21:12.441</div>
-                                </td>
-                                <td className="px-8 py-6">
-                                    <div className="flex items-center gap-3">
-                                        <div className="size-2 rounded-full bg-warning shadow-[0_0_8px_rgba(245,158,11,0.6)]"></div>
-                                        <span className="text-[14px] font-bold text-slate-200">Anomalous Data Surge</span>
-                                    </div>
-                                </td>
-                                <td className="px-8 py-6">
-                                    <span className="px-3 py-1 rounded-full bg-warning/10 border border-warning/20 text-[10px] font-bold text-warning uppercase tracking-wider">Warning</span>
-                                </td>
-                                <td className="px-8 py-6">
-                                    <span className="px-3 py-1.5 rounded-lg bg-white/5 text-[11px] font-bold text-slate-400 border border-white/5 uppercase tracking-wider">Core-Storage-LX</span>
-                                </td>
-                                <td className="px-8 py-6">
-                                    <div className="flex items-center gap-4 w-48">
-                                        <div className="flex-1 h-2 bg-white/5 rounded-full overflow-hidden border border-white/5 p-[1px]">
-                                            <div className="h-full rounded-full liquid-neon-warning w-[65%]"></div>
+                                    </td>
+                                    <td className="px-8 py-6">
+                                        <span className={`px-3 py-1 rounded-full bg-${getVerdictColor(event.verdict)}/10 border border-${getVerdictColor(event.verdict)}/20 text-[10px] font-bold text-${getVerdictColor(event.verdict)} uppercase tracking-wider`}>
+                                            {event.verdict.split(' ').pop()}
+                                        </span>
+                                    </td>
+                                    <td className="px-8 py-6">
+                                        <span className="px-3 py-1.5 rounded-lg bg-white/5 text-[11px] font-bold text-slate-400 border border-white/5 uppercase tracking-wider">{event.host_id || 'Unknown'}</span>
+                                    </td>
+                                    <td className="px-8 py-6">
+                                        <div className="flex items-center gap-4 w-48">
+                                            <div className="flex-1 h-2 bg-white/5 rounded-full overflow-hidden border border-white/5 p-[1px]">
+                                                <div className={`h-full rounded-full liquid-neon-${getVerdictColor(event.verdict)}`} style={{ width: `${Math.min(100, (event.score || 0) * 10)}%` }}></div>
+                                            </div>
+                                            <span className={`text-[13px] font-bold text-${getVerdictColor(event.verdict)} w-8 text-right`}>{Math.round((event.score || 0) * 10)}%</span>
                                         </div>
-                                        <span className="text-[13px] font-bold text-warning w-8 text-right">65%</span>
-                                    </div>
-                                </td>
-                                <td className="px-8 py-6 text-right">
-                                    <button className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-white/5 hover:bg-primary hover:text-white text-primary text-[13px] font-bold transition-all border border-transparent hover:border-primary/20">
-                                        Details
-                                        <span className="material-symbols-outlined text-[16px]">arrow_forward_ios</span>
-                                    </button>
-                                </td>
-                            </tr>
-                            {/* Row 3 */}
-                            <tr className="hover:bg-white/[0.04] transition-all group">
-                                <td className="px-8 py-6">
-                                    <div className="text-[13px] font-semibold text-white mb-0.5">May 24, 2024</div>
-                                    <div className="text-[11px] font-mono text-slate-500">14:18:56.201</div>
-                                </td>
-                                <td className="px-8 py-6">
-                                    <div className="flex items-center gap-3">
-                                        <div className="size-2 rounded-full bg-primary shadow-[0_0_8px_rgba(37,106,244,0.6)]"></div>
-                                        <span className="text-[14px] font-bold text-slate-200">SSL Handshake Fail</span>
-                                    </div>
-                                </td>
-                                <td className="px-8 py-6">
-                                    <span className="px-3 py-1 rounded-full bg-primary/10 border border-primary/20 text-[10px] font-bold text-primary uppercase tracking-wider">Suspicious</span>
-                                </td>
-                                <td className="px-8 py-6">
-                                    <span className="px-3 py-1.5 rounded-lg bg-white/5 text-[11px] font-bold text-slate-400 border border-white/5 uppercase tracking-wider">Gateway-Primary</span>
-                                </td>
-                                <td className="px-8 py-6">
-                                    <div className="flex items-center gap-4 w-48">
-                                        <div className="flex-1 h-2 bg-white/5 rounded-full overflow-hidden border border-white/5 p-[1px]">
-                                            <div className="h-full rounded-full liquid-neon-primary w-[41%]"></div>
-                                        </div>
-                                        <span className="text-[13px] font-bold text-primary w-8 text-right">41%</span>
-                                    </div>
-                                </td>
-                                <td className="px-8 py-6 text-right">
-                                    <button className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-white/5 hover:bg-primary hover:text-white text-primary text-[13px] font-bold transition-all border border-transparent hover:border-primary/20">
-                                        Details
-                                        <span className="material-symbols-outlined text-[16px]">arrow_forward_ios</span>
-                                    </button>
-                                </td>
-                            </tr>
-                            {/* Row 4 */}
-                            <tr className="hover:bg-white/[0.04] transition-all group">
-                                <td className="px-8 py-6">
-                                    <div className="text-[13px] font-semibold text-white mb-0.5">May 24, 2024</div>
-                                    <div className="text-[11px] font-mono text-slate-500">14:15:33.884</div>
-                                </td>
-                                <td className="px-8 py-6">
-                                    <div className="flex items-center gap-3">
-                                        <div className="size-2 rounded-full bg-danger shadow-[0_0_8px_rgba(239,68,68,0.6)]"></div>
-                                        <span className="text-[14px] font-bold text-slate-200">Exfiltration Trigger</span>
-                                    </div>
-                                </td>
-                                <td className="px-8 py-6">
-                                    <span className="px-3 py-1 rounded-full bg-danger/10 border border-danger/20 text-[10px] font-bold text-danger uppercase tracking-wider">Extreme</span>
-                                </td>
-                                <td className="px-8 py-6">
-                                    <span className="px-3 py-1.5 rounded-lg bg-white/5 text-[11px] font-bold text-slate-400 border border-white/5 uppercase tracking-wider">Edge-Node-Alpha-01</span>
-                                </td>
-                                <td className="px-8 py-6">
-                                    <div className="flex items-center gap-4 w-48">
-                                        <div className="flex-1 h-2 bg-white/5 rounded-full overflow-hidden border border-white/5 p-[1px]">
-                                            <div className="h-full rounded-full liquid-neon-danger w-[88%]"></div>
-                                        </div>
-                                        <span className="text-[13px] font-bold text-danger w-8 text-right">88%</span>
-                                    </div>
-                                </td>
-                                <td className="px-8 py-6 text-right">
-                                    <button className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-white/5 hover:bg-primary hover:text-white text-primary text-[13px] font-bold transition-all border border-transparent hover:border-primary/20">
-                                        Details
-                                        <span className="material-symbols-outlined text-[16px]">arrow_forward_ios</span>
-                                    </button>
-                                </td>
-                            </tr>
+                                    </td>
+                                    <td className="px-8 py-6 text-right">
+                                        <button className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-white/5 hover:bg-primary hover:text-white text-primary text-[13px] font-bold transition-all border border-transparent hover:border-primary/20">
+                                            Details
+                                            <span className="material-symbols-outlined text-[16px]">arrow_forward_ios</span>
+                                        </button>
+                                    </td>
+                                </tr>
+                            ))}
+                            {events.length === 0 && !loading && (
+                                <tr>
+                                    <td colSpan="6" className="px-8 py-20 text-center text-slate-500 text-sm">
+                                        No threat intelligence data received yet.
+                                    </td>
+                                </tr>
+                            )}
                         </tbody>
                     </table>
                 </div>

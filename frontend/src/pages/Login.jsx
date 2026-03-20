@@ -25,7 +25,30 @@ export default function Login() {
                     <p className="text-slate-400 text-[13px] mt-2 tracking-wide">Authenticate to enter the neural core</p>
                 </div>
 
-                <form className="relative z-10 space-y-5" onSubmit={(e) => { e.preventDefault(); navigate('/'); }}>
+                <form className="relative z-10 space-y-5" onSubmit={async (e) => {
+                    e.preventDefault();
+                    const username = e.target[0].value;
+                    const password = e.target[1].value;
+
+                    try {
+                        const response = await fetch('http://localhost:8000/api/v1/auth/login', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ username, password })
+                        });
+
+                        if (response.ok) {
+                            const { access_token } = await response.json();
+                            localStorage.setItem('token', access_token);
+                            navigate('/');
+                        } else {
+                            alert('Invalid Operator Credentials');
+                        }
+                    } catch (err) {
+                        console.error('Login Failed:', err);
+                        alert('Neural Core Connection Failed');
+                    }
+                }}>
                     <div>
                         <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 ml-1">Operator ID</label>
                         <div className="relative group">

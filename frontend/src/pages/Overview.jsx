@@ -1,6 +1,12 @@
 import React from 'react';
+import { useKinetixData } from '../hooks/useKinetixData';
 
 export default function Overview() {
+    const { data: metrics } = useKinetixData('metrics', { limit: 1 });
+    const { data: recentEvents } = useKinetixData('events', { limit: 5 });
+
+    const currentMetrics = metrics[0] || {};
+
     return (
         <main className="flex-1 pt-24 pb-12 px-6 lg:px-12 max-w-[1440px] mx-auto w-full">
             {/* Dashboard Grid */}
@@ -13,7 +19,8 @@ export default function Overview() {
                         <span className="material-symbols-outlined text-primary">sensors</span>
                     </div>
                     <div className="flex items-baseline gap-2">
-                        <span className="text-4xl font-bold tracking-tight">1,248</span>
+                        <span className="text-4xl font-bold tracking-tight">{currentMetrics.verdict_safe || 0}</span>
+
                         <span className="text-emerald-400 text-xs font-semibold flex items-center">
                             <span className="material-symbols-outlined text-xs">arrow_upward</span> 12%
                         </span>
@@ -34,7 +41,8 @@ export default function Overview() {
                         <span className="material-symbols-outlined text-red-500">security</span>
                     </div>
                     <div className="flex items-baseline gap-2">
-                        <span className="text-4xl font-bold tracking-tight text-white">42</span>
+                        <span className="text-4xl font-bold tracking-tight text-white">{currentMetrics.verdict_threat || 0}</span>
+
                         <span className="text-red-400 text-xs font-semibold flex items-center">
                             <span className="material-symbols-outlined text-xs">warning</span> High Risk
                         </span>
@@ -86,7 +94,7 @@ export default function Overview() {
                                     <circle className="stroke-white/10 fill-none" cx="18" cy="18" r="16" strokeWidth="3"></circle>
                                     <circle className="stroke-primary fill-none" cx="18" cy="18" r="16" strokeDasharray="100" strokeDashoffset="35" strokeLinecap="round" strokeWidth="3"></circle>
                                 </svg>
-                                <span className="absolute text-[11px] font-bold">65%</span>
+                                <span className="absolute text-[11px] font-bold">{Math.round(currentMetrics.system_cpu_percent || 0)}%</span>
                             </div>
                             <span className="text-[10px] text-slate-500 font-bold uppercase">CPU</span>
                         </div>
@@ -106,7 +114,7 @@ export default function Overview() {
                                     <circle className="stroke-white/10 fill-none" cx="18" cy="18" r="16" strokeWidth="3"></circle>
                                     <circle className="stroke-blue-400 fill-none" cx="18" cy="18" r="16" strokeDasharray="100" strokeDashoffset="55" strokeLinecap="round" strokeWidth="3"></circle>
                                 </svg>
-                                <span className="absolute text-[11px] font-bold">45%</span>
+                                <span className="absolute text-[11px] font-bold">{Math.round(currentMetrics.system_ram_percent || 0)}%</span>
                             </div>
                             <span className="text-[10px] text-slate-500 font-bold uppercase">RAM</span>
                         </div>
@@ -122,7 +130,8 @@ export default function Overview() {
                         </div>
                         <div className="flex items-center gap-4">
                             <div className="text-right">
-                                <span className="text-xl font-bold tracking-tight text-white">4,821</span>
+                                <span className="text-xl font-bold tracking-tight text-white">{currentMetrics.eps || 0}</span>
+
                                 <span className="text-emerald-400 text-[10px] font-semibold flex items-center justify-end">
                                     <span className="material-symbols-outlined text-[10px]">arrow_upward</span> 8.4%
                                 </span>
@@ -133,9 +142,34 @@ export default function Overview() {
                         </div>
                     </div>
                     <div className="flex-1 w-full relative">
-                        <svg className="w-full h-full" preserveAspectRatio="none" viewBox="0 0 400 200">
-                            <path className="area-chart-fill" d="M0,200 L0,150 Q50,120 100,160 Q150,180 200,120 Q250,80 300,140 Q350,100 400,40 L400,200 Z"></path>
-                            <path d="M0,150 Q50,120 100,160 Q150,180 200,120 Q250,80 300,140 Q350,100 400,40" fill="none" stroke="#256af4" strokeWidth="3"></path>
+                        <svg className="w-full h-full" preserveAspectRatio="none" viewBox="0 0 400 100">
+                            {(() => {
+                                const epsData = metrics.slice(0, 40).map(m => m.eps || 0).reverse();
+                                if (epsData.length < 2) return null;
+
+                                const maxEps = Math.max(...epsData, 100);
+                                const points = epsData.map((eps, i) => {
+                                    const x = (i / (epsData.length - 1)) * 400;
+                                    const y = 100 - (eps / maxEps) * 90;
+                                    return `${x},${y}`;
+                                });
+
+                                const linePath = `M ${points.join(' L ')}`;
+                                const areaPath = `${linePath} L 400,100 L 0,100 Z`;
+
+                                return (
+                                    <>
+                                        <defs>
+                                            <linearGradient id="epsGradient" x1="0" y1="0" x2="0" y2="1">
+                                                <stop offset="0%" stopColor="#256af4" stopOpacity="0.4" />
+                                                <stop offset="100%" stopColor="#256af4" stopOpacity="0" />
+                                            </linearGradient>
+                                        </defs>
+                                        <path d={areaPath} fill="url(#epsGradient)" />
+                                        <path d={linePath} fill="none" stroke="#256af4" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="drop-shadow-[0_0_8px_rgba(37,106,244,0.5)]" />
+                                    </>
+                                );
+                            })()}
                         </svg>
                     </div>
                     <div className="flex justify-between mt-4 text-[9px] text-slate-500 font-medium">
@@ -165,22 +199,18 @@ export default function Overview() {
                         </div>
                     </div>
                     <div className="flex-1 space-y-3 overflow-y-auto max-h-[140px] pr-2 custom-scrollbar">
-                        <div className="flex items-center gap-3 p-2 rounded-lg bg-white/5 border border-white/10">
-                            <div className="size-2 bg-red-500 rounded-full"></div>
-                            <div className="flex-1 min-w-0">
-                                <p className="text-[11px] font-semibold truncate">SQL Injection Attempt</p>
-                                <p className="text-[9px] text-slate-500">Node-04 • 2 mins ago</p>
+                        {recentEvents.length > 0 ? recentEvents.map((event, idx) => (
+                            <div key={event._id || idx} className="flex items-center gap-3 p-2 rounded-lg bg-white/5 border border-white/10">
+                                <div className={`size-2 rounded-full ${event.verdict.includes('ANOMALY') || event.verdict.includes('THREAT') ? 'bg-red-500' : 'bg-emerald-500'}`}></div>
+                                <div className="flex-1 min-w-0">
+                                    <p className="text-[11px] font-semibold truncate">{event.verdict}</p>
+                                    <p className="text-[9px] text-slate-500">{event.host_id || 'Unknown Node'} • {new Date(event.timestamp * 1000).toLocaleTimeString()}</p>
+                                </div>
+                                <button className="material-symbols-outlined text-slate-500 text-sm">open_in_new</button>
                             </div>
-                            <button className="material-symbols-outlined text-slate-500 text-sm">open_in_new</button>
-                        </div>
-                        <div className="flex items-center gap-3 p-2 rounded-lg bg-white/5 border border-white/10">
-                            <div className="size-2 bg-orange-400 rounded-full"></div>
-                            <div className="flex-1 min-w-0">
-                                <p className="text-[11px] font-semibold truncate">Brute Force Detected</p>
-                                <p className="text-[9px] text-slate-500">Gateway-01 • 15 mins ago</p>
-                            </div>
-                            <button className="material-symbols-outlined text-slate-500 text-sm">open_in_new</button>
-                        </div>
+                        )) : (
+                            <p className="text-[10px] text-slate-500 text-center py-4">No recent events detected</p>
+                        )}
                     </div>
                 </div>
 

@@ -2,7 +2,7 @@ import React from 'react';
 import { useKinetixData } from '../hooks/useKinetixData';
 
 export default function Overview() {
-    const { data: metrics } = useKinetixData('metrics', { limit: 1 });
+    const { data: metrics } = useKinetixData('metrics', { limit: 1440 });
     const { data: recentEvents } = useKinetixData('events', { limit: 5 });
 
     const currentMetrics = metrics[0] || {};
@@ -131,34 +131,50 @@ export default function Overview() {
                         <div className="flex items-center gap-4">
                             <div className="text-right">
                                 <span className="text-xl font-bold tracking-tight text-white">{currentMetrics.eps || 0}</span>
-
-                                <span className="text-emerald-400 text-[10px] font-semibold flex items-center justify-end">
-                                    <span className="material-symbols-outlined text-[10px]">arrow_upward</span> 8.4%
-                                </span>
+                                <p className="text-[10px] text-slate-500">current</p>
                             </div>
                             <div className="flex gap-1">
-                                <button className="px-2 py-1 text-[9px] bg-primary/20 text-primary border border-primary/20 rounded-lg">24H</button>
+                                <span className="px-2 py-1 text-[9px] bg-primary/20 text-primary border border-primary/20 rounded-lg">24H</span>
                             </div>
                         </div>
                     </div>
-                    <div className="flex-1 w-full relative">
-                        <svg className="w-full h-full" preserveAspectRatio="none" viewBox="0 0 400 100">
-                            {(() => {
-                                const epsData = metrics.slice(0, 40).map(m => m.eps || 0).reverse();
-                                if (epsData.length < 2) return null;
+                    {(() => {
+                        const sliced = metrics.slice(0, 40).reverse();
+                        const epsData = sliced.map(m => m.eps || 0);
+                        const hasSignal = epsData.length >= 2;
 
-                                const maxEps = Math.max(...epsData, 100);
-                                const points = epsData.map((eps, i) => {
-                                    const x = (i / (epsData.length - 1)) * 400;
-                                    const y = 100 - (eps / maxEps) * 90;
-                                    return `${x},${y}`;
-                                });
+                        if (!hasSignal) {
+                            return (
+                                <div className="flex-1 w-full flex flex-col items-center justify-center gap-3">
+                                    <div className="relative">
+                                        <span className="material-symbols-outlined text-4xl text-slate-600 animate-pulse">signal_cellular_off</span>
+                                        <div className="absolute -top-1 -right-1 size-3 bg-red-500/80 rounded-full animate-ping"></div>
+                                        <div className="absolute -top-1 -right-1 size-3 bg-red-500 rounded-full"></div>
+                                    </div>
+                                    <p className="text-sm font-semibold text-slate-400 tracking-wide">NO SIGNAL</p>
+                                    <p className="text-[10px] text-slate-600 text-center max-w-[200px]">Waiting for data stream from server. Ensure the collector is running.</p>
+                                </div>
+                            );
+                        }
 
-                                const linePath = `M ${points.join(' L ')}`;
-                                const areaPath = `${linePath} L 400,100 L 0,100 Z`;
+                        const maxEps = Math.max(...epsData, 100);
+                        const points = epsData.map((eps, i) => {
+                            const x = (i / (epsData.length - 1)) * 400;
+                            const y = 100 - (eps / maxEps) * 90;
+                            return `${x},${y}`;
+                        });
 
-                                return (
-                                    <>
+                        const linePath = `M ${points.join(' L ')}`;
+                        const areaPath = `${linePath} L 400,100 L 0,100 Z`;
+
+                        const oldestTs = sliced[0]?.timestamp;
+                        const newestTs = sliced[sliced.length - 1]?.timestamp;
+                        const formatTs = (ts) => ts ? new Date(ts * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '--:--';
+
+                        return (
+                            <>
+                                <div className="flex-1 w-full relative">
+                                    <svg className="w-full h-full" preserveAspectRatio="none" viewBox="0 0 400 100">
                                         <defs>
                                             <linearGradient id="epsGradient" x1="0" y1="0" x2="0" y2="1">
                                                 <stop offset="0%" stopColor="#256af4" stopOpacity="0.4" />
@@ -167,15 +183,14 @@ export default function Overview() {
                                         </defs>
                                         <path d={areaPath} fill="url(#epsGradient)" />
                                         <path d={linePath} fill="none" stroke="#256af4" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="drop-shadow-[0_0_8px_rgba(37,106,244,0.5)]" />
-                                    </>
-                                );
-                            })()}
-                        </svg>
-                    </div>
-                    <div className="flex justify-between mt-4 text-[9px] text-slate-500 font-medium">
-                        <span>00:00</span>
-                        <span>Now</span>
-                    </div>
+                                    </svg>
+                                </div>
+                                <div className="flex justify-end mt-4 text-[9px] text-slate-500 font-medium">
+                                    <span>{formatTs(newestTs)}</span>
+                                </div>
+                            </>
+                        );
+                    })()}
                 </div>
 
                 {/* Alert Panel (Col span 4) */}

@@ -882,6 +882,7 @@ class UnsupervisedAI(threading.Thread):
                             "timestamp": time.time(),
                             "verdict": verdict, # "NEW ANOMALY"
                             "score": ctx["score"],
+                            "status": "active",
                             "log": ctx["log"]
                         })
                 
@@ -943,6 +944,10 @@ class UnsupervisedAI(threading.Thread):
                     
                     "full_log": enriched_log
                 }
+                
+                if ctx["is_anomaly"]:
+                    doc["status"] = "active"
+                    
                 mongo_docs.append(doc)
 
         # 5. Execute Writes

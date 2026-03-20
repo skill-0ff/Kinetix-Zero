@@ -14,7 +14,7 @@ export default function Layout() {
         { name: 'Overview', path: '/', icon: 'space_dashboard' },
         { name: 'Network', path: '/network', icon: 'hub' },
         { name: 'Threat', path: '/threat', icon: 'gpp_maybe' },
-        { name: 'Configuration', path: '/config', icon: 'settings' },
+        { name: 'Configuration', path: '/config', icon: 'settings_applications' },
         { name: 'Agent', path: '/agent', icon: 'memory' },
         { name: 'AI Intelligence', path: '/ai', icon: 'auto_awesome' },
     ];
@@ -53,6 +53,15 @@ export default function Layout() {
                     </nav>
                     {/* Actions */}
                     <div className="flex items-center gap-2">
+                        <button className="size-9 flex items-center justify-center rounded-lg glass-panel hover:bg-white/10 transition-colors group">
+                            <span className="material-symbols-outlined text-[20px] text-slate-300 group-hover:text-white">notifications_active</span>
+                        </button>
+                        <button className="size-9 flex items-center justify-center rounded-lg glass-panel hover:bg-white/10 transition-colors group">
+                            <span className="material-symbols-outlined text-[20px] text-slate-300 group-hover:text-white">manage_accounts</span>
+                        </button>
+                        <button className="size-9 flex items-center justify-center rounded-lg glass-panel hover:bg-white/10 transition-colors group">
+                            <span className="material-symbols-outlined text-[20px] text-slate-300 group-hover:text-white">settings</span>
+                        </button>
                         <div className="h-8 w-px bg-white/10 mx-1"></div>
                         <div
                             className="size-9 rounded-lg bg-gradient-to-br from-primary to-accent-purple p-[1px] cursor-pointer hover:scale-105 transition-transform"

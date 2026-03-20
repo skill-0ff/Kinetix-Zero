@@ -4,10 +4,10 @@ import Layout from './components/Layout';
 import Overview from './pages/Overview';
 import Network from './pages/Network';
 import Threat from './pages/Threat';
+import Configuration from './pages/Configuration';
 import Agent from './pages/Agent';
 import AIIntelligence from './pages/AIIntelligence';
 import Login from './pages/Login';
-import Configuration from './pages/Configuration';
 
 function App() {
   return (

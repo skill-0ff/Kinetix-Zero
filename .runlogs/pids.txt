@@ -1,4 +1,0 @@
-﻿api=19820
-collector=19148
-brain=18972
-frontend=19592

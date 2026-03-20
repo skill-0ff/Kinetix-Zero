@@ -104,6 +104,7 @@ class UnsupervisedAI(threading.Thread):
 
         # Log Store & Memory (Init)
         self._init_databases()
+        self._init_metrics()
 
         print(f"[AI] Async Worker Initialized on {self.device} (AMP Enabled). Context={self.context_epochs}")
         
@@ -422,7 +423,7 @@ class UnsupervisedAI(threading.Thread):
     def _flush_metrics(self, timestamp):
         """Flushes 1s of accumulated stats to MongoDB"""
         if not hasattr(self, "metrics_accum"): return
-        if not self.mongo_metrics: return # Should we reset anyway?
+        if self.mongo_metrics is None: return # Should we reset anyway?
         
         # Calculate rates
         # If interval > 1.0s, counts are total over interval.
@@ -568,18 +569,6 @@ class UnsupervisedAI(threading.Thread):
              # But we can report Allocated as before.
              pass
              
-        return gpus
-        
-        # Write to Mongo
-        try:
-            self.mongo_metrics.insert_one(doc)
-        except Exception as e:
-            print(f"[AI] Metric Write Failed: {e}")
-            
-        # Reset Accumulator
-        for k in self.metrics_accum:
-            self.metrics_accum[k] = 0
-            
         self.last_metric_time = timestamp
 
     def push_evidence(self, evidence):
@@ -587,7 +576,7 @@ class UnsupervisedAI(threading.Thread):
         Save DDoS/Drop evidence samples to MongoDB.
         evidence: List[dict] or single dict from brain.py
         """
-        if not self.mongo_ddos: return
+        if self.mongo_ddos is None: return
         
         try:
             if isinstance(evidence, dict):
@@ -938,7 +927,7 @@ class UnsupervisedAI(threading.Thread):
                 except: pass
             
             # --- MONGO STORE (Save Everything) ---
-            if self.mongo_events:
+            if self.mongo_events is not None:
                 # Prepare Relational Doc
                 # Enrich Log
                 enriched_log = ctx["log"].copy()
@@ -980,7 +969,7 @@ class UnsupervisedAI(threading.Thread):
                  print(f"[AI] Memory Save Failed: {e}")
                  
         # B. Mongo (Logs)
-        if mongo_docs and self.mongo_events:
+        if mongo_docs and self.mongo_events is not None:
             try:
                 self.mongo_events.insert_many(mongo_docs, ordered=False)
             except Exception as e:

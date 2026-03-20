@@ -35,7 +35,9 @@ function Start-Component {
 
 Write-Host "Starting SIEM stack from $root"
 
-if (Get-Command mongod -ErrorAction SilentlyContinue) {
+if (Get-Process mongod -ErrorAction SilentlyContinue) {
+    Write-Host "MongoDB is already running."
+} elseif (Get-Command mongod -ErrorAction SilentlyContinue) {
     $mongoData = Join-Path $root "DB\mongo-data"
     if (!(Test-Path $mongoData)) {
         New-Item -ItemType Directory -Path $mongoData | Out-Null

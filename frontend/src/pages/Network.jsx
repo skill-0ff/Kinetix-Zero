@@ -2,7 +2,7 @@ import React from 'react';
 
 export default function Network() {
     return (
-        <main className="flex-1 pt-24 pb-8 px-6 lg:px-12 max-w-[1440px] mx-auto w-full flex gap-6 relative overflow-hidden">
+        <main className="flex-1 pt-24 pb-8 px-6 lg:px-12 max-w-[1440px] mx-auto w-full flex gap-6 relative">
             {/* Center/Left Content Placeholder */}
             <div className="flex-1 flex flex-col gap-6">
                 {/* Main Content Area (Previously empty main) */}

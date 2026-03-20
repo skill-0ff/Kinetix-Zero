@@ -3,6 +3,8 @@ import { useNavigate } from 'react-router-dom';
 
 export default function Login() {
     const navigate = useNavigate();
+    const [error, setError] = React.useState(null);
+    const [isConnecting, setIsConnecting] = React.useState(false);
 
     return (
         <main className="flex-1 min-h-screen flex items-center justify-center px-6 relative overflow-hidden">
@@ -11,6 +13,9 @@ export default function Login() {
             <div className="absolute bottom-1/4 right-1/4 size-[600px] bg-accent-purple/10 rounded-full blur-[150px] mix-blend-screen"></div>
 
             <div className="glass-card rounded-2xl p-10 w-full max-w-[420px] relative z-10 border border-white/10 shadow-2xl overflow-hidden group">
+                {/* Error Pulse if failed */}
+                {error && <div className="absolute inset-0 border-2 border-red-500/50 rounded-2xl pointer-events-none animate-pulse z-20"></div>}
+
                 <div className="absolute -right-4 -top-4 size-32 bg-primary/20 rounded-full blur-3xl transition-all glow-layer"></div>
                 <div className="absolute -left-4 -bottom-4 size-32 bg-accent-purple/20 rounded-full blur-3xl transition-all glow-layer"></div>
 
@@ -27,6 +32,9 @@ export default function Login() {
 
                 <form className="relative z-10 space-y-5" onSubmit={async (e) => {
                     e.preventDefault();
+                    setError(null);
+                    setIsConnecting(true);
+
                     const username = e.target[0].value;
                     const password = e.target[1].value;
 
@@ -42,13 +50,20 @@ export default function Login() {
                             localStorage.setItem('token', access_token);
                             navigate('/');
                         } else {
-                            alert('Invalid Operator Credentials');
+                            setError('Invalid Operator Credentials');
                         }
                     } catch (err) {
                         console.error('Login Failed:', err);
-                        alert('Neural Core Connection Failed');
+                        setError('Neural Core Connection Failed. Ensure API is running on port 8000.');
+                    } finally {
+                        setIsConnecting(false);
                     }
                 }}>
+                    {error && (
+                        <div className="bg-red-500/10 border border-red-500/20 p-3 rounded-xl text-center mb-4">
+                            <p className="text-[11px] font-bold text-red-400 uppercase tracking-wider">{error}</p>
+                        </div>
+                    )}
                     <div>
                         <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 ml-1">Operator ID</label>
                         <div className="relative group">

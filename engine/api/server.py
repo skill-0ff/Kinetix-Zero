@@ -88,12 +88,17 @@ async def root():
     return {"status": "online", "engine": "Kinetix-Zero", "service": "Unified API"}
 
 @app.post("/api/v1/auth/login")
-async def login(req: LoginRequest):
+async def login(req: LoginRequest, request: Request):
     # Minimalist auth for demo/operator access
-    # In production, check against DB
+    print(f"DEBUG: Login attempt for user: {req.username}")
+    print(f"DEBUG: Headers: {request.headers}")
+    
     if req.username == "admin" and req.password == "password":
         token = jwt.encode({"sub": req.username, "exp": time.time() + 86400}, SECRET_KEY, algorithm=ALGORITHM)
+        print(f"DEBUG: Login successful for {req.username}")
         return {"access_token": token, "token_type": "bearer"}
+    
+    print(f"DEBUG: Login failed for {req.username}")
     raise HTTPException(status_code=401, detail="Invalid credentials")
 
 @app.post("/api/v1/data/{collection}")

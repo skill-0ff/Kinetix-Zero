@@ -2,7 +2,7 @@ import React from 'react';
 
 export default function AIIntelligence() {
     return (
-        <main className="flex-1 mt-24 px-8 pb-12 max-w-[1440px] mx-auto w-full">
+        <main className="flex-1 mt-24 px-8 pb-12 max-w-[1440px] mx-auto w-full relative">
             <div className="flex items-center justify-between mb-8">
                 <div>
                     <h2 className="text-2xl font-bold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-accent-purple to-pink-500">

@@ -4,14 +4,72 @@
 #include <ctype.h>
 #include <winsock2.h>
 #include <ws2tcpip.h>
-#include "aes.h"
+#include <windows.h>
+#include <bcrypt.h>
 
 #pragma comment(lib, "ws2_32.lib")
 
 #define BUFFER_SIZE 65535
 #define INTERNAL_PORT 5001
 #define LISTENING_PORT 5000
-#define PSK_AES_KEY "KinetixZeroSuper" // 16 bytes
+#define KEY_FILE "collector.key"
+
+// CNG Variables for AES-GCM
+BCRYPT_ALG_HANDLE hAesAlg = NULL;
+BCRYPT_KEY_HANDLE hKey = NULL;
+PBYTE pbKeyObject = NULL;
+DWORD cbKeyObject = 0;
+FILETIME lastKeyTime = {0};
+
+// Replay Protection Cache
+typedef struct {
+    uint32_t ip;
+    double last_seq;
+} ReplayCache;
+#define REPLAY_CACHE_SIZE 256
+ReplayCache replay_cache[REPLAY_CACHE_SIZE] = {0};
+
+// Hex to Bin helper
+static void hex2bin(const char *hex, BYTE *bin, size_t bin_len) {
+    for (size_t i = 0; i < bin_len; i++) {
+        sscanf(hex + 2 * i, "%2hhx", &bin[i]);
+    }
+}
+
+// Load or Reload Key from File
+static void check_and_reload_key() {
+    WIN32_FILE_ATTRIBUTE_DATA fileInfo;
+    if (GetFileAttributesEx(KEY_FILE, GetFileExInfoStandard, &fileInfo)) {
+        if (CompareFileTime(&fileInfo.ftLastWriteTime, &lastKeyTime) > 0) {
+            FILE *f = fopen(KEY_FILE, "rb");
+            if (f) {
+                char hex_key[65] = {0};
+                fread(hex_key, 1, 64, f);
+                fclose(f);
+                
+                BYTE key[32];
+                hex2bin(hex_key, key, 32);
+
+                if (!hAesAlg) {
+                    BCryptOpenAlgorithmProvider(&hAesAlg, BCRYPT_AES_ALGORITHM, NULL, 0);
+                    BCryptSetProperty(hAesAlg, BCRYPT_CHAINING_MODE, (PBYTE)BCRYPT_CHAIN_MODE_GCM, sizeof(BCRYPT_CHAIN_MODE_GCM), 0);
+                    DWORD cbData = 0;
+                    BCryptGetProperty(hAesAlg, BCRYPT_OBJECT_LENGTH, (PBYTE)&cbKeyObject, sizeof(DWORD), &cbData, 0);
+                    pbKeyObject = (PBYTE)HeapAlloc(GetProcessHeap(), 0, cbKeyObject);
+                }
+
+                if (hKey) {
+                    BCryptDestroyKey(hKey);
+                    hKey = NULL;
+                }
+
+                BCryptGenerateSymmetricKey(hAesAlg, &hKey, pbKeyObject, cbKeyObject, key, 32, 0);
+                lastKeyTime = fileInfo.ftLastWriteTime;
+                printf("[Collector] AES-256-GCM Key dynamically loaded/rotated.\n");
+            }
+        }
+    }
+}
 
 typedef struct {
     char value[256];
@@ -326,7 +384,11 @@ int main() {
 
     printf("[Collector] Listening on UDP %d. Forwarding canonical events to UDP %d.\n", LISTENING_PORT, INTERNAL_PORT);
 
+    check_and_reload_key();
+
     while (1) {
+        check_and_reload_key(); // Polling modification time is extremely cheap in Windows cache
+        
         const char *payload = buffer;
         int payload_len = 0;
 
@@ -336,39 +398,60 @@ int main() {
             continue;
         }
 
-        // AES-128-CBC Decryption
-        // Require at least 16 bytes for IV + 16 bytes for cipher text
-        if (recv_len >= 32) {
-            uint8_t iv[16];
-            struct AES_ctx ctx;
-            int cipher_len = recv_len - 16;
+        // AES-256-GCM Decryption
+        // Require: 12 bytes IV + 16 bytes Auth Tag + >=2 bytes payload (total 30)
+        // Format: [12B IV][16B TAG][CIPHERTEXT]
+        if (recv_len >= 30 && hKey) {
+            PUCHAR iv = (PUCHAR)buffer;
+            PUCHAR tag = (PUCHAR)(buffer + 12);
+            PUCHAR ciphertext = (PUCHAR)(buffer + 28);
+            DWORD cipher_len = recv_len - 28;
+
+            BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO authInfo;
+            BCRYPT_INIT_AUTH_MODE_INFO(authInfo);
+            authInfo.pbNonce = iv;
+            authInfo.cbNonce = 12;
+            authInfo.pbTag = tag;
+            authInfo.cbTag = 16;
             
-            // CBC requires length to be multiple of 16
-            if (cipher_len % 16 == 0) {
-                memcpy(iv, buffer, 16);
-                AES_init_ctx_iv(&ctx, (const uint8_t*)PSK_AES_KEY, iv);
-                
-                // Decrypt in-place
-                AES_CBC_decrypt_buffer(&ctx, (uint8_t*)(buffer + 16), cipher_len);
-                
-                // Shift decrypted JSON to the front of buffer
-                memmove(buffer, buffer + 16, cipher_len);
-                
-                // PKCS7 padding removal (optional, but checking first char is easier)
-                buffer[cipher_len] = '\0'; 
-                recv_len = cipher_len;
-                
-                // Extremely fast sanity check to prevent processing garbage (tampered keys)
-                if (buffer[0] != '{') {
-                    // printf("Dropped: Decryption failed (Tampered or wrong key)\n");
-                    continue;
-                }
-            } else {
-                // printf("Dropped: Invalid AES block size\n");
+            // NOTE: bcrypt requires pbMacContext for GCM but authInfo covers it.
+            // Wait, BCryptDecrypt using GCM works with authInfo and pbNonce doesn't need to be passed redundantly if authInfo works.
+            // Actually, Windows BCryptDecrypt requires IV to be passed down in pbInput? No, authInfo nonce handles it.
+            
+            DWORD cbResult = 0;
+            NTSTATUS status = BCryptDecrypt(hKey, ciphertext, cipher_len, &authInfo, NULL, 0, ciphertext, cipher_len, &cbResult, 0);
+
+            if (!NT_SUCCESS(status)) {
+                // printf("Dropped: GCM Auth Tag Failed or Invalid Key\n");
                 continue;
             }
+
+            // Shift decrypted JSON to the front of buffer
+            memmove(buffer, ciphertext, cbResult);
+            buffer[cbResult] = '\0';
+            recv_len = cbResult;
+
+            if (buffer[0] != '{') continue; // Sanity check
+            
+            // Replay Attack Protection
+            Extracted ts_ext = extract_json_value(buffer, "timestamp");
+            if (ts_ext.found) {
+                double packet_ts = atof(ts_ext.value);
+                uint32_t sender_ip = client_addr.sin_addr.s_addr;
+                int slot = sender_ip % REPLAY_CACHE_SIZE;
+                
+                if (replay_cache[slot].ip == sender_ip) {
+                    if (packet_ts <= replay_cache[slot].last_seq) {
+                        // printf("Dropped: Replay attack detected from IP\n");
+                        continue;
+                    }
+                }
+                replay_cache[slot].ip = sender_ip;
+                replay_cache[slot].last_seq = packet_ts;
+            }
+
         } else {
-            // Not encrypted or missing IV
+            // Unencrypted / missing data
             continue;
         }
 

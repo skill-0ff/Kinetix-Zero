@@ -1,13 +1,13 @@
 # Compiler and flags
 CC = gcc
 CFLAGS = -Wall -Wextra -O2
-LDFLAGS = -lws2_32
+LDFLAGS = -lws2_32 -lbcrypt
 
 # Target executable name
 TARGET = collector.exe
 
 # Source files
-SRCS = collector.c aes.c
+SRCS = collector.c
 
 # Build target
 all: $(TARGET)

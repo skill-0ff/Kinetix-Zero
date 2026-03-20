@@ -3,7 +3,6 @@ from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from fastapi.middleware.cors import CORSMiddleware
 from pymongo import MongoClient
 from qdrant_client import QdrantClient
-from qdrant_client.http.models import Filter, FieldCondition, MatchValue
 from typing import List, Optional, Dict
 import os
 import json
@@ -21,7 +20,7 @@ init_auth_db()
 
 START_TIME = time.time()
 
-app = FastAPI(title="Kinetix-Zero API", version="1.0.0")
+app = FastAPI(title="Kinetix-Zero API (V2 Skeleton)", version="2.0.0")
 
 # CORS (Allow Vite Frontend)
 app.add_middleware(
@@ -108,150 +107,9 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
 async def read_users_me(current_user: User = Depends(get_current_active_user)):
     return current_user
 
-@app.get("/metrics")
-async def get_metrics(limit: int = 60, current_user: User = Depends(get_current_active_user)):
-    """Get recent metrics (EPS, Verdicts)"""
-    cursor = db["metrics"].find().sort("timestamp", -1).limit(limit)
-    data = list(cursor)
-    for d in data: d["_id"] = str(d["_id"])
-    return data  # Returns oldest->newest usually needs reverse for graph
 
-@app.get("/logs")
-async def get_logs(limit: int = 100, skip: int = 0, verdict: Optional[str] = None, current_user: User = Depends(get_current_active_user)):
-    """Search logs with filters"""
-    query = {}
-    if verdict:
-        query["verdict"] = verdict
-        
-    cursor = db["events"].find(query).sort("timestamp", -1).skip(skip).limit(limit)
-    logs = list(cursor)
-    for l in logs: l["_id"] = str(l["_id"])
-    return logs
+# TODO: New API Ideas will go here
 
-@app.get("/threats")
-async def get_threats(limit: int = 50, current_user: User = Depends(get_current_active_user)):
-    """Get active threats (MISP + AI High Confidence)"""
-    query = {"verdict": {"$in": ["KNOWN THREAT", "NEW ANOMALY", "Known Threat (MISP)"]}}
-    cursor = db["events"].find(query).sort("timestamp", -1).limit(limit)
-    logs = list(cursor)
-    for l in logs: l["_id"] = str(l["_id"])
-    return logs
-
-@app.get("/status")
-async def get_status(current_user: User = Depends(get_current_active_user)):
-    """System Health Check"""
-    status_data = {
-        "uptime": 0, # Brain Uptime
-        "core_status": False,
-        "mongo": False,
-        "qdrant": False,
-        "vectors": 0,
-        "threats_active": 0
-    }
-    
-    # Check Mongo
-    try:
-        mongo_client.admin.command('ping')
-        status_data["mongo"] = True
-        
-        # Threat Counts from MongoDB
-        status_data["threats_active"] = db["events"].count_documents({"verdict": {"$in": ["KNOWN THREAT", "NEW ANOMALY", "Known Threat (MISP)"]}})
-        status_data["threats_new"] = db["events"].count_documents({"verdict": "NEW ANOMALY"})
-        status_data["threats_known"] = db["events"].count_documents({"verdict": {"$in": ["KNOWN THREAT", "Known Threat (MISP)"]}})
-        status_data["threats_fp"] = db["events"].count_documents({"verdict": "FALSE POSITIVE"})
-        
-        # Check Brain/AI Liveness via Metrics
-        latest_metric = db["metrics"].find_one(sort=[("timestamp", -1)])
-        if latest_metric:
-            lag = time.time() - latest_metric.get("timestamp", 0)
-            if lag < 5: # If metrics logged within last 5s, it is ALIVE
-                status_data["core_status"] = True
-                status_data["uptime"] = int(latest_metric.get("uptime", 0))
-    except:
-        pass
-        
-    # Check Qdrant
-    try:
-        # Check collection info
-        coll = qdrant.get_collection("network_patterns")
-        status_data["qdrant"] = True
-        status_data["vectors"] = coll.points_count
-    except:
-        pass
-        
-    return status_data
-
-@app.get("/stats")
-async def get_stats(current_user: User = Depends(get_current_active_user)):
-    """Get aggregated statistics (Trend)"""
-    now = time.time()
-    
-    # 1. Current EPS (Avg of last 10s)
-    current_cursor = db["metrics"].find({"timestamp": {"$gt": now - 10}})
-    current_points = list(current_cursor)
-    current_eps = sum(p["eps_in"] for p in current_points) / max(1, len(current_points))
-    
-    # 2. Last Hour EPS (Avg of last 3600s)
-    hour_cursor = db["metrics"].find({"timestamp": {"$gt": now - 3600}})
-    hour_points = list(hour_cursor)
-    if not hour_points:
-        hour_avg = 0
-    else:
-        hour_avg = sum(p["eps_in"] for p in hour_points) / len(hour_points)
-        
-    # Calculate Trend
-    if hour_avg == 0:
-        trend = 100 if current_eps > 0 else 0
-    else:
-        trend = ((current_eps - hour_avg) / hour_avg) * 100
-    
-    # 3. Vector Breakdown (Qdrant)
-    vec_counts = {"safe": 0, "anomaly": 0, "threat": 0}
-    try:
-        # Check if collection exists first to avoid error
-        qdrant.get_collection("network_patterns")
-        
-        vec_counts["safe"] = qdrant.count(
-            "network_patterns", 
-            filter=Filter(must=[FieldCondition(key="type", match=MatchValue(value="ai_safe"))])
-        ).count
-        
-        vec_counts["anomaly"] = qdrant.count(
-            "network_patterns", 
-            filter=Filter(must=[FieldCondition(key="type", match=MatchValue(value="New"))])
-        ).count
-        
-        vec_counts["threat"] = qdrant.count(
-            "network_patterns", 
-            filter=Filter(must=[FieldCondition(key="type", match=MatchValue(value="Threat"))])
-        ).count
-    except:
-        pass
-        
-    return {
-        "current_eps": round(current_eps, 1),
-        "hour_avg_eps": round(hour_avg, 1),
-        "trend_percent": round(trend, 1),
-        "memory": vec_counts
-    }
-
-@app.get("/config")
-async def get_config(current_user: User = Depends(get_current_active_user)):
-    """Read Config (Raw JSON)"""
-    return load_config()
-
-@app.post("/config")
-async def update_config(new_config: Dict = Body(...), current_user: User = Depends(get_current_active_user)):
-    """Update Config (Admin Only)"""
-    if current_user.role != "admin":
-        raise HTTPException(status_code=403, detail="Admin access required")
-    
-    try:
-        with open(CONFIG_PATH, 'w') as f:
-            json.dump(new_config, f, indent=4)
-        return {"status": "updated"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
     import uvicorn

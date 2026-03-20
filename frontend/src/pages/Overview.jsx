@@ -118,10 +118,18 @@ export default function Overview() {
                     <div className="flex items-center justify-between mb-8">
                         <div>
                             <h3 className="text-sm font-semibold text-slate-300">Transmission</h3>
-                            <p className="text-xs text-slate-500 text-[10px]">Real-time analysis</p>
+                            <p className="text-xs text-slate-500 text-[10px]">Events per Second</p>
                         </div>
-                        <div className="flex gap-1">
-                            <button className="px-2 py-1 text-[9px] bg-primary/20 text-primary border border-primary/20 rounded-lg">24H</button>
+                        <div className="flex items-center gap-4">
+                            <div className="text-right">
+                                <span className="text-xl font-bold tracking-tight text-white">4,821</span>
+                                <span className="text-emerald-400 text-[10px] font-semibold flex items-center justify-end">
+                                    <span className="material-symbols-outlined text-[10px]">arrow_upward</span> 8.4%
+                                </span>
+                            </div>
+                            <div className="flex gap-1">
+                                <button className="px-2 py-1 text-[9px] bg-primary/20 text-primary border border-primary/20 rounded-lg">24H</button>
+                            </div>
                         </div>
                     </div>
                     <div className="flex-1 w-full relative">

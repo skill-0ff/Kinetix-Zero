@@ -582,6 +582,21 @@ class UnsupervisedAI(threading.Thread):
             
         self.last_metric_time = timestamp
 
+    def push_evidence(self, evidence):
+        """
+        Save DDoS/Drop evidence samples to MongoDB.
+        evidence: List[dict] or single dict from brain.py
+        """
+        if not self.mongo_ddos: return
+        
+        try:
+            if isinstance(evidence, dict):
+                self.mongo_ddos.insert_one(evidence)
+            elif isinstance(evidence, list) and evidence:
+                self.mongo_ddos.insert_many(evidence, ordered=False)
+        except Exception as e:
+            print(f"[AI] DDoS Evidence Save Failed: {e}")
+
     def process_batch(self, new_window, new_logs=None):
         # Optimization: Convert to tensor ONCE here
         tensor_win = torch.tensor(new_window, dtype=torch.float32)

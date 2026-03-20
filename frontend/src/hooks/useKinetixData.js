@@ -27,7 +27,7 @@ export const useKinetixData = (collection, initialQuery = {}) => {
                 },
                 body: JSON.stringify({
                     filter: initialQuery.filter || {},
-                    limit: initialQuery.limit || 50,
+                    limit: initialQuery.limit ?? 50,
                     sort_by: initialQuery.sort_by || 'timestamp',
                     order: initialQuery.order || -1
                 })

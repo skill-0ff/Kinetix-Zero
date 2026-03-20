@@ -4,6 +4,7 @@ import { useKinetixData } from '../hooks/useKinetixData';
 export default function Overview() {
     const { data: metrics } = useKinetixData('metrics', { limit: 1440 });
     const { data: recentEvents } = useKinetixData('events', { limit: 5 });
+    const { data: activeAlerts } = useKinetixData('events', { limit: 0, filter: { status: 'active' } });
 
     const currentMetrics = metrics[0] || {};
 
@@ -199,20 +200,27 @@ export default function Overview() {
                         <span className="text-sm font-semibold text-slate-300">Intrusion Alerts</span>
                         <span className="material-symbols-outlined text-red-500 animate-pulse">crisis_alert</span>
                     </div>
-                    <div className="grid grid-cols-3 gap-3 mb-6">
-                        <div className="bg-red-500/10 border border-red-500/20 p-3 rounded-xl text-center">
-                            <div className="text-xl font-bold text-red-400">14</div>
-                            <div className="text-[10px] text-red-500/80 font-bold uppercase">New</div>
-                        </div>
-                        <div className="bg-primary/10 border border-primary/20 p-3 rounded-xl text-center">
-                            <div className="text-xl font-bold text-primary">284</div>
-                            <div className="text-[10px] text-primary/80 font-bold uppercase">Known</div>
-                        </div>
-                        <div className="bg-white/5 border border-white/10 p-3 rounded-xl text-center">
-                            <div className="text-xl font-bold text-slate-400">12</div>
-                            <div className="text-[10px] text-slate-500 font-bold uppercase">FP</div>
-                        </div>
-                    </div>
+                    {(() => {
+                        const newCount = activeAlerts.filter(e => e.verdict?.includes('ANOMALY')).length;
+                        const knownCount = activeAlerts.filter(e => e.verdict?.includes('THREAT')).length;
+                        const fpCount = activeAlerts.filter(e => e.verdict?.includes('FALSE POSITIVE')).length;
+                        return (
+                            <div className="grid grid-cols-3 gap-3 mb-6">
+                                <div className="bg-red-500/10 border border-red-500/20 p-3 rounded-xl text-center">
+                                    <div className="text-xl font-bold text-red-400">{newCount}</div>
+                                    <div className="text-[10px] text-red-500/80 font-bold uppercase">New</div>
+                                </div>
+                                <div className="bg-primary/10 border border-primary/20 p-3 rounded-xl text-center">
+                                    <div className="text-xl font-bold text-primary">{knownCount}</div>
+                                    <div className="text-[10px] text-primary/80 font-bold uppercase">Known</div>
+                                </div>
+                                <div className="bg-white/5 border border-white/10 p-3 rounded-xl text-center">
+                                    <div className="text-xl font-bold text-slate-400">{fpCount}</div>
+                                    <div className="text-[10px] text-slate-500 font-bold uppercase">FP</div>
+                                </div>
+                            </div>
+                        );
+                    })()}
                     <div className="flex-1 space-y-3 overflow-y-auto max-h-[140px] pr-2 custom-scrollbar">
                         {recentEvents.length > 0 ? recentEvents.map((event, idx) => (
                             <div key={event._id || idx} className="flex items-center gap-3 p-2 rounded-lg bg-white/5 border border-white/10">

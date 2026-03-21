@@ -1,48 +1,63 @@
+<<<<<<< HEAD
 from fastapi import FastAPI, Depends, HTTPException, status, Body
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from fastapi.middleware.cors import CORSMiddleware
 from pymongo import MongoClient
 from typing import List, Optional, Dict
+=======
+>>>>>>> 09893c936dd507ce0034cf9280bb9b52eee617ea
 import os
 import json
 import time
+import asyncio
+from datetime import datetime
+from typing import Optional, List, Any, Dict
+from fastapi import FastAPI, HTTPException, Request, Depends, Query
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
+from pymongo import MongoClient, DESCENDING
+from jose import JWTError, jwt
+from passlib.context import CryptContext
+from dotenv import load_dotenv
 
-# Import Auth
-from .auth import (
-    Token, User, verify_password, create_access_token, 
-    get_user, init_auth_db, ACCESS_TOKEN_EXPIRE_MINUTES
-)
-from datetime import timedelta
+load_dotenv()
 
-# Init User DB
-init_auth_db()
+# --- CONFIG & SECRETS ---
+SECRET_KEY = os.getenv("JWT_SECRET", "super-secret-key-change-it")
+ALGORITHM = "HS256"
+MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017/")
 
-START_TIME = time.time()
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-app = FastAPI(title="Kinetix-Zero API", version="1.0.0")
+app = FastAPI(title="Kinetix-Zero Unified API", version="1.0.0")
 
-# CORS (Allow Vite Frontend)
+# CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], # For dev, ideally "http://localhost:5173"
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# --- Configuration ---
-CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "core/config.jsonc")
+# --- DATABASE CONNECTION ---
+class Database:
+    def __init__(self):
+        self.client = MongoClient(MONGO_URI)
+        self.db = self.client["kinetix_brain"]
+        self.events = self.db["events"]
+        self.metrics = self.db["metrics"]
+        self.ddos = self.db["ddos"]
+        
+    def get_collection(self, name: str):
+        if name not in ["events", "metrics", "ddos"]:
+            raise HTTPException(status_code=404, detail=f"Collection '{name}' not found")
+        return self.db[name]
 
-def load_config():
-    try:
-        with open(CONFIG_PATH, 'r') as f:
-            content = f.read()
-            import re
-            content = re.sub(r'//.*', '', content)
-            return json.loads(content)
-    except:
-        return {}
+db = Database()
 
+<<<<<<< HEAD
 CONFIG = load_config()
 
 # --- Database Connections (Read-Only Logic) ---
@@ -56,87 +71,58 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
 async def get_current_user(token: str = Depends(oauth2_scheme)):
     from .auth import jwt, SECRET_KEY, ALGORITHM, TokenData
+=======
+# --- AUTH UTILS ---
+async def get_current_user(request: Request, token: Optional[str] = Query(None)):
+    auth_header = request.headers.get("Authorization")
+    
+    if token:
+        # Allow token in query param for SSE / standard EventSource
+        pass
+    elif auth_header and auth_header.startswith("Bearer "):
+        token = auth_header.split(" ")[1]
+    
+    if not token:
+        raise HTTPException(status_code=401, detail="Missing or invalid token")
+    
+>>>>>>> 09893c936dd507ce0034cf9280bb9b52eee617ea
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        username: str = payload.get("sub")
-        if username is None:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
-        token_data = TokenData(username=username)
-    except jwt.JWTError:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
+        return payload
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Could not validate credentials")
+
+# --- MODELS ---
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+class QueryRequest(BaseModel):
+
+    filter: Dict[str, Any] = {}
+    limit: int = 100
+    skip: int = 0
+    sort_by: str = "timestamp"
+    order: int = -1 # -1 for DESC, 1 for ASC
+
+# --- ROUTES ---
+
+@app.get("/")
+async def root():
+    return {"status": "online", "engine": "Kinetix-Zero", "service": "Unified API"}
+
+@app.post("/api/v1/auth/login")
+async def login(req: LoginRequest, request: Request):
+    # Minimalist auth for demo/operator access
+    print(f"DEBUG: Login attempt for user: {req.username}")
+    print(f"DEBUG: Headers: {request.headers}")
     
-    user = get_user(token_data.username)
-    if user is None:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
-    return user
-
-async def get_current_active_user(current_user: User = Depends(get_current_user)):
-    if current_user.disabled:
-        raise HTTPException(status_code=400, detail="Inactive user")
-    return current_user
-
-# --- Endpoints ---
-
-@app.post("/token", response_model=Token)
-async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends()):
-    user = get_user(form_data.username)
-    if not user or not verify_password(form_data.password, user.hashed_password):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect username or password",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-    access_token = create_access_token(
-        data={"sub": user.username}, expires_delta=access_token_expires
-    )
-    return {"access_token": access_token, "token_type": "bearer"}
-
-@app.get("/users/me", response_model=User)
-async def read_users_me(current_user: User = Depends(get_current_active_user)):
-    return current_user
-
-@app.get("/metrics")
-async def get_metrics(limit: int = 60, current_user: User = Depends(get_current_active_user)):
-    """Get recent metrics (EPS, Verdicts)"""
-    cursor = db["metrics"].find().sort("timestamp", -1).limit(limit)
-    data = list(cursor)
-    for d in data: d["_id"] = str(d["_id"])
-    return data  # Returns oldest->newest usually needs reverse for graph
-
-@app.get("/logs")
-async def get_logs(limit: int = 100, skip: int = 0, verdict: Optional[str] = None, current_user: User = Depends(get_current_active_user)):
-    """Search logs with filters"""
-    query = {}
-    if verdict:
-        query["verdict"] = verdict
-        
-    cursor = db["events"].find(query).sort("timestamp", -1).skip(skip).limit(limit)
-    logs = list(cursor)
-    for l in logs: l["_id"] = str(l["_id"])
-    return logs
-
-@app.get("/threats")
-async def get_threats(limit: int = 50, current_user: User = Depends(get_current_active_user)):
-    """Get active threats (MISP + AI High Confidence)"""
-    query = {"verdict": {"$in": ["KNOWN THREAT", "NEW ANOMALY", "Known Threat (MISP)"]}}
-    cursor = db["events"].find(query).sort("timestamp", -1).limit(limit)
-    logs = list(cursor)
-    for l in logs: l["_id"] = str(l["_id"])
-    return logs
-
-@app.get("/status")
-async def get_status(current_user: User = Depends(get_current_active_user)):
-    """System Health Check"""
-    status_data = {
-        "uptime": 0, # Brain Uptime
-        "core_status": False,
-        "mongo": False,
-        "qdrant": False,
-        "vectors": 0,
-        "threats_active": 0
-    }
+    if req.username == "admin" and req.password == "password":
+        token = jwt.encode({"sub": req.username, "exp": time.time() + 86400}, SECRET_KEY, algorithm=ALGORITHM)
+        print(f"DEBUG: Login successful for {req.username}")
+        return {"access_token": token, "token_type": "bearer"}
     
+<<<<<<< HEAD
     # Check Mongo
     try:
         mongo_client.admin.command('ping')
@@ -207,24 +193,77 @@ async def get_stats(current_user: User = Depends(get_current_active_user)):
         "trend_percent": round(trend, 1),
         "memory": vec_counts
     }
+=======
+    print(f"DEBUG: Login failed for {req.username}")
+    raise HTTPException(status_code=401, detail="Invalid credentials")
 
-@app.get("/config")
-async def get_config(current_user: User = Depends(get_current_active_user)):
-    """Read Config (Raw JSON)"""
-    return load_config()
+@app.post("/api/v1/data/{collection}")
+>>>>>>> 09893c936dd507ce0034cf9280bb9b52eee617ea
 
-@app.post("/config")
-async def update_config(new_config: Dict = Body(...), current_user: User = Depends(get_current_active_user)):
-    """Update Config (Admin Only)"""
-    if current_user.role != "admin":
-        raise HTTPException(status_code=403, detail="Admin access required")
+async def query_data(
+    collection: str, 
+    query: QueryRequest,
+    user: dict = Depends(get_current_user)
+):
+    """
+    Universal Query Endpoint for any collection.
+    """
+    coll = db.get_collection(collection)
     
     try:
-        with open(CONFIG_PATH, 'w') as f:
-            json.dump(new_config, f, indent=4)
-        return {"status": "updated"}
+        cursor = coll.find(query.filter)\
+                     .sort(query.sort_by, query.order)\
+                     .skip(query.skip)\
+                     .limit(query.limit)
+        
+        results = list(cursor)
+        # Convert ObjectId to string for JSON serialization
+        for r in results:
+            if "_id" in r: r["_id"] = str(r["_id"])
+            
+        return {
+            "collection": collection,
+            "count": len(results),
+            "data": results
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/v1/stream")
+async def stream_data(user: dict = Depends(get_current_user)):
+    """
+    Real-time SSE Stream that watches for new inserts in all collections.
+    """
+    async def event_generator():
+        # Fallback to polling if not a Replica Set (Change Streams require Replica Sets)
+        last_ts = time.time()
+        
+        while True:
+            found_new = False
+            try:
+                for coll_name in ["events", "metrics", "ddos"]:
+                    coll = db.get_collection(coll_name)
+                    # Find docs newer than last_ts, limit to 20 per cycle to avoid blocking
+                    new_docs = list(coll.find({"timestamp": {"$gt": last_ts}}).sort("timestamp", 1).limit(20))
+                    
+                    for doc in new_docs:
+                        if "_id" in doc: doc["_id"] = str(doc["_id"])
+                        msg = json.dumps({"type": coll_name, "doc": doc})
+                        yield f"data: {msg}\n\n"
+                        last_ts = max(last_ts, doc.get("timestamp", 0))
+                        found_new = True
+                
+                if not found_new:
+                    # Heartbeat to keep connection alive
+                    yield ": heartbeat\n\n"
+                    await asyncio.sleep(1.0)
+                else:
+                    await asyncio.sleep(0.1)
+            except Exception as e:
+                yield f"data: {json.dumps({'error': str(e)})}\n\n"
+                await asyncio.sleep(5.0)
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 if __name__ == "__main__":
     import uvicorn

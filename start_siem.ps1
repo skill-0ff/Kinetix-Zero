@@ -35,6 +35,7 @@ function Start-Component {
 
 Write-Host "Starting SIEM stack from $root"
 
+<<<<<<< HEAD
 $mongoPath = "mongod"
 if (!(Get-Command mongod -ErrorAction SilentlyContinue)) {
     $possiblePath = Get-ChildItem "C:\Program Files\MongoDB\Server\*\bin\mongod.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
@@ -44,6 +45,11 @@ if (!(Get-Command mongod -ErrorAction SilentlyContinue)) {
 }
 
 if ($mongoPath -ne "mongod" -or (Get-Command mongod -ErrorAction SilentlyContinue)) {
+=======
+if (Get-Process mongod -ErrorAction SilentlyContinue) {
+    Write-Host "MongoDB is already running."
+} elseif (Get-Command mongod -ErrorAction SilentlyContinue) {
+>>>>>>> 09893c936dd507ce0034cf9280bb9b52eee617ea
     $mongoData = Join-Path $root "DB\mongo-data"
     if (!(Test-Path $mongoData)) {
         New-Item -ItemType Directory -Path $mongoData | Out-Null

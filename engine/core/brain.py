@@ -431,7 +431,7 @@ class Brain:
             if now >= self.last_metrics_flush + self.metrics_interval:
                 try:
                     # Log to Mongo
-                    if self.ai and hasattr(self.ai, 'mongo_metrics'):
+                    if self.ai and getattr(self.ai, 'mongo_metrics', None) is not None:
                         try:
                             self.ai.mongo_metrics.insert_one({
                                 "timestamp": now,

@@ -1,51 +1,31 @@
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import React from 'react';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import Layout from './components/Layout';
+import Overview from './pages/Overview';
+import Network from './pages/Network';
+import Threat from './pages/Threat';
+import Configuration from './pages/Configuration';
+import Agent from './pages/Agent';
+import AIIntelligence from './pages/AIIntelligence';
 import Login from './pages/Login';
-import Dashboard from './pages/Dashboard';
-
-// Simple Auth Guard
-const ProtectedRoute = ({ children }) => {
-    const token = localStorage.getItem('token');
-    if (!token) {
-        return <Navigate to="/login" replace />;
-    }
-    return children;
-};
-
-const PlaceholderPage = ({ title }) => (
-    <div style={{
-        display: 'flex',
-        justifyContent: 'center',
-        alignItems: 'center',
-        height: '100vh',
-        color: 'var(--text-main)',
-        background: 'var(--bg-dark)'
-    }}>
-        <div style={{ textAlign: 'center' }}>
-            <h1>{title}</h1>
-            <p style={{ color: 'var(--text-muted)' }}>Under Construction</p>
-        </div>
-    </div>
-);
 
 function App() {
-    return (
-        <Router>
-            <Routes>
-                <Route path="/login" element={<Login />} />
-                <Route path="/" element={
-                    <ProtectedRoute>
-                        <Dashboard />
-                    </ProtectedRoute>
-                } />
-                <Route path="/status" element={<ProtectedRoute><PlaceholderPage title="System Status" /></ProtectedRoute>} />
-                <Route path="/threat" element={<ProtectedRoute><PlaceholderPage title="Threat Intelligence" /></ProtectedRoute>} />
-                <Route path="/analysis" element={<ProtectedRoute><PlaceholderPage title="Deep Analysis" /></ProtectedRoute>} />
-                <Route path="/db" element={<ProtectedRoute><PlaceholderPage title="Database Management" /></ProtectedRoute>} />
-                <Route path="/settings" element={<ProtectedRoute><PlaceholderPage title="Settings" /></ProtectedRoute>} />
-                <Route path="/account" element={<ProtectedRoute><PlaceholderPage title="User Account" /></ProtectedRoute>} />
-            </Routes>
-        </Router>
-    );
+  return (
+    <BrowserRouter>
+      <Routes>
+        <Route path="/" element={<Layout />}>
+          <Route index element={<Overview />} />
+          <Route path="network" element={<Network />} />
+          <Route path="threat" element={<Threat />} />
+          <Route path="config" element={<Configuration />} />
+          <Route path="agent" element={<Agent />} />
+          <Route path="ai" element={<AIIntelligence />} />
+          <Route path="login" element={<Login />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Route>
+      </Routes>
+    </BrowserRouter>
+  );
 }
 
 export default App;

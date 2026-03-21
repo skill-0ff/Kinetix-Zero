@@ -1,0 +1,59 @@
+.premium-glass {
+    background: rgba(15, 23, 42, 0.3);
+    backdrop-filter: blur(24px);
+    -webkit-backdrop-filter: blur(24px);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.05), inset 0 1px 1px rgba(255, 255, 255, 0.1);
+}
+
+.liquid-neon-danger {
+    background: linear-gradient(90deg, #ef4444, #f87171, #ef4444);
+    background-size: 200% 100%;
+    animation: move-liquid 3s linear infinite;
+    box-shadow: 0 0 15px rgba(239, 68, 68, 0.4);
+}
+
+.liquid-neon-warning {
+    background: linear-gradient(90deg, #f59e0b, #fbbf24, #f59e0b);
+    background-size: 200% 100%;
+    animation: move-liquid 3s linear infinite;
+    box-shadow: 0 0 15px rgba(245, 158, 11, 0.4);
+}
+
+.liquid-neon-primary {
+    background: linear-gradient(90deg, #256af4, #60a5fa, #256af4);
+    background-size: 200% 100%;
+    animation: move-liquid 3s linear infinite;
+    box-shadow: 0 0 15px rgba(37, 106, 244, 0.4);
+}
+
+@keyframes move-liquid {
+    0% {
+        background-position: 100% 0;
+    }
+
+    100% {
+        background-position: -100% 0;
+    }
+}
+
+.micro-glow-btn {
+    position: relative;
+    overflow: hidden;
+}
+
+.micro-glow-btn::after {
+    content: '';
+    position: absolute;
+    top: -50%;
+    left: -50%;
+    width: 200%;
+    height: 200%;
+    background: radial-gradient(circle at center, rgba(255, 255, 255, 0.1) 0%, transparent 70%);
+    opacity: 0;
+    transition: opacity 0.3s;
+}
+
+.micro-glow-btn:hover::after {
+    opacity: 1;
+}

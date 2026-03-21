@@ -1,8 +1,2 @@
-Traceback (most recent call last):
-  File "C:\Users\pc\Desktop\SIEM\engine\collector\collector.py", line 136, in <module>
-    start_collector()
-    ~~~~~~~~~~~~~~~^^
-  File "C:\Users\pc\Desktop\SIEM\engine\collector\collector.py", line 69, in start_collector
-    sock.bind(('0.0.0.0', LISTEN_PORT))
-    ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
-OSError: [WinError 10048] Only one usage of each socket address (protocol/network address/port) is normally permitted
+[Collector] Listening on UDP 5000. Forwarding canonical events to UDP 5001
+[Collector] AES-256-GCM Key dynamically loaded/rotated.

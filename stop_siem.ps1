@@ -13,8 +13,9 @@ foreach ($line in $lines) {
     if ($line -match "^[^=]+=([0-9]+)$") {
         $id = [int]$Matches[1]
         try {
-            Stop-Process -Id $id -Force
-            Write-Host "Stopped PID $id"
+            # Use taskkill /T to kill the process TREE, stopping orphaned child processes like node.exe
+            $tempNull = Start-Process -FilePath "taskkill.exe" -ArgumentList "/PID $id /T /F" -Wait -NoNewWindow
+            Write-Host "Stopped PID $id and its child processes"
         } catch {}
     }
 }

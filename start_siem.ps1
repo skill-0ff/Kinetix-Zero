@@ -72,6 +72,9 @@ $pids = @(
     "brain=$($brain.Id)"
     "frontend=$($frontend.Id)"
 )
+if ($null -ne $mongo -and $mongo.Id) {
+    $pids += "mongo=$($mongo.Id)"
+}
 Set-Content -Path (Join-Path $logDir "pids.txt") -Value $pids -Encoding UTF8
 
 Write-Host ""

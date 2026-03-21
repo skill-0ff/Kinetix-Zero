@@ -483,6 +483,10 @@ class UnsupervisedAI(threading.Thread):
         except Exception as e:
             print(f"[AI] Metric Write Failed: {e}")
 
+        # Reset accumulator and timestamp
+        self.last_metric_time = timestamp
+        self._init_metrics()
+
     def _get_system_metrics(self):
         """Captures System and Process Resource Usage"""
         stats = {}
@@ -569,7 +573,6 @@ class UnsupervisedAI(threading.Thread):
              # But we can report Allocated as before.
              pass
              
-        self.last_metric_time = timestamp
 
     def push_evidence(self, evidence):
         """

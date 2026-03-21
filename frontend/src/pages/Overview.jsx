@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useRef } from 'react';
 import { useKinetixData } from '../hooks/useKinetixData';
 
 export default function Overview() {
@@ -7,6 +7,9 @@ export default function Overview() {
     const { data: activeAlerts } = useKinetixData('events', { limit: 0, filter: { status: 'active' } });
 
     const currentMetrics = metrics[0] || {};
+
+    // Keep last known good system metrics to prevent 0% blink between updates
+    const lastSystemRef = useRef({ cpu: 0, gpu: 0, ram: 0 });
 
     return (
         <main className="flex-1 pt-24 pb-12 px-6 lg:px-12 max-w-[1440px] mx-auto w-full">
@@ -88,38 +91,53 @@ export default function Overview() {
                         <span className="text-slate-400 text-sm font-medium">Resource Monitor</span>
                         <span className="material-symbols-outlined text-slate-400">developer_board</span>
                     </div>
-                    <div className="grid grid-cols-3 gap-4">
-                        <div className="flex flex-col items-center gap-2">
-                            <div className="relative size-14 flex items-center justify-center">
-                                <svg className="size-full -rotate-90" viewBox="0 0 36 36">
-                                    <circle className="stroke-white/10 fill-none" cx="18" cy="18" r="16" strokeWidth="3"></circle>
-                                    <circle className="stroke-primary fill-none" cx="18" cy="18" r="16" strokeDasharray="100" strokeDashoffset="35" strokeLinecap="round" strokeWidth="3"></circle>
-                                </svg>
-                                <span className="absolute text-[11px] font-bold">{Math.round(currentMetrics.system_cpu_percent || 0)}%</span>
+                    {(() => {
+                        // Use last known good values to prevent 0% blink
+                        if (currentMetrics.system_cpu_percent != null) {
+                            lastSystemRef.current = {
+                                cpu: Math.round(currentMetrics.system_cpu_percent),
+                                gpu: Math.round(currentMetrics.system_gpu_percent || 0),
+                                ram: Math.round(currentMetrics.system_ram_percent || 0),
+                            };
+                        }
+                        const { cpu, gpu, ram } = lastSystemRef.current;
+                        const offset = (pct) => 100 - pct;
+                        const circleStyle = { transition: 'stroke-dashoffset 1s ease-in-out' };
+                        return (
+                            <div className="grid grid-cols-3 gap-4">
+                                <div className="flex flex-col items-center gap-2">
+                                    <div className="relative size-14 flex items-center justify-center">
+                                        <svg className="size-full -rotate-90" viewBox="0 0 36 36">
+                                            <circle className="stroke-white/10 fill-none" cx="18" cy="18" r="16" strokeWidth="3"></circle>
+                                            <circle className="stroke-primary fill-none" cx="18" cy="18" r="16" strokeDasharray="100" strokeDashoffset={offset(cpu)} strokeLinecap="round" strokeWidth="3" style={circleStyle}></circle>
+                                        </svg>
+                                        <span className="absolute text-[11px] font-bold">{cpu}%</span>
+                                    </div>
+                                    <span className="text-[10px] text-slate-500 font-bold uppercase">CPU</span>
+                                </div>
+                                <div className="flex flex-col items-center gap-2">
+                                    <div className="relative size-14 flex items-center justify-center">
+                                        <svg className="size-full -rotate-90" viewBox="0 0 36 36">
+                                            <circle className="stroke-white/10 fill-none" cx="18" cy="18" r="16" strokeWidth="3"></circle>
+                                            <circle className="stroke-accent-purple fill-none" cx="18" cy="18" r="16" strokeDasharray="100" strokeDashoffset={offset(gpu)} strokeLinecap="round" strokeWidth="3" style={circleStyle}></circle>
+                                        </svg>
+                                        <span className="absolute text-[11px] font-bold">{gpu}%</span>
+                                    </div>
+                                    <span className="text-[10px] text-slate-500 font-bold uppercase">GPU</span>
+                                </div>
+                                <div className="flex flex-col items-center gap-2">
+                                    <div className="relative size-14 flex items-center justify-center">
+                                        <svg className="size-full -rotate-90" viewBox="0 0 36 36">
+                                            <circle className="stroke-white/10 fill-none" cx="18" cy="18" r="16" strokeWidth="3"></circle>
+                                            <circle className="stroke-blue-400 fill-none" cx="18" cy="18" r="16" strokeDasharray="100" strokeDashoffset={offset(ram)} strokeLinecap="round" strokeWidth="3" style={circleStyle}></circle>
+                                        </svg>
+                                        <span className="absolute text-[11px] font-bold">{ram}%</span>
+                                    </div>
+                                    <span className="text-[10px] text-slate-500 font-bold uppercase">RAM</span>
+                                </div>
                             </div>
-                            <span className="text-[10px] text-slate-500 font-bold uppercase">CPU</span>
-                        </div>
-                        <div className="flex flex-col items-center gap-2">
-                            <div className="relative size-14 flex items-center justify-center">
-                                <svg className="size-full -rotate-90" viewBox="0 0 36 36">
-                                    <circle className="stroke-white/10 fill-none" cx="18" cy="18" r="16" strokeWidth="3"></circle>
-                                    <circle className="stroke-accent-purple fill-none" cx="18" cy="18" r="16" strokeDasharray="100" strokeDashoffset="12" strokeLinecap="round" strokeWidth="3"></circle>
-                                </svg>
-                                <span className="absolute text-[11px] font-bold">88%</span>
-                            </div>
-                            <span className="text-[10px] text-slate-500 font-bold uppercase">GPU</span>
-                        </div>
-                        <div className="flex flex-col items-center gap-2">
-                            <div className="relative size-14 flex items-center justify-center">
-                                <svg className="size-full -rotate-90" viewBox="0 0 36 36">
-                                    <circle className="stroke-white/10 fill-none" cx="18" cy="18" r="16" strokeWidth="3"></circle>
-                                    <circle className="stroke-blue-400 fill-none" cx="18" cy="18" r="16" strokeDasharray="100" strokeDashoffset="55" strokeLinecap="round" strokeWidth="3"></circle>
-                                </svg>
-                                <span className="absolute text-[11px] font-bold">{Math.round(currentMetrics.system_ram_percent || 0)}%</span>
-                            </div>
-                            <span className="text-[10px] text-slate-500 font-bold uppercase">RAM</span>
-                        </div>
-                    </div>
+                        );
+                    })()}
                 </div>
 
                 {/* Data Received Graph (Col span 4) */}
@@ -243,58 +261,67 @@ export default function Overview() {
                         <span className="text-sm font-semibold text-slate-300">Verdict Distribution</span>
                         <span className="material-symbols-outlined text-primary">pie_chart</span>
                     </div>
-                    <div className="flex items-center gap-6 flex-1">
-                        <div className="relative size-32 flex-shrink-0">
-                            <svg className="size-full -rotate-90 drop-shadow-[0_0_8px_rgba(37,106,244,0.3)]" viewBox="0 0 36 36">
-                                <circle className="stroke-blue-800 fill-none" cx="18" cy="18" r="15.9" strokeDasharray="40 100" strokeDashoffset="0" strokeWidth="3"></circle>
-                                <circle className="stroke-primary fill-none" cx="18" cy="18" r="15.9" strokeDasharray="25 100" strokeDashoffset="-40" strokeWidth="3"></circle>
-                                <circle className="stroke-orange-500 fill-none animate-pulse" cx="18" cy="18" r="15.9" strokeDasharray="15 100" strokeDashoffset="-65" strokeWidth="3"></circle>
-                                <circle className="stroke-red-500 fill-none" cx="18" cy="18" r="15.9" strokeDasharray="10 100" strokeDashoffset="-80" strokeWidth="3"></circle>
-                                <circle className="stroke-accent-purple fill-none" cx="18" cy="18" r="15.9" strokeDasharray="10 100" strokeDashoffset="-90" strokeWidth="3"></circle>
-                            </svg>
-                            <div className="absolute inset-0 flex items-center justify-center flex-col">
-                                <span className="text-xs font-bold text-white">TOTAL</span>
-                                <span className="text-[10px] text-slate-400">1.5k</span>
-                            </div>
-                        </div>
-                        <div className="flex-1 space-y-2">
-                            <div className="flex items-center justify-between glass-panel px-2 py-1 rounded-lg border-white/5">
-                                <div className="flex items-center gap-2">
-                                    <div className="size-2 rounded-full bg-primary neo-glow"></div>
-                                    <span className="text-[10px] text-slate-300 font-medium">Safe (New)</span>
+                    {(() => {
+                        const anomalyCount = activeAlerts.filter(e => e.verdict?.includes('ANOMALY')).length;
+                        const threatCount = activeAlerts.filter(e => e.verdict?.includes('THREAT')).length;
+                        const fpCount = activeAlerts.filter(e => e.verdict?.includes('FALSE POSITIVE')).length;
+                        const total = anomalyCount + threatCount + fpCount;
+                        const pct = (v) => total > 0 ? Math.round((v / total) * 100) : 0;
+
+                        const anomalyPct = pct(anomalyCount);
+                        const threatPct = pct(threatCount);
+                        const fpPct = pct(fpCount);
+
+                        // Donut chart segment offsets (each segment follows the previous)
+                        const seg1 = anomalyPct;
+                        const seg2 = threatPct;
+                        const seg3 = fpPct;
+
+                        return (
+                            <div className="flex items-center gap-6 flex-1">
+                                <div className="relative size-32 flex-shrink-0">
+                                    <svg className="size-full -rotate-90 drop-shadow-[0_0_8px_rgba(37,106,244,0.3)]" viewBox="0 0 36 36">
+                                        {total > 0 ? (
+                                            <>
+                                                <circle className="stroke-orange-500 fill-none" cx="18" cy="18" r="15.9" strokeDasharray={`${seg1} ${100 - seg1}`} strokeDashoffset="0" strokeWidth="3"></circle>
+                                                <circle className="stroke-red-500 fill-none" cx="18" cy="18" r="15.9" strokeDasharray={`${seg2} ${100 - seg2}`} strokeDashoffset={`${-seg1}`} strokeWidth="3"></circle>
+                                                <circle className="stroke-accent-purple fill-none" cx="18" cy="18" r="15.9" strokeDasharray={`${seg3} ${100 - seg3}`} strokeDashoffset={`${-(seg1 + seg2)}`} strokeWidth="3"></circle>
+                                            </>
+                                        ) : (
+                                            <circle className="stroke-white/10 fill-none" cx="18" cy="18" r="15.9" strokeWidth="3"></circle>
+                                        )}
+                                    </svg>
+                                    <div className="absolute inset-0 flex items-center justify-center flex-col">
+                                        <span className="text-xs font-bold text-white">TOTAL</span>
+                                        <span className="text-[10px] text-slate-400">{total > 999 ? `${(total / 1000).toFixed(1)}k` : total}</span>
+                                    </div>
                                 </div>
-                                <span className="text-[10px] text-slate-400 font-bold">25%</span>
-                            </div>
-                            <div className="flex items-center justify-between glass-panel px-2 py-1 rounded-lg border-white/5">
-                                <div className="flex items-center gap-2">
-                                    <div className="size-2 rounded-full bg-blue-800"></div>
-                                    <span className="text-[10px] text-slate-300 font-medium">Safe (Known)</span>
+                                <div className="flex-1 space-y-2">
+                                    <div className="flex items-center justify-between glass-panel px-2 py-1 rounded-lg border-white/5">
+                                        <div className="flex items-center gap-2">
+                                            <div className="size-2 rounded-full bg-orange-500 animate-pulse"></div>
+                                            <span className="text-[10px] text-slate-300 font-medium">Anomaly</span>
+                                        </div>
+                                        <span className="text-[10px] text-slate-400 font-bold">{anomalyPct}%</span>
+                                    </div>
+                                    <div className="flex items-center justify-between glass-panel px-2 py-1 rounded-lg border-white/5">
+                                        <div className="flex items-center gap-2">
+                                            <div className="size-2 rounded-full bg-red-500"></div>
+                                            <span className="text-[10px] text-slate-300 font-medium">Threat</span>
+                                        </div>
+                                        <span className="text-[10px] text-slate-400 font-bold">{threatPct}%</span>
+                                    </div>
+                                    <div className="flex items-center justify-between glass-panel px-2 py-1 rounded-lg border-white/5">
+                                        <div className="flex items-center gap-2">
+                                            <div className="size-2 rounded-full bg-accent-purple"></div>
+                                            <span className="text-[10px] text-slate-300 font-medium">FP</span>
+                                        </div>
+                                        <span className="text-[10px] text-slate-400 font-bold">{fpPct}%</span>
+                                    </div>
                                 </div>
-                                <span className="text-[10px] text-slate-400 font-bold">40%</span>
                             </div>
-                            <div className="flex items-center justify-between glass-panel px-2 py-1 rounded-lg border-white/5">
-                                <div className="flex items-center gap-2">
-                                    <div className="size-2 rounded-full bg-orange-500 animate-pulse"></div>
-                                    <span className="text-[10px] text-slate-300 font-medium">Anomaly</span>
-                                </div>
-                                <span className="text-[10px] text-slate-400 font-bold">15%</span>
-                            </div>
-                            <div className="flex items-center justify-between glass-panel px-2 py-1 rounded-lg border-white/5">
-                                <div className="flex items-center gap-2">
-                                    <div className="size-2 rounded-full bg-red-500"></div>
-                                    <span className="text-[10px] text-slate-300 font-medium">Threat</span>
-                                </div>
-                                <span className="text-[10px] text-slate-400 font-bold">10%</span>
-                            </div>
-                            <div className="flex items-center justify-between glass-panel px-2 py-1 rounded-lg border-white/5">
-                                <div className="flex items-center gap-2">
-                                    <div className="size-2 rounded-full bg-accent-purple"></div>
-                                    <span className="text-[10px] text-slate-300 font-medium">FP</span>
-                                </div>
-                                <span className="text-[10px] text-slate-400 font-bold">10%</span>
-                            </div>
-                        </div>
-                    </div>
+                        );
+                    })()}
                 </div>
 
                 <div className="lg:col-span-12 glass-card rounded-2xl p-6 flex flex-col md:flex-row items-center gap-8 border-l-4 border-l-accent-purple">

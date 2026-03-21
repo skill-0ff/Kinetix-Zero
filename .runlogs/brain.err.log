@@ -1,8 +1,4 @@
-C:\Users\pc\Desktop\SIEM\engine\ai\inference.py:143: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
+C:\Users\pc\Desktop\SIEM\engine\ai\inference.py:97: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
   self.scaler = torch.cuda.amp.GradScaler()
 C:\Users\pc\AppData\Roaming\Python\Python314\site-packages\torch\cuda\amp\grad_scaler.py:31: UserWarning: torch.cuda.amp.GradScaler is enabled, but CUDA is not available.  Disabling.
-  super().__init__(
-C:\Users\pc\Desktop\SIEM\engine\ai\inference.py:694: FutureWarning: `torch.cuda.amp.autocast(args...)` is deprecated. Please use `torch.amp.autocast('cuda', args...)` instead.
-  with torch.cuda.amp.autocast():
-C:\Users\pc\AppData\Roaming\Python\Python314\site-packages\torch\cuda\amp\autocast_mode.py:54: UserWarning: CUDA is not available or torch_xla is imported. Disabling autocast.
   super().__init__(

@@ -35,24 +35,32 @@ function Start-Component {
 
 Write-Host "Starting SIEM stack from $root"
 
-if (Get-Command mongod -ErrorAction SilentlyContinue) {
+$mongoPath = "mongod"
+if (!(Get-Command mongod -ErrorAction SilentlyContinue)) {
+    $possiblePath = Get-ChildItem "C:\Program Files\MongoDB\Server\*\bin\mongod.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($possiblePath) {
+        $mongoPath = $possiblePath.FullName
+    }
+}
+
+if ($mongoPath -ne "mongod" -or (Get-Command mongod -ErrorAction SilentlyContinue)) {
     $mongoData = Join-Path $root "DB\mongo-data"
     if (!(Test-Path $mongoData)) {
         New-Item -ItemType Directory -Path $mongoData | Out-Null
     }
-    $mongo = Start-Process -FilePath "mongod" -ArgumentList "--dbpath `"$mongoData`" --bind_ip 127.0.0.1 --port 27017" -WorkingDirectory $root -RedirectStandardOutput (Join-Path $logDir "mongo.out.log") -RedirectStandardError (Join-Path $logDir "mongo.err.log") -PassThru
-    Write-Host "MongoDB started (PID $($mongo.Id))"
+    $mongo = Start-Process -FilePath "`"$mongoPath`"" -ArgumentList "--dbpath `"$mongoData`" --bind_ip 127.0.0.1 --port 27017" -WorkingDirectory $root -RedirectStandardOutput (Join-Path $logDir "mongo.out.log") -RedirectStandardError (Join-Path $logDir "mongo.err.log") -PassThru
+    Write-Host "MongoDB started (PID $($mongo.Id)) via $($mongoPath)"
 } else {
-    Write-Warning "mongod not found in PATH. Dashboard data will not update without MongoDB."
+    Write-Warning "mongod not found in PATH or default install dir. Dashboard data will not update without MongoDB."
 }
 
 $api = Start-Component -Name "api" -FilePath "python" -Arguments "-m uvicorn engine.api.server:app --host 0.0.0.0 --port 8000"
 Write-Host "API started (PID $($api.Id))"
 
-$collector = Start-Component -Name "collector" -FilePath (Join-Path $root "engine\collector\collector.exe")
+$collector = Start-Component -Name "collector" -FilePath "python" -Arguments (Join-Path $root "engine\collector\collector.py")
 Write-Host "Collector started (PID $($collector.Id))"
 
-$brain = Start-Component -Name "brain" -FilePath "python" -Arguments "engine\core\brain.py" -EnvVars @{ TORCH_COMPILE_DISABLE = "1"; PYTHONUNBUFFERED = "1" }
+$brain = Start-Component -Name "brain" -FilePath "python" -Arguments "engine\core\brain.py" -EnvVars @{ TORCH_COMPILE_DISABLE = "1"; PYTHONUNBUFFERED = "1"; PYTHONPATH = "." }
 Write-Host "Brain started (PID $($brain.Id))"
 
 $frontend = Start-Component -Name "frontend" -FilePath "cmd.exe" -Arguments "/c npm.cmd run dev" -WorkDir (Join-Path $root "frontend")

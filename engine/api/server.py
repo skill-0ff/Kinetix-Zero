@@ -2,8 +2,6 @@ from fastapi import FastAPI, Depends, HTTPException, status, Body
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from fastapi.middleware.cors import CORSMiddleware
 from pymongo import MongoClient
-from qdrant_client import QdrantClient
-from qdrant_client.http.models import Filter, FieldCondition, MatchValue
 from typing import List, Optional, Dict
 import os
 import json
@@ -52,16 +50,6 @@ CONFIG = load_config()
 MONGO_URI = os.getenv("MONGO_URI") or CONFIG.get("mongo_uri", "mongodb://localhost:27017/")
 mongo_client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
 db = mongo_client["kinetix_brain"]
-
-# Qdrant
-QDRANT_URL = os.getenv("QDRANT_URL") or CONFIG.get("qdrant_url")
-QDRANT_KEY = os.getenv("QDRANT_API_KEY")
-QDRANT_PATH = CONFIG.get("qdrant_path", "DB/vector")
-
-if QDRANT_URL:
-    qdrant = QdrantClient(url=QDRANT_URL, api_key=QDRANT_KEY)
-else:
-    qdrant = QdrantClient(path=QDRANT_PATH)
 
 # --- Auth Dependency ---
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
@@ -167,15 +155,11 @@ async def get_status(current_user: User = Depends(get_current_active_user)):
             if lag < 5: # If metrics logged within last 5s, it is ALIVE
                 status_data["core_status"] = True
                 status_data["uptime"] = int(latest_metric.get("uptime", 0))
-    except:
-        pass
-        
-    # Check Qdrant
-    try:
-        # Check collection info
-        coll = qdrant.get_collection("network_patterns")
-        status_data["qdrant"] = True
-        status_data["vectors"] = coll.points_count
+            
+            # Decoupled Qdrant Check
+            if "qdrant_stats" in latest_metric:
+                status_data["qdrant"] = True
+                status_data["vectors"] = latest_metric["qdrant_stats"].get("total", 0)
     except:
         pass
         
@@ -205,26 +189,15 @@ async def get_stats(current_user: User = Depends(get_current_active_user)):
     else:
         trend = ((current_eps - hour_avg) / hour_avg) * 100
     
-    # 3. Vector Breakdown (Qdrant)
+    # 3. Vector Breakdown (Qdrant Decoupled via Mongo)
     vec_counts = {"safe": 0, "anomaly": 0, "threat": 0}
     try:
-        # Check if collection exists first to avoid error
-        qdrant.get_collection("network_patterns")
-        
-        vec_counts["safe"] = qdrant.count(
-            "network_patterns", 
-            filter=Filter(must=[FieldCondition(key="type", match=MatchValue(value="ai_safe"))])
-        ).count
-        
-        vec_counts["anomaly"] = qdrant.count(
-            "network_patterns", 
-            filter=Filter(must=[FieldCondition(key="type", match=MatchValue(value="New"))])
-        ).count
-        
-        vec_counts["threat"] = qdrant.count(
-            "network_patterns", 
-            filter=Filter(must=[FieldCondition(key="type", match=MatchValue(value="Threat"))])
-        ).count
+        latest_metric = db["metrics"].find_one(sort=[("timestamp", -1)])
+        if latest_metric and "qdrant_stats" in latest_metric:
+            q_stats = latest_metric["qdrant_stats"]
+            vec_counts["safe"] = q_stats.get("safe", 0)
+            vec_counts["anomaly"] = q_stats.get("anomaly", 0)
+            vec_counts["threat"] = q_stats.get("threat", 0)
     except:
         pass
         

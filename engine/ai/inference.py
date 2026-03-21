@@ -431,11 +431,28 @@ class UnsupervisedAI(threading.Thread):
         # Snapshot
         data = self.metrics_accum.copy()
         
+        # Snapshot Qdrant Vector Statistics
+        qdrant_stats = {"total": 0, "safe": 0, "anomaly": 0, "threat": 0}
+        try:
+            if hasattr(self, "memory") and self.memory:
+                from qdrant_client.http.models import Filter, FieldCondition, MatchValue
+                try:
+                    qdrant_stats["total"] = self.memory.get_collection(self.mem_collection).points_count
+                    qdrant_stats["safe"] = self.memory.count(self.mem_collection, count_filter=Filter(must=[FieldCondition(key="type", match=MatchValue(value="ai_safe"))])).count
+                    qdrant_stats["anomaly"] = self.memory.count(self.mem_collection, count_filter=Filter(must=[FieldCondition(key="type", match=MatchValue(value="New"))])).count
+                    qdrant_stats["threat"] = self.memory.count(self.mem_collection, count_filter=Filter(must=[FieldCondition(key="type", match=MatchValue(value="Threat"))])).count
+                except:
+                    pass
+        except:
+            pass
+
         # Build Document
         doc = {
             "timestamp": timestamp,
             "datetime": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(timestamp)),
             "uptime_seconds": int(timestamp - self.start_time),
+            
+            "qdrant_stats": qdrant_stats,
             
             # Traffic
             "eps": data["processed_count"], # Assuming ~1s flush

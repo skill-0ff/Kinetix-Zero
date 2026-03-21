@@ -1,19 +1,41 @@
 import os
 import sqlite3
+import secrets
+import string
+import bcrypt
 from jose import jwt
 from datetime import datetime, timedelta
 from typing import Optional
-from passlib.context import CryptContext
 from pydantic import BaseModel
 
 # Configuration
-SECRET_KEY = os.getenv("JWT_SECRET", "kinetix_secret_change_me")
+BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+DB_DIR = os.path.join(BASE_DIR, "DB")
+DB_PATH = os.path.join(DB_DIR, "users.db")
+SECRET_PATH = os.path.join(DB_DIR, ".jwt_secret")
+
+
+def _load_or_create_secret():
+    env_secret = os.getenv("JWT_SECRET")
+    if env_secret:
+        return env_secret
+
+    os.makedirs(DB_DIR, exist_ok=True)
+    if os.path.exists(SECRET_PATH):
+        with open(SECRET_PATH, "r", encoding="utf-8") as f:
+            secret = f.read().strip()
+            if secret:
+                return secret
+
+    secret = secrets.token_urlsafe(32)
+    with open(SECRET_PATH, "w", encoding="utf-8") as f:
+        f.write(secret)
+    return secret
+
+
+SECRET_KEY = _load_or_create_secret()
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 # 24 Hours
-DB_PATH = "DB/users.db"
-
-# Password Hashing
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 class Token(BaseModel):
     access_token: str
@@ -31,9 +53,8 @@ class UserInDB(User):
     hashed_password: str
 
 def init_auth_db():
-    """Ensure User DB exists and has default admin if empty"""
-    if not os.path.exists("DB"):
-        os.makedirs("DB", exist_ok=True)
+    if not os.path.exists(DB_DIR):
+        os.makedirs(DB_DIR, exist_ok=True)
         
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
@@ -47,14 +68,13 @@ def init_auth_db():
     ''')
     conn.commit()
     
-    # Check if empty, create default admin
     cursor.execute("SELECT count(*) FROM users")
     if cursor.fetchone()[0] == 0:
-        default_pass = "admin" # Change on first login!
+        alphabet = string.ascii_letters + string.digits + "!@#$%^&*"
+        default_pass = ''.join(secrets.choice(alphabet) for i in range(16))
         hashed = get_password_hash(default_pass)
         cursor.execute("INSERT INTO users (username, hashed_password) VALUES (?, ?)", ("admin", hashed))
         conn.commit()
-        print(f"[Auth] Created default user 'admin' with password '{default_pass}'")
     
     conn.close()
 
@@ -63,11 +83,14 @@ def get_db_connection():
     conn.row_factory = sqlite3.Row
     return conn
 
-def verify_password(plain_password, hashed_password):
-    return pwd_context.verify(plain_password, hashed_password)
+def verify_password(plain_password: str, hashed_password: str):
+    try:
+        return bcrypt.checkpw(plain_password.encode('utf-8'), hashed_password.encode('utf-8'))
+    except Exception:
+        return False
 
-def get_password_hash(password):
-    return pwd_context.hash(password)
+def get_password_hash(password: str):
+    return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
 
 def get_user(username: str):
     conn = get_db_connection()

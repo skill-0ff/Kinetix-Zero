@@ -168,6 +168,55 @@ async def stream_data(user: dict = Depends(get_current_user)):
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
+import psutil
+import shutil
+import subprocess as _subprocess
+
+# --- Initialise psutil CPU tracking (first call always returns 0) ---
+psutil.cpu_percent(interval=None)
+
+@app.get("/api/v1/system-metrics")
+async def system_metrics():
+    """Live host resource usage — no auth required."""
+    stats = {
+        "system_cpu_percent": psutil.cpu_percent(interval=None),
+    }
+
+    mem = psutil.virtual_memory()
+    stats["system_ram_percent"] = mem.percent
+    stats["system_ram_used_gb"] = round(mem.used / (1024**3), 2)
+    stats["system_ram_total_gb"] = round(mem.total / (1024**3), 2)
+
+    # GPU (nvidia-smi)
+    if shutil.which("nvidia-smi"):
+        try:
+            result = _subprocess.run(
+                ["nvidia-smi",
+                 "--query-gpu=utilization.gpu,utilization.memory,memory.total,memory.used",
+                 "--format=csv,noheader,nounits"],
+                capture_output=True, text=True, timeout=1,
+            )
+            if result.returncode == 0:
+                lines = result.stdout.strip().split("\n")
+                total_mem = used_mem = avg_util = 0
+                for line in lines:
+                    parts = [float(x.strip()) for x in line.split(",")]
+                    avg_util += parts[0]
+                    total_mem += parts[2]
+                    used_mem += parts[3]
+                if lines:
+                    stats["system_gpu_percent"] = round(avg_util / len(lines), 1)
+                    stats["system_gpu_mem_percent"] = round((used_mem / total_mem) * 100, 1) if total_mem > 0 else 0
+                    stats["system_gpu_mem_used_mb"] = int(used_mem)
+        except Exception:
+            pass
+
+    stats.setdefault("system_gpu_percent", 0)
+    stats.setdefault("system_gpu_mem_percent", 0)
+
+    return stats
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)

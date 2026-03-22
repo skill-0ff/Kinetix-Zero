@@ -1,4 +1,4 @@
-import React, { useRef, useState, useEffect } from 'react';
+import React, { useRef } from 'react';
 import { useKinetixData } from '../hooks/useKinetixData';
 
 export default function Overview() {
@@ -8,31 +8,8 @@ export default function Overview() {
 
     const currentMetrics = metrics[0] || {};
 
-    // Live system metrics from the dedicated endpoint (polled every 2s)
-    const [liveSystem, setLiveSystem] = useState({ cpu: 0, gpu: 0, ram: 0 });
+    // Keep last known good system metrics to prevent 0% blink between updates
     const lastSystemRef = useRef({ cpu: 0, gpu: 0, ram: 0 });
-
-    useEffect(() => {
-        let cancelled = false;
-        const poll = async () => {
-            try {
-                const res = await fetch('http://localhost:8000/api/v1/system-metrics');
-                if (!res.ok) return;
-                const d = await res.json();
-                if (cancelled) return;
-                const next = {
-                    cpu: Math.round(d.system_cpu_percent ?? 0),
-                    gpu: Math.round(d.system_gpu_percent ?? 0),
-                    ram: Math.round(d.system_ram_percent ?? 0),
-                };
-                setLiveSystem(next);
-                lastSystemRef.current = next;
-            } catch { /* API not reachable */ }
-        };
-        poll();
-        const id = setInterval(poll, 2000);
-        return () => { cancelled = true; clearInterval(id); };
-    }, []);
 
     return (
         <main className="flex-1 pt-24 pb-12 px-6 lg:px-12 max-w-[1440px] mx-auto w-full">
@@ -115,8 +92,15 @@ export default function Overview() {
                         <span className="material-symbols-outlined text-slate-400">developer_board</span>
                     </div>
                     {(() => {
-                        // Use live polled values (falls back to last known good)
-                        const { cpu, gpu, ram } = liveSystem.cpu || liveSystem.ram ? liveSystem : lastSystemRef.current;
+                        // Use last known good values to prevent 0% blink
+                        if (currentMetrics.system_cpu_percent != null) {
+                            lastSystemRef.current = {
+                                cpu: Math.round(currentMetrics.system_cpu_percent),
+                                gpu: Math.round(currentMetrics.system_gpu_percent || 0),
+                                ram: Math.round(currentMetrics.system_ram_percent || 0),
+                            };
+                        }
+                        const { cpu, gpu, ram } = lastSystemRef.current;
                         const offset = (pct) => 100 - pct;
                         const circleStyle = { transition: 'stroke-dashoffset 1s ease-in-out' };
                         return (

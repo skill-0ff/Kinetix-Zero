@@ -1,4 +1,5 @@
-C:\Users\pc\Desktop\SIEM\engine\ai\inference.py:97: FutureWarning: `torch.cuda.amp.GradScaler(args...)` is deprecated. Please use `torch.amp.GradScaler('cuda', args...)` instead.
-  self.scaler = torch.cuda.amp.GradScaler()
-C:\Users\pc\AppData\Roaming\Python\Python314\site-packages\torch\cuda\amp\grad_scaler.py:31: UserWarning: torch.cuda.amp.GradScaler is enabled, but CUDA is not available.  Disabling.
-  super().__init__(
+forrtl: error (200): program aborting due to window-CLOSE event
+Image              PC                Routine            Line        Source             
+KERNELBASE.dll     00007FFE2DD5C203  Unknown               Unknown  Unknown
+KERNEL32.DLL       00007FFE2E487374  Unknown               Unknown  Unknown
+ntdll.dll          00007FFE3049CC91  Unknown               Unknown  Unknown

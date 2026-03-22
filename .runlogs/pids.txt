@@ -1,4 +1,5 @@
-﻿api=3932
-collector=3372
-brain=6776
-frontend=10784
+﻿api=13200
+collector=12436
+brain=6348
+frontend=9988
+mongo=10840

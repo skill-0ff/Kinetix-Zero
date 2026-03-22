@@ -102,7 +102,6 @@ async def login(req: LoginRequest, request: Request):
     raise HTTPException(status_code=401, detail="Invalid credentials")
 
 @app.post("/api/v1/data/{collection}")
-
 async def query_data(
     collection: str, 
     query: QueryRequest,
@@ -111,6 +110,28 @@ async def query_data(
     """
     Universal Query Endpoint for any collection.
     """
+    if collection == "config":
+        try:
+            config_path = os.path.join(os.path.dirname(__file__), "..", "core", "config.jsonc")
+            if not os.path.exists(config_path):
+                raise HTTPException(status_code=404, detail="Config file not found")
+            with open(config_path, "r") as f:
+                content = f.read()
+            import re
+            pattern = r'(".*?"|[\'\'].*?[\'\'])|(/\*.*?\*/|//[^\r\n]*$)'
+            regex = re.compile(pattern, re.MULTILINE | re.DOTALL)
+            def _replacer(match): return "" if match.group(2) is not None else match.group(1)
+            json_str = regex.sub(_replacer, content)
+            
+            cfg = json.loads(json_str)
+            return {
+                "collection": "config",
+                "count": 1,
+                "data": [cfg]
+            }
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
     coll = db.get_collection(collection)
     
     try:
@@ -131,6 +152,56 @@ async def query_data(
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.put("/api/v1/data/{collection}")
+async def update_data(
+    collection: str,
+    payload: Dict[str, Any],
+    user: dict = Depends(get_current_user)
+):
+    """
+    Universal Update Endpoint
+    """
+    if collection == "config":
+        try:
+            config_path = os.path.join(os.path.dirname(__file__), "..", "core", "config.jsonc")
+            if not os.path.exists(config_path):
+                raise HTTPException(status_code=404, detail="Config file not found")
+            
+            with open(config_path, "r") as f:
+                content = f.read()
+            
+            import re
+            pattern = r'(".*?"|[\'\'].*?[\'\'])|(/\*.*?\*/|//[^\r\n]*$)'
+            regex = re.compile(pattern, re.MULTILINE | re.DOTALL)
+            def _replacer(match): return "" if match.group(2) is not None else match.group(1)
+            json_str = regex.sub(_replacer, content)
+            
+            current_config = json.loads(json_str)
+
+            def deep_update(d, u):
+                for k, v in u.items():
+                    if isinstance(v, dict) and k in d and isinstance(d[k], dict):
+                        d[k] = deep_update(d[k], v)
+                    else:
+                        d[k] = v
+                return d
+            
+            updated_config = deep_update(current_config, payload)
+            
+            with open(config_path, "w") as f:
+                json.dump(updated_config, f, indent=4)
+                
+            return {
+                "collection": "config",
+                "status": "success",
+                "data": updated_config
+            }
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+    
+    # Generic DB update logic can be implemented here later
+    raise HTTPException(status_code=501, detail="Update not implemented for DB collections yet")
 
 @app.get("/api/v1/system/db-stats")
 async def get_db_stats(user: dict = Depends(get_current_user)):

@@ -3,10 +3,25 @@ import { useKinetixData } from '../hooks/useKinetixData';
 export default function Threat() {
     const { data: events, loading } = useKinetixData('events', { limit: 20 });
 
-    const getVerdictColor = (verdict) => {
-        if (verdict.includes('THREAT')) return 'danger';
-        if (verdict.includes('ANOMALY')) return 'warning';
-        return 'primary';
+    const getVerdictStyles = (verdict) => {
+        if (verdict.includes('THREAT')) return {
+            dot: 'bg-danger shadow-[0_0_8px_rgba(var(--color-danger),0.6)]',
+            badge: 'bg-danger/10 border-danger/20 text-danger',
+            bar: 'liquid-neon-danger',
+            text: 'text-danger'
+        };
+        if (verdict.includes('ANOMALY')) return {
+            dot: 'bg-warning shadow-[0_0_8px_rgba(var(--color-warning),0.6)]',
+            badge: 'bg-warning/10 border-warning/20 text-warning',
+            bar: 'liquid-neon-warning',
+            text: 'text-warning'
+        };
+        return {
+            dot: 'bg-primary shadow-[0_0_8px_rgba(var(--color-primary),0.6)]',
+            badge: 'bg-primary/10 border-primary/20 text-primary',
+            bar: 'liquid-neon-primary',
+            text: 'text-primary'
+        };
     };
 
     return (
@@ -101,12 +116,12 @@ export default function Threat() {
                                     </td>
                                     <td className="px-8 py-6">
                                         <div className="flex items-center gap-3">
-                                            <div className={`size-2 rounded-full bg-${getVerdictColor(event.verdict)} shadow-[0_0_8px_rgba(var(--color-${getVerdictColor(event.verdict)}),0.6)]`}></div>
+                                            <div className={`size-2 rounded-full ${getVerdictStyles(event.verdict).dot}`}></div>
                                             <span className="text-[14px] font-bold text-slate-200">{event.verdict}</span>
                                         </div>
                                     </td>
                                     <td className="px-8 py-6">
-                                        <span className={`px-3 py-1 rounded-full bg-${getVerdictColor(event.verdict)}/10 border border-${getVerdictColor(event.verdict)}/20 text-[10px] font-bold text-${getVerdictColor(event.verdict)} uppercase tracking-wider`}>
+                                        <span className={`px-3 py-1 rounded-full border text-[10px] font-bold uppercase tracking-wider ${getVerdictStyles(event.verdict).badge}`}>
                                             {event.verdict.split(' ').pop()}
                                         </span>
                                     </td>
@@ -116,9 +131,9 @@ export default function Threat() {
                                     <td className="px-8 py-6">
                                         <div className="flex items-center gap-4 w-48">
                                             <div className="flex-1 h-2 bg-white/5 rounded-full overflow-hidden border border-white/5 p-[1px]">
-                                                <div className={`h-full rounded-full liquid-neon-${getVerdictColor(event.verdict)}`} style={{ width: `${Math.min(100, (event.score || 0) * 10)}%` }}></div>
+                                                <div className={`h-full rounded-full ${getVerdictStyles(event.verdict).bar}`} style={{ width: `${Math.min(100, (event.score || 0) * 10)}%` }}></div>
                                             </div>
-                                            <span className={`text-[13px] font-bold text-${getVerdictColor(event.verdict)} w-8 text-right`}>{Math.round((event.score || 0) * 10)}%</span>
+                                            <span className={`text-[13px] font-bold w-8 text-right ${getVerdictStyles(event.verdict).text}`}>{Math.round((event.score || 0) * 10)}%</span>
                                         </div>
                                     </td>
                                     <td className="px-8 py-6 text-right">

@@ -1,8 +1,136 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { useKinetixData } from '../hooks/useKinetixData';
 import './Configuration.css';
 
 export default function Configuration() {
     const [showAdvanced, setShowAdvanced] = useState(false);
+    const { data: configData, loading: configLoading, refresh: refreshConfig } = useKinetixData('config');
+    const config = configData?.[0] || null;
+    const [updating, setUpdating] = useState(false);
+
+    const [localCheckpointInterval, setLocalCheckpointInterval] = useState(3600);
+    const [localForensicRate, setLocalForensicRate] = useState(100);
+
+    useEffect(() => {
+        if (config?.checkpoint_interval_seconds) {
+            setLocalCheckpointInterval(config.checkpoint_interval_seconds);
+        }
+        if (config?.forensic_sample_rate !== undefined) {
+            setLocalForensicRate(config.forensic_sample_rate);
+        }
+    }, [config?.checkpoint_interval_seconds, config?.forensic_sample_rate]);
+
+    const updateAlertPolicy = async (key, value) => {
+        if (!config) return;
+        setUpdating(true);
+        try {
+            const token = localStorage.getItem('token');
+            const payload = {
+                alert_policy: {
+                    console_alerts: {
+                        [key]: value
+                    }
+                }
+            };
+            const res = await fetch('http://localhost:8000/api/v1/data/config', {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json',
+                    ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+                },
+                body: JSON.stringify(payload)
+            });
+            if (res.ok) {
+                refreshConfig();
+            }
+        } catch (err) {
+            console.error("Failed to update config", err);
+        } finally {
+            setUpdating(false);
+        }
+    };
+
+    const updateLogStorage = async (key, value) => {
+        if (!config) return;
+        setUpdating(true);
+        try {
+            const token = localStorage.getItem('token');
+            const payload = {
+                storage_policy: {
+                    save_logs: {
+                        [key]: value
+                    },
+                    save_vectors: {
+                        [key]: value
+                    }
+                }
+            };
+            const res = await fetch('http://localhost:8000/api/v1/data/config', {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json',
+                    ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+                },
+                body: JSON.stringify(payload)
+            });
+            if (res.ok) {
+                refreshConfig();
+            }
+        } catch (err) {
+            console.error("Failed to update config", err);
+        } finally {
+            setUpdating(false);
+        }
+    };
+
+    const updateCheckpoint = async (value) => {
+        if (!config) return;
+        setUpdating(true);
+        try {
+            const token = localStorage.getItem('token');
+            const payload = {
+                checkpoint_interval_seconds: parseInt(value)
+            };
+            const res = await fetch('http://localhost:8000/api/v1/data/config', {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json',
+                    ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+                },
+                body: JSON.stringify(payload)
+            });
+            if (res.ok) {
+                refreshConfig();
+            }
+        } catch (err) {
+            console.error("Failed to update checkpoint interval", err);
+        } finally {
+            setUpdating(false);
+        }
+    };
+
+    const updateForensics = async (payload) => {
+        if (!config) return;
+        setUpdating(true);
+        try {
+            const token = localStorage.getItem('token');
+            const res = await fetch('http://localhost:8000/api/v1/data/config', {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json',
+                    ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+                },
+                body: JSON.stringify(payload)
+            });
+            if (res.ok) {
+                refreshConfig();
+            }
+        } catch (err) {
+            console.error("Failed to update forensics", err);
+        } finally {
+            setUpdating(false);
+        }
+    };
 
     return (
         <main className="flex-1 pt-28 pb-12 px-8 max-w-[1440px] mx-auto w-full">
@@ -39,20 +167,29 @@ export default function Configuration() {
                     <div className="space-y-4">
                         <div className="flex items-center justify-between">
                             <span className="text-sm text-slate-300">New Alerts</span>
-                            <button className="w-10 h-5 bg-primary rounded-full relative transition-all shadow-[0_0_10px_rgba(37,106,244,0.5)]">
-                                <span className="absolute right-1 top-1 size-3 bg-white rounded-full"></span>
+                            <button
+                                onClick={() => updateAlertPolicy('new_anomaly', !(config?.alert_policy?.console_alerts?.new_anomaly))}
+                                disabled={updating || !config}
+                                className={`w-10 h-5 rounded-full relative transition-all ${config?.alert_policy?.console_alerts?.new_anomaly ? 'bg-primary shadow-[0_0_10px_rgba(37,106,244,0.5)]' : 'bg-white/10'}`}>
+                                <span className={`absolute top-1 size-3 rounded-full transition-all ${config?.alert_policy?.console_alerts?.new_anomaly ? 'right-1 bg-white' : 'left-1 bg-slate-400'}`}></span>
                             </button>
                         </div>
                         <div className="flex items-center justify-between">
                             <span className="text-sm text-slate-300">Known Alerts</span>
-                            <button className="w-10 h-5 bg-white/10 rounded-full relative transition-all">
-                                <span className="absolute left-1 top-1 size-3 bg-slate-400 rounded-full"></span>
+                            <button
+                                onClick={() => updateAlertPolicy('known_threat', !(config?.alert_policy?.console_alerts?.known_threat))}
+                                disabled={updating || !config}
+                                className={`w-10 h-5 rounded-full relative transition-all ${config?.alert_policy?.console_alerts?.known_threat ? 'bg-primary shadow-[0_0_10px_rgba(37,106,244,0.5)]' : 'bg-white/10'}`}>
+                                <span className={`absolute top-1 size-3 rounded-full transition-all ${config?.alert_policy?.console_alerts?.known_threat ? 'right-1 bg-white' : 'left-1 bg-slate-400'}`}></span>
                             </button>
                         </div>
                         <div className="flex items-center justify-between">
                             <span className="text-sm text-slate-300">FP Alerts</span>
-                            <button className="w-10 h-5 bg-primary rounded-full relative transition-all shadow-[0_0_10px_rgba(37,106,244,0.5)]">
-                                <span className="absolute right-1 top-1 size-3 bg-white rounded-full"></span>
+                            <button
+                                onClick={() => updateAlertPolicy('false_positive', !(config?.alert_policy?.console_alerts?.false_positive))}
+                                disabled={updating || !config}
+                                className={`w-10 h-5 rounded-full relative transition-all ${config?.alert_policy?.console_alerts?.false_positive ? 'bg-primary shadow-[0_0_10px_rgba(37,106,244,0.5)]' : 'bg-white/10'}`}>
+                                <span className={`absolute top-1 size-3 rounded-full transition-all ${config?.alert_policy?.console_alerts?.false_positive ? 'right-1 bg-white' : 'left-1 bg-slate-400'}`}></span>
                             </button>
                         </div>
                     </div>
@@ -107,14 +244,20 @@ export default function Configuration() {
                     <div className="grid grid-cols-2 gap-4">
                         <div className="flex items-center justify-between p-3 rounded-xl bg-white/5 border border-white/10">
                             <span className="text-xs text-slate-400">Safe</span>
-                            <button className="w-8 h-4 bg-primary rounded-full relative shadow-[0_0_8px_rgba(37,106,244,0.4)]">
-                                <span className="absolute right-0.5 top-0.5 size-3 bg-white rounded-full"></span>
+                            <button
+                                onClick={() => updateLogStorage('ai_safe', !(config?.storage_policy?.save_logs?.ai_safe))}
+                                disabled={updating || !config}
+                                className={`w-8 h-4 rounded-full relative transition-all ${config?.storage_policy?.save_logs?.ai_safe ? 'bg-primary shadow-[0_0_8px_rgba(37,106,244,0.4)]' : 'bg-white/10'}`}>
+                                <span className={`absolute top-0.5 size-3 rounded-full transition-all ${config?.storage_policy?.save_logs?.ai_safe ? 'right-0.5 bg-white' : 'left-0.5 bg-slate-400'}`}></span>
                             </button>
                         </div>
                         <div className="flex items-center justify-between p-3 rounded-xl bg-white/5 border border-white/10">
-                            <span className="text-xs text-slate-400">New</span>
-                            <button className="w-8 h-4 bg-primary rounded-full relative shadow-[0_0_8px_rgba(37,106,244,0.4)]">
-                                <span className="absolute right-0.5 top-0.5 size-3 bg-white rounded-full"></span>
+                            <span className="text-xs text-slate-400">Threat</span>
+                            <button
+                                onClick={() => updateLogStorage('anomaly', !(config?.storage_policy?.save_logs?.anomaly))}
+                                disabled={updating || !config}
+                                className={`w-8 h-4 rounded-full relative transition-all ${config?.storage_policy?.save_logs?.anomaly ? 'bg-primary shadow-[0_0_8px_rgba(37,106,244,0.4)]' : 'bg-white/10'}`}>
+                                <span className={`absolute top-0.5 size-3 rounded-full transition-all ${config?.storage_policy?.save_logs?.anomaly ? 'right-0.5 bg-white' : 'left-0.5 bg-slate-400'}`}></span>
                             </button>
                         </div>
                     </div>
@@ -131,29 +274,62 @@ export default function Configuration() {
                             <div className="flex justify-between items-center">
                                 <label className="text-sm text-slate-300">Auto-save frequency</label>
                                 <span className="text-xs font-mono text-primary bg-primary/10 px-2 py-0.5 rounded border border-primary/20 shadow-[0_0_10px_rgba(37,106,244,0.2)]">
-                                    3600s
+                                    {localCheckpointInterval}s
                                 </span>
                             </div>
-                            <input className="w-full" max="7200" min="60" type="range" defaultValue="3600" />
+                            <input
+                                className="w-full"
+                                max="86400"
+                                min="60"
+                                type="range"
+                                value={localCheckpointInterval}
+                                onChange={(e) => setLocalCheckpointInterval(e.target.value)}
+                                onMouseUp={(e) => updateCheckpoint(e.target.value)}
+                                onTouchEnd={(e) => updateCheckpoint(e.target.value)}
+                            />
                         </div>
                     </div>
                 </div>
 
-                {/* 5. Memory (Qdrant) */}
+                {/* 5. Forensics Control */}
                 <div className="glass-card rounded-2xl p-6 flex flex-col gap-6 neon-border-rose">
                     <div className="flex items-center gap-3">
-                        <span className="material-symbols-outlined text-pink-400">memory</span>
-                        <h3 className="text-lg font-semibold text-white">Memory (Qdrant)</h3>
+                        <span className="material-symbols-outlined text-pink-400">history_edu</span>
+                        <h3 className="text-lg font-semibold text-white">Forensics Control</h3>
                     </div>
                     <div className="space-y-6">
                         <div className="space-y-3">
                             <div className="flex justify-between items-center">
-                                <label className="text-sm text-slate-300">Dedup Distance</label>
+                                <label className="text-sm text-slate-300">Sample Rate (%)</label>
                                 <span className="text-xs font-mono text-primary bg-primary/10 px-2 py-0.5 rounded border border-primary/20 shadow-[0_0_10px_rgba(37,106,244,0.2)]">
-                                    0.05
+                                    {localForensicRate}%
                                 </span>
                             </div>
-                            <input className="w-full" max="1.0" min="0" step="0.01" type="range" defaultValue="0.05" />
+                            <input
+                                className="w-full"
+                                max="100"
+                                min="0"
+                                type="range"
+                                value={localForensicRate}
+                                onChange={(e) => setLocalForensicRate(e.target.value)}
+                                onMouseUp={(e) => updateForensics({ forensic_sample_rate: parseInt(e.target.value) })}
+                                onTouchEnd={(e) => updateForensics({ forensic_sample_rate: parseInt(e.target.value) })}
+                            />
+                        </div>
+                        <div className="flex items-center justify-between">
+                            <span className="text-sm text-slate-300">Mode</span>
+                            <div className="flex p-1 bg-white/5 rounded-xl border border-white/10">
+                                <button
+                                    onClick={() => updateForensics({ forensic_sample_mode: 'random' })}
+                                    className={`px-3 py-1 text-[10px] font-bold rounded-lg transition-all ${config?.forensic_sample_mode === 'random' ? 'bg-primary text-white shadow-[0_0_10px_rgba(37,106,244,0.3)]' : 'text-slate-500 hover:text-slate-300'}`}>
+                                    RANDOM
+                                </button>
+                                <button
+                                    onClick={() => updateForensics({ forensic_sample_mode: 'sequence' })}
+                                    className={`px-3 py-1 text-[10px] font-bold rounded-lg transition-all ${config?.forensic_sample_mode === 'sequence' ? 'bg-primary text-white shadow-[0_0_10px_rgba(37,106,244,0.3)]' : 'text-slate-500 hover:text-slate-300'}`}>
+                                    SEQ
+                                </button>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -348,7 +524,15 @@ export default function Configuration() {
                                 </div>
                                 <div>
                                     <label className="text-[11px] font-bold text-slate-400 mb-2 block uppercase tracking-wider">Interval (sec)</label>
-                                    <input className="w-full input-glass" placeholder="3600" type="number" defaultValue="3600" />
+                                    <input
+                                        className="w-full input-glass"
+                                        placeholder="3600"
+                                        type="number"
+                                        max="86400"
+                                        value={localCheckpointInterval}
+                                        onChange={(e) => setLocalCheckpointInterval(e.target.value)}
+                                        onBlur={(e) => updateCheckpoint(e.target.value)}
+                                    />
                                 </div>
                                 <div>
                                     <label className="text-[11px] font-bold text-slate-400 mb-2 block uppercase tracking-wider">History Count</label>
@@ -371,16 +555,30 @@ export default function Configuration() {
                                     <div className="flex justify-between items-center mb-3">
                                         <label className="text-[11px] font-bold text-slate-400 block uppercase tracking-wider !mb-0">Sample Rate</label>
                                         <span className="text-[10px] font-bold text-amber-400 bg-amber-400/10 px-2 py-0.5 rounded-full border border-amber-400/30 shadow-[0_0_10px_rgba(251,191,36,0.3)]">
-                                            100%
+                                            {localForensicRate}%
                                         </span>
                                     </div>
-                                    <input className="w-full" max="100" min="0" type="range" defaultValue="100" />
+                                    <input
+                                        className="w-full"
+                                        max="100"
+                                        min="0"
+                                        type="range"
+                                        value={localForensicRate}
+                                        onChange={(e) => setLocalForensicRate(e.target.value)}
+                                        onMouseUp={(e) => updateForensics({ forensic_sample_rate: parseInt(e.target.value) })}
+                                        onTouchEnd={(e) => updateForensics({ forensic_sample_rate: parseInt(e.target.value) })}
+                                    />
                                 </div>
                                 <div>
                                     <label className="text-[11px] font-bold text-slate-400 mb-2 block uppercase tracking-wider">Extraction Mode</label>
-                                    <select className="w-full input-glass appearance-none bg-no-repeat bg-[right_1rem_center] bg-[length:1em_1em]" style={{ backgroundImage: "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='rgba(37,106,244,0.6)'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M19 9l-7 7-7-7'/%3E%3C/svg%3E\")" }}>
-                                        <option defaultValue="Randomized">Randomized</option>
-                                        <option>Sequential</option>
+                                    <select
+                                        className="w-full input-glass appearance-none bg-no-repeat bg-[right_1rem_center] bg-[length:1em_1em]"
+                                        style={{ backgroundImage: "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='rgba(37,106,244,0.6)'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M19 9l-7 7-7-7'/%3E%3C/svg%3E\")" }}
+                                        value={config?.forensic_sample_mode || 'random'}
+                                        onChange={(e) => updateForensics({ forensic_sample_mode: e.target.value })}
+                                    >
+                                        <option value="random">Randomized</option>
+                                        <option value="sequence">Sequential</option>
                                     </select>
                                 </div>
                             </div>

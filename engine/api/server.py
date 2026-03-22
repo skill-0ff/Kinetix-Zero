@@ -135,17 +135,37 @@ async def query_data(
 @app.get("/api/v1/system/db-stats")
 async def get_db_stats(user: dict = Depends(get_current_user)):
     """
-    Returns the real-time size and object count of the kinetix_brain database.
-    Catches errors to report 'offline' if Mongo goes down.
+    Returns the real-time size and object count of the kinetix_brain database
+    and the Qdrant local vector database.
     """
     try:
         stats = db.db.command("dbstats")
-        
-        # Calculate total size correctly, falling back to dataSize + indexSize if totalSize is absent
         data_size = stats.get("dataSize", 0)
         index_size = stats.get("indexSize", 0)
         total_size = stats.get("totalSize", data_size + index_size)
         
+        # Calculate Qdrant Local Size
+        qdrant_size_bytes = 0
+        try:
+            config_path = os.path.join(os.path.dirname(__file__), "..", "core", "config.jsonc")
+            q_path = "DB/vector"
+            if os.path.exists(config_path):
+                with open(config_path, "r") as f:
+                    lines = [l for l in f.readlines() if not l.strip().startswith("//")]
+                    cfg = json.loads("".join(lines))
+                    q_path = cfg.get("qdrant_path", "DB/vector")
+            
+            # Resolve relative to project root
+            full_q_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", q_path))
+            if os.path.exists(full_q_path):
+                for dirpath, _, filenames in os.walk(full_q_path):
+                    for f in filenames:
+                        fp = os.path.join(dirpath, f)
+                        if not os.path.islink(fp):
+                            qdrant_size_bytes += os.path.getsize(fp)
+        except Exception as q_err:
+            print(f"DEBUG: Qdrant stats error: {q_err}")
+
         return {
             "status": "online",
             "db_name": stats.get("db"),
@@ -153,7 +173,8 @@ async def get_db_stats(user: dict = Depends(get_current_user)):
             "objects": stats.get("objects", 0),
             "data_size_bytes": data_size,
             "index_size_bytes": index_size,
-            "total_size_bytes": total_size
+            "total_size_bytes": total_size,
+            "qdrant_size_bytes": qdrant_size_bytes
         }
     except Exception as e:
         print(f"DEBUG: DB connection error: {str(e)}")

@@ -107,7 +107,7 @@ export default function Overview() {
                         if (!dbStats && !dbOffline) {
                             // NO SIGNAL (API down)
                             return (
-                                <div className="flex-1 w-full flex flex-col items-center justify-center gap-2 mt-4">
+                                <div className="flex-1 w-full flex flex-col items-center justify-center gap-2 mt-10">
                                     <div className="relative">
                                         <span className="material-symbols-outlined text-3xl text-slate-600 animate-pulse">signal_cellular_off</span>
                                         <div className="absolute -top-1 -right-1 size-2.5 bg-red-500/80 rounded-full animate-ping"></div>
@@ -122,7 +122,7 @@ export default function Overview() {
                         if (dbOffline) {
                             // DB OFFLINE
                             return (
-                                <div className="flex-1 w-full flex flex-col items-center justify-center gap-2 mt-4">
+                                <div className="flex-1 w-full flex flex-col items-center justify-center gap-2 mt-10">
                                     <div className="relative">
                                         <span className="material-symbols-outlined text-3xl text-red-500/80">database_off</span>
                                     </div>
@@ -143,19 +143,25 @@ export default function Overview() {
                         };
 
                         const mbSize = dbStats.total_size_bytes || 0;
+                        const qdrantSize = dbStats.qdrant_size_bytes || 0;
+
                         // Use a reasonable local max for the visualization, e.g., 2GB = 2 * 1024^3
                         const mongoMax = 2 * 1024 * 1024 * 1024;
                         const mongoPct = Math.min(100, (mbSize / mongoMax) * 100);
+
+                        // Qdrant Max (e.g. 4GB for local)
+                        const qdrantMax = 4 * 1024 * 1024 * 1024;
+                        const qdrantPct = Math.min(100, (qdrantSize / qdrantMax) * 100);
 
                         return (
                             <div className="flex-1 flex flex-col justify-end space-y-6 mt-10 mb-2">
                                 <div>
                                     <div className="flex justify-between text-xs mb-2">
                                         <span className="text-slate-300">Qdrant Vector DB</span>
-                                        <span className="text-slate-400 font-semibold">2.4 TB / 4 TB</span>
+                                        <span className="text-slate-400 font-semibold">{formatBytes(qdrantSize)} / 4 GB</span>
                                     </div>
                                     <div className="h-1.5 bg-white/5 rounded-full overflow-hidden">
-                                        <div className="h-full w-[60%] bg-accent-purple rounded-full"></div>
+                                        <div className="h-full bg-accent-purple rounded-full transition-all duration-1000" style={{ width: `${Math.max(5, qdrantPct)}%` }}></div>
                                     </div>
                                 </div>
                                 <div>

@@ -4,7 +4,7 @@ import time
 import asyncio
 from datetime import datetime
 from typing import Optional, List, Any, Dict
-from fastapi import FastAPI, HTTPException, Request, Depends, Query
+from fastapi import FastAPI, HTTPException, Request, Depends, Query, Body
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -156,7 +156,7 @@ async def query_data(
 @app.put("/api/v1/data/{collection}")
 async def update_data(
     collection: str,
-    payload: Dict[str, Any],
+    payload: Dict[str, Any] = Body(...),
     user: dict = Depends(get_current_user)
 ):
     """
@@ -164,6 +164,7 @@ async def update_data(
     """
     if collection == "config":
         try:
+            print(f"DEBUG: Updating config with payload: {payload}")
             config_path = os.path.join(os.path.dirname(__file__), "..", "core", "config.jsonc")
             if not os.path.exists(config_path):
                 raise HTTPException(status_code=404, detail="Config file not found")

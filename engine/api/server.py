@@ -132,6 +132,33 @@ async def query_data(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/api/v1/system/db-stats")
+async def get_db_stats(user: dict = Depends(get_current_user)):
+    """
+    Returns the real-time size and object count of the kinetix_brain database.
+    Catches errors to report 'offline' if Mongo goes down.
+    """
+    try:
+        stats = db.db.command("dbstats")
+        
+        # Calculate total size correctly, falling back to dataSize + indexSize if totalSize is absent
+        data_size = stats.get("dataSize", 0)
+        index_size = stats.get("indexSize", 0)
+        total_size = stats.get("totalSize", data_size + index_size)
+        
+        return {
+            "status": "online",
+            "db_name": stats.get("db"),
+            "collections": stats.get("collections", 0),
+            "objects": stats.get("objects", 0),
+            "data_size_bytes": data_size,
+            "index_size_bytes": index_size,
+            "total_size_bytes": total_size
+        }
+    except Exception as e:
+        print(f"DEBUG: DB connection error: {str(e)}")
+        return {"status": "offline", "error": str(e)}
+
 @app.get("/api/v1/stream")
 async def stream_data(user: dict = Depends(get_current_user)):
     """

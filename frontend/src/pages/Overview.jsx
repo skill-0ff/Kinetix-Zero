@@ -8,8 +8,48 @@ export default function Overview() {
 
     const currentMetrics = metrics[0] || {};
 
+    // Core engine writes metrics every ~5-10s. If the newest metric is older than 20s, or we have no data, there's no signal.
+    const isServerConnected = metrics.length > 0 && (Date.now() / 1000 - currentMetrics.timestamp) < 20;
+
     // Keep last known good system metrics to prevent 0% blink between updates
     const lastSystemRef = useRef({ cpu: 0, gpu: 0, ram: 0 });
+
+    // Database polling state
+    const [dbStats, setDbStats] = React.useState(null);
+    const [dbOffline, setDbOffline] = React.useState(false);
+
+    React.useEffect(() => {
+        let cancelled = false;
+        const fetchDbStats = async () => {
+            try {
+                const token = localStorage.getItem('token');
+                const res = await fetch('http://localhost:8000/api/v1/system/db-stats', {
+                    headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+                });
+                if (!res.ok) {
+                    if (!cancelled) { setDbStats(null); setDbOffline(false); }
+                    return;
+                }
+                const data = await res.json();
+                if (!cancelled) {
+                    if (data.status === 'offline') {
+                        setDbOffline(true);
+                        setDbStats(null);
+                    } else {
+                        setDbOffline(false);
+                        setDbStats(data);
+                    }
+                }
+            } catch (err) {
+                // API is down (no response)
+                if (!cancelled) { setDbStats(null); setDbOffline(false); }
+            }
+        };
+
+        fetchDbStats();
+        const id = setInterval(fetchDbStats, 20000); // refresh every 20s
+        return () => { cancelled = true; clearInterval(id); };
+    }, []);
 
     return (
         <main className="flex-1 pt-24 pb-12 px-6 lg:px-12 max-w-[1440px] mx-auto w-full">
@@ -63,26 +103,73 @@ export default function Overview() {
                         <span className="text-slate-400 text-sm font-medium">Database Storage</span>
                         <span className="material-symbols-outlined text-accent-purple">database</span>
                     </div>
-                    <div className="space-y-4">
-                        <div>
-                            <div className="flex justify-between text-xs mb-1">
-                                <span className="text-slate-300">Qdrant Vector DB</span>
-                                <span className="text-slate-400 font-semibold">2.4 TB / 4 TB</span>
+                    {(() => {
+                        if (!dbStats && !dbOffline) {
+                            // NO SIGNAL (API down)
+                            return (
+                                <div className="flex-1 w-full flex flex-col items-center justify-center gap-2 mt-4">
+                                    <div className="relative">
+                                        <span className="material-symbols-outlined text-3xl text-slate-600 animate-pulse">signal_cellular_off</span>
+                                        <div className="absolute -top-1 -right-1 size-2.5 bg-red-500/80 rounded-full animate-ping"></div>
+                                        <div className="absolute -top-1 -right-1 size-2.5 bg-red-500 rounded-full"></div>
+                                    </div>
+                                    <p className="text-xs font-semibold text-slate-400 tracking-wide">NO SIGNAL</p>
+                                    <p className="text-[9px] text-slate-600 text-center max-w-[200px]">API server unreachable.</p>
+                                </div>
+                            );
+                        }
+
+                        if (dbOffline) {
+                            // DB OFFLINE
+                            return (
+                                <div className="flex-1 w-full flex flex-col items-center justify-center gap-2 mt-4">
+                                    <div className="relative">
+                                        <span className="material-symbols-outlined text-3xl text-red-500/80">database_off</span>
+                                    </div>
+                                    <p className="text-xs font-semibold text-red-400 tracking-wide uppercase">DB IS OFFLINE</p>
+                                    <p className="text-[9px] text-slate-500 text-center max-w-[200px]">MongoDB connection failed.</p>
+                                </div>
+                            );
+                        }
+
+                        // We have stats
+                        // Assuming 2GB max cap for MongoDB local test, and 4TB max cap for Qdrant (hardcoded for now as Qdrant isn't in dbstats yet)
+                        const formatBytes = (bytes) => {
+                            if (bytes === 0) return '0 B';
+                            const k = 1024;
+                            const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+                            const i = Math.floor(Math.log(bytes) / Math.log(k));
+                            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+                        };
+
+                        const mbSize = dbStats.total_size_bytes || 0;
+                        // Use a reasonable local max for the visualization, e.g., 2GB = 2 * 1024^3
+                        const mongoMax = 2 * 1024 * 1024 * 1024;
+                        const mongoPct = Math.min(100, (mbSize / mongoMax) * 100);
+
+                        return (
+                            <div className="flex-1 flex flex-col justify-end space-y-6 mt-10 mb-2">
+                                <div>
+                                    <div className="flex justify-between text-xs mb-2">
+                                        <span className="text-slate-300">Qdrant Vector DB</span>
+                                        <span className="text-slate-400 font-semibold">2.4 TB / 4 TB</span>
+                                    </div>
+                                    <div className="h-1.5 bg-white/5 rounded-full overflow-hidden">
+                                        <div className="h-full w-[60%] bg-accent-purple rounded-full"></div>
+                                    </div>
+                                </div>
+                                <div>
+                                    <div className="flex justify-between text-xs mb-2">
+                                        <span className="text-slate-300">MongoDB Clusters</span>
+                                        <span className="text-slate-400 font-semibold">{formatBytes(mbSize)} / 2 GB</span>
+                                    </div>
+                                    <div className="h-1.5 bg-white/5 rounded-full overflow-hidden">
+                                        <div className="h-full bg-primary rounded-full transition-all duration-1000" style={{ width: `${Math.max(5, mongoPct)}%` }}></div>
+                                    </div>
+                                </div>
                             </div>
-                            <div className="h-1.5 bg-white/5 rounded-full overflow-hidden">
-                                <div className="h-full w-[60%] bg-accent-purple rounded-full"></div>
-                            </div>
-                        </div>
-                        <div>
-                            <div className="flex justify-between text-xs mb-1">
-                                <span className="text-slate-300">MongoDB Clusters</span>
-                                <span className="text-slate-400 font-semibold">840 GB / 2 TB</span>
-                            </div>
-                            <div className="h-1.5 bg-white/5 rounded-full overflow-hidden">
-                                <div className="h-full w-[42%] bg-primary rounded-full"></div>
-                            </div>
-                        </div>
-                    </div>
+                        );
+                    })()}
                 </div>
 
                 {/* Resource Monitor (Col span 3) */}
@@ -92,6 +179,20 @@ export default function Overview() {
                         <span className="material-symbols-outlined text-slate-400">developer_board</span>
                     </div>
                     {(() => {
+                        const hasSignal = isServerConnected;
+                        if (!hasSignal) {
+                            return (
+                                <div className="flex-1 w-full flex flex-col items-center justify-center gap-3 py-2">
+                                    <div className="relative">
+                                        <span className="material-symbols-outlined text-4xl text-slate-600 animate-pulse">signal_cellular_off</span>
+                                        <div className="absolute -top-1 -right-1 size-3 bg-red-500/80 rounded-full animate-ping"></div>
+                                        <div className="absolute -top-1 -right-1 size-3 bg-red-500 rounded-full"></div>
+                                    </div>
+                                    <p className="text-sm font-semibold text-slate-400 tracking-wide">NO SIGNAL</p>
+                                    <p className="text-[10px] text-slate-600 text-center max-w-[200px]">Waiting for metrics from the core engine.</p>
+                                </div>
+                            );
+                        }
                         // Use last known good values to prevent 0% blink
                         if (currentMetrics.system_cpu_percent != null) {
                             lastSystemRef.current = {
@@ -160,7 +261,7 @@ export default function Overview() {
                     {(() => {
                         const sliced = metrics.slice(0, 40).reverse();
                         const epsData = sliced.map(m => m.eps || 0);
-                        const hasSignal = epsData.length >= 2;
+                        const hasSignal = isServerConnected;
 
                         if (!hasSignal) {
                             return (
@@ -219,40 +320,54 @@ export default function Overview() {
                         <span className="material-symbols-outlined text-red-500 animate-pulse">crisis_alert</span>
                     </div>
                     {(() => {
+                        const hasSignal = isServerConnected;
+                        if (!hasSignal) {
+                            return (
+                                <div className="flex-1 w-full flex flex-col items-center justify-center gap-3">
+                                    <div className="relative">
+                                        <span className="material-symbols-outlined text-4xl text-slate-600 animate-pulse">signal_cellular_off</span>
+                                        <div className="absolute -top-1 -right-1 size-3 bg-red-500/80 rounded-full animate-ping"></div>
+                                        <div className="absolute -top-1 -right-1 size-3 bg-red-500 rounded-full"></div>
+                                    </div>
+                                    <p className="text-sm font-semibold text-slate-400 tracking-wide">NO SIGNAL</p>
+                                    <p className="text-[10px] text-slate-600 text-center max-w-[200px]">Waiting for event data from the core engine.</p>
+                                </div>
+                            );
+                        }
                         const newCount = activeAlerts.filter(e => e.verdict?.includes('ANOMALY')).length;
                         const knownCount = activeAlerts.filter(e => e.verdict?.includes('THREAT')).length;
                         const fpCount = activeAlerts.filter(e => e.verdict?.includes('FALSE POSITIVE')).length;
                         return (
-                            <div className="grid grid-cols-3 gap-3 mb-6">
-                                <div className="bg-red-500/10 border border-red-500/20 p-3 rounded-xl text-center">
-                                    <div className="text-xl font-bold text-red-400">{newCount}</div>
-                                    <div className="text-[10px] text-red-500/80 font-bold uppercase">New</div>
+                            <>
+                                <div className="grid grid-cols-3 gap-3 mb-6">
+                                    <div className="bg-red-500/10 border border-red-500/20 p-3 rounded-xl text-center">
+                                        <div className="text-xl font-bold text-red-400">{newCount}</div>
+                                        <div className="text-[10px] text-red-500/80 font-bold uppercase">New</div>
+                                    </div>
+                                    <div className="bg-primary/10 border border-primary/20 p-3 rounded-xl text-center">
+                                        <div className="text-xl font-bold text-primary">{knownCount}</div>
+                                        <div className="text-[10px] text-primary/80 font-bold uppercase">Known</div>
+                                    </div>
+                                    <div className="bg-white/5 border border-white/10 p-3 rounded-xl text-center">
+                                        <div className="text-xl font-bold text-slate-400">{fpCount}</div>
+                                        <div className="text-[10px] text-slate-500 font-bold uppercase">FP</div>
+                                    </div>
                                 </div>
-                                <div className="bg-primary/10 border border-primary/20 p-3 rounded-xl text-center">
-                                    <div className="text-xl font-bold text-primary">{knownCount}</div>
-                                    <div className="text-[10px] text-primary/80 font-bold uppercase">Known</div>
+                                <div className="flex-1 space-y-3 overflow-y-auto max-h-[140px] pr-2 custom-scrollbar">
+                                    {recentEvents.map((event, idx) => (
+                                        <div key={event._id || idx} className="flex items-center gap-3 p-2 rounded-lg bg-white/5 border border-white/10">
+                                            <div className={`size-2 rounded-full ${event.verdict.includes('ANOMALY') || event.verdict.includes('THREAT') ? 'bg-red-500' : 'bg-emerald-500'}`}></div>
+                                            <div className="flex-1 min-w-0">
+                                                <p className="text-[11px] font-semibold truncate">{event.verdict}</p>
+                                                <p className="text-[9px] text-slate-500">{event.host_id || 'Unknown Node'} • {new Date(event.timestamp * 1000).toLocaleTimeString()}</p>
+                                            </div>
+                                            <button className="material-symbols-outlined text-slate-500 text-sm">open_in_new</button>
+                                        </div>
+                                    ))}
                                 </div>
-                                <div className="bg-white/5 border border-white/10 p-3 rounded-xl text-center">
-                                    <div className="text-xl font-bold text-slate-400">{fpCount}</div>
-                                    <div className="text-[10px] text-slate-500 font-bold uppercase">FP</div>
-                                </div>
-                            </div>
+                            </>
                         );
                     })()}
-                    <div className="flex-1 space-y-3 overflow-y-auto max-h-[140px] pr-2 custom-scrollbar">
-                        {recentEvents.length > 0 ? recentEvents.map((event, idx) => (
-                            <div key={event._id || idx} className="flex items-center gap-3 p-2 rounded-lg bg-white/5 border border-white/10">
-                                <div className={`size-2 rounded-full ${event.verdict.includes('ANOMALY') || event.verdict.includes('THREAT') ? 'bg-red-500' : 'bg-emerald-500'}`}></div>
-                                <div className="flex-1 min-w-0">
-                                    <p className="text-[11px] font-semibold truncate">{event.verdict}</p>
-                                    <p className="text-[9px] text-slate-500">{event.host_id || 'Unknown Node'} • {new Date(event.timestamp * 1000).toLocaleTimeString()}</p>
-                                </div>
-                                <button className="material-symbols-outlined text-slate-500 text-sm">open_in_new</button>
-                            </div>
-                        )) : (
-                            <p className="text-[10px] text-slate-500 text-center py-4">No recent events detected</p>
-                        )}
-                    </div>
                 </div>
 
                 {/* Verdict Distribution (Col span 4) */}
@@ -262,6 +377,20 @@ export default function Overview() {
                         <span className="material-symbols-outlined text-primary">pie_chart</span>
                     </div>
                     {(() => {
+                        const hasSignal = isServerConnected;
+                        if (!hasSignal) {
+                            return (
+                                <div className="flex-1 w-full flex flex-col items-center justify-center gap-3">
+                                    <div className="relative">
+                                        <span className="material-symbols-outlined text-4xl text-slate-600 animate-pulse">signal_cellular_off</span>
+                                        <div className="absolute -top-1 -right-1 size-3 bg-red-500/80 rounded-full animate-ping"></div>
+                                        <div className="absolute -top-1 -right-1 size-3 bg-red-500 rounded-full"></div>
+                                    </div>
+                                    <p className="text-sm font-semibold text-slate-400 tracking-wide">NO SIGNAL</p>
+                                    <p className="text-[10px] text-slate-600 text-center max-w-[200px]">Waiting for verdict data from the core engine.</p>
+                                </div>
+                            );
+                        }
                         const anomalyCount = activeAlerts.filter(e => e.verdict?.includes('ANOMALY')).length;
                         const threatCount = activeAlerts.filter(e => e.verdict?.includes('THREAT')).length;
                         const fpCount = activeAlerts.filter(e => e.verdict?.includes('FALSE POSITIVE')).length;

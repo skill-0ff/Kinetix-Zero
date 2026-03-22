@@ -1,0 +1,18 @@
+[Warning] MispClient module could not be imported.
+[Error] Config Load Failed: Expecting ',' delimiter: line 1 column 219 (char 218)
+[Error] Role Load Failed: name 'VectorLibrary' is not defined
+[Warning] Config load error: Expecting ',' delimiter: line 1 column 219 (char 218)
+[AI] Compiling model... (This may take a minute on first run)
+[AI] Connecting to Local Qdrant: DB/vector
+[AI] Created New Memory Collection: brain_memory
+[AI] MongoDB Connected: mongodb://localhost:27017/
+[AI] Async Worker Initialized on cpu (AMP Enabled). Context=5
+[AI] Loading Checkpoint: C:\Users\pc\Desktop\SIEM\engine\ai\checkpoints\model_crash_backup.pth
+[AI] Load Failed: 
+[AI] Worker Loop Started.
+[Janitor] Config Load Failed: expected str, bytes or os.PathLike object, not dict
+[Janitor] DB Init Failed: Storage folder DB/vector is already accessed by another instance of Qdrant client. If you require concurrent access, use Qdrant server instead.
+[Error] Receiver Socket Failed: [WinError 10048] Only one usage of each socket address (protocol/network address/port) is normally permitted
+[Brain] Processor Started.
+[Janitor] Service Started.
+[Janitor] Config Load Failed: expected str, bytes or os.PathLike object, not dict

@@ -1,0 +1,2 @@
+[Collector] Listening on UDP 5000. Forwarding canonical events to UDP 5001
+[Collector] AES-256-GCM Key dynamically loaded/rotated.

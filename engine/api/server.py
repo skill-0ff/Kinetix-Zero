@@ -1,3 +1,11 @@
+<<<<<<< HEAD
+from fastapi import FastAPI, Depends, HTTPException, status, Body
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from fastapi.middleware.cors import CORSMiddleware
+from pymongo import MongoClient
+from typing import List, Optional, Dict
+=======
+>>>>>>> 09893c936dd507ce0034cf9280bb9b52eee617ea
 import os
 import json
 import time
@@ -49,6 +57,21 @@ class Database:
 
 db = Database()
 
+<<<<<<< HEAD
+CONFIG = load_config()
+
+# --- Database Connections (Read-Only Logic) ---
+# MongoDB
+MONGO_URI = os.getenv("MONGO_URI") or CONFIG.get("mongo_uri", "mongodb://localhost:27017/")
+mongo_client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
+db = mongo_client["kinetix_brain"]
+
+# --- Auth Dependency ---
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
+
+async def get_current_user(token: str = Depends(oauth2_scheme)):
+    from .auth import jwt, SECRET_KEY, ALGORITHM, TokenData
+=======
 # --- AUTH UTILS ---
 async def get_current_user(request: Request, token: Optional[str] = Query(None)):
     auth_header = request.headers.get("Authorization")
@@ -62,6 +85,7 @@ async def get_current_user(request: Request, token: Optional[str] = Query(None))
     if not token:
         raise HTTPException(status_code=401, detail="Missing or invalid token")
     
+>>>>>>> 09893c936dd507ce0034cf9280bb9b52eee617ea
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         return payload
@@ -98,10 +122,83 @@ async def login(req: LoginRequest, request: Request):
         print(f"DEBUG: Login successful for {req.username}")
         return {"access_token": token, "token_type": "bearer"}
     
+<<<<<<< HEAD
+    # Check Mongo
+    try:
+        mongo_client.admin.command('ping')
+        status_data["mongo"] = True
+        
+        # Threat Counts from MongoDB
+        status_data["threats_active"] = db["events"].count_documents({"verdict": {"$in": ["KNOWN THREAT", "NEW ANOMALY", "Known Threat (MISP)"]}})
+        status_data["threats_new"] = db["events"].count_documents({"verdict": "NEW ANOMALY"})
+        status_data["threats_known"] = db["events"].count_documents({"verdict": {"$in": ["KNOWN THREAT", "Known Threat (MISP)"]}})
+        status_data["threats_fp"] = db["events"].count_documents({"verdict": "FALSE POSITIVE"})
+        
+        # Check Brain/AI Liveness via Metrics
+        latest_metric = db["metrics"].find_one(sort=[("timestamp", -1)])
+        if latest_metric:
+            lag = time.time() - latest_metric.get("timestamp", 0)
+            if lag < 5: # If metrics logged within last 5s, it is ALIVE
+                status_data["core_status"] = True
+                status_data["uptime"] = int(latest_metric.get("uptime", 0))
+            
+            # Decoupled Qdrant Check
+            if "qdrant_stats" in latest_metric:
+                status_data["qdrant"] = True
+                status_data["vectors"] = latest_metric["qdrant_stats"].get("total", 0)
+    except:
+        pass
+        
+    return status_data
+
+@app.get("/stats")
+async def get_stats(current_user: User = Depends(get_current_active_user)):
+    """Get aggregated statistics (Trend)"""
+    now = time.time()
+    
+    # 1. Current EPS (Avg of last 10s)
+    current_cursor = db["metrics"].find({"timestamp": {"$gt": now - 10}})
+    current_points = list(current_cursor)
+    current_eps = sum(p["eps_in"] for p in current_points) / max(1, len(current_points))
+    
+    # 2. Last Hour EPS (Avg of last 3600s)
+    hour_cursor = db["metrics"].find({"timestamp": {"$gt": now - 3600}})
+    hour_points = list(hour_cursor)
+    if not hour_points:
+        hour_avg = 0
+    else:
+        hour_avg = sum(p["eps_in"] for p in hour_points) / len(hour_points)
+        
+    # Calculate Trend
+    if hour_avg == 0:
+        trend = 100 if current_eps > 0 else 0
+    else:
+        trend = ((current_eps - hour_avg) / hour_avg) * 100
+    
+    # 3. Vector Breakdown (Qdrant Decoupled via Mongo)
+    vec_counts = {"safe": 0, "anomaly": 0, "threat": 0}
+    try:
+        latest_metric = db["metrics"].find_one(sort=[("timestamp", -1)])
+        if latest_metric and "qdrant_stats" in latest_metric:
+            q_stats = latest_metric["qdrant_stats"]
+            vec_counts["safe"] = q_stats.get("safe", 0)
+            vec_counts["anomaly"] = q_stats.get("anomaly", 0)
+            vec_counts["threat"] = q_stats.get("threat", 0)
+    except:
+        pass
+        
+    return {
+        "current_eps": round(current_eps, 1),
+        "hour_avg_eps": round(hour_avg, 1),
+        "trend_percent": round(trend, 1),
+        "memory": vec_counts
+    }
+=======
     print(f"DEBUG: Login failed for {req.username}")
     raise HTTPException(status_code=401, detail="Invalid credentials")
 
 @app.post("/api/v1/data/{collection}")
+>>>>>>> 09893c936dd507ce0034cf9280bb9b52eee617ea
 
 async def query_data(
     collection: str, 

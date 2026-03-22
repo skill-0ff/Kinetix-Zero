@@ -9,16 +9,28 @@ export default function Configuration() {
     const [updating, setUpdating] = useState(false);
 
     const [localCheckpointInterval, setLocalCheckpointInterval] = useState(3600);
+    const [localMaxCheckpoints, setLocalMaxCheckpoints] = useState(10);
     const [localForensicRate, setLocalForensicRate] = useState(100);
+    const [localContextEpochs, setLocalContextEpochs] = useState(5);
+    const [localAnomalyThreshold, setLocalAnomalyThreshold] = useState(0.9);
 
     useEffect(() => {
         if (config?.checkpoint_interval_seconds) {
             setLocalCheckpointInterval(config.checkpoint_interval_seconds);
         }
+        if (config?.max_checkpoints_history !== undefined) {
+            setLocalMaxCheckpoints(config.max_checkpoints_history);
+        }
         if (config?.forensic_sample_rate !== undefined) {
             setLocalForensicRate(config.forensic_sample_rate);
         }
-    }, [config?.checkpoint_interval_seconds, config?.forensic_sample_rate]);
+        if (config?.ai_context_epochs !== undefined) {
+            setLocalContextEpochs(config.ai_context_epochs);
+        }
+        if (config?.ai_anomaly_threshold !== undefined) {
+            setLocalAnomalyThreshold(config.ai_anomaly_threshold);
+        }
+    }, [config?.checkpoint_interval_seconds, config?.max_checkpoints_history, config?.forensic_sample_rate, config?.ai_context_epochs, config?.ai_anomaly_threshold]);
 
     const updateAlertPolicy = async (key, value) => {
         if (!config) return;
@@ -109,6 +121,32 @@ export default function Configuration() {
         }
     };
 
+    const updateCheckpointHistory = async (value) => {
+        if (!config) return;
+        setUpdating(true);
+        try {
+            const token = localStorage.getItem('token');
+            const payload = {
+                max_checkpoints_history: parseInt(value)
+            };
+            const res = await fetch('http://localhost:8000/api/v1/data/config', {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json',
+                    ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+                },
+                body: JSON.stringify(payload)
+            });
+            if (res.ok) {
+                refreshConfig();
+            }
+        } catch (err) {
+            console.error("Failed to update checkpoint history", err);
+        } finally {
+            setUpdating(false);
+        }
+    };
+
     const updateForensics = async (payload) => {
         if (!config) return;
         setUpdating(true);
@@ -127,6 +165,29 @@ export default function Configuration() {
             }
         } catch (err) {
             console.error("Failed to update forensics", err);
+        } finally {
+            setUpdating(false);
+        }
+    };
+
+    const updateAIEngine = async (payload) => {
+        if (!config) return;
+        setUpdating(true);
+        try {
+            const token = localStorage.getItem('token');
+            const res = await fetch('http://localhost:8000/api/v1/data/config', {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json',
+                    ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+                },
+                body: JSON.stringify(payload)
+            });
+            if (res.ok) {
+                refreshConfig();
+            }
+        } catch (err) {
+            console.error("Failed to update AI Engine", err);
         } finally {
             setUpdating(false);
         }
@@ -288,6 +349,24 @@ export default function Configuration() {
                                 onTouchEnd={(e) => updateCheckpoint(e.target.value)}
                             />
                         </div>
+                        <div className="space-y-3">
+                            <div className="flex justify-between items-center">
+                                <label className="text-sm text-slate-300">History Rotation</label>
+                                <span className="text-xs font-mono text-primary bg-primary/10 px-2 py-0.5 rounded border border-primary/20 shadow-[0_0_10px_rgba(37,106,244,0.2)]">
+                                    {localMaxCheckpoints} files
+                                </span>
+                            </div>
+                            <input
+                                className="w-full"
+                                max="50"
+                                min="1"
+                                type="range"
+                                value={localMaxCheckpoints}
+                                onChange={(e) => setLocalMaxCheckpoints(e.target.value)}
+                                onMouseUp={(e) => updateCheckpointHistory(e.target.value)}
+                                onTouchEnd={(e) => updateCheckpointHistory(e.target.value)}
+                            />
+                        </div>
                     </div>
                 </div>
 
@@ -330,6 +409,59 @@ export default function Configuration() {
                                     SEQ
                                 </button>
                             </div>
+                        </div>
+                    </div>
+                </div>
+
+                {/* 6. AI Engine */}
+                <div className="glass-card rounded-2xl p-6 flex flex-col gap-6 neon-border-emerald">
+                    <div className="flex items-center gap-3">
+                        <span className="material-symbols-outlined text-emerald-400">neurology</span>
+                        <h3 className="text-lg font-semibold text-white">AI Engine</h3>
+                    </div>
+                    <div className="space-y-6">
+                        <div className="space-y-3">
+                            <label className="text-sm text-slate-300 block">Context Memory</label>
+                            <div className="relative flex items-center stepper-container">
+                                <input
+                                    className="w-full input-glass !pr-8"
+                                    type="number"
+                                    value={localContextEpochs}
+                                    onChange={(e) => setLocalContextEpochs(e.target.value)}
+                                    onBlur={(e) => updateAIEngine({ ai_context_epochs: parseInt(e.target.value) })}
+                                />
+                                <div className="absolute right-2 flex flex-col opacity-60">
+                                    <span className="material-symbols-outlined text-[12px] stepper-btn" onClick={() => {
+                                        const val = parseInt(localContextEpochs) + 1;
+                                        setLocalContextEpochs(val);
+                                        updateAIEngine({ ai_context_epochs: val });
+                                    }}>keyboard_arrow_up</span>
+                                    <span className="material-symbols-outlined text-[12px] stepper-btn" onClick={() => {
+                                        const val = Math.max(1, parseInt(localContextEpochs) - 1);
+                                        setLocalContextEpochs(val);
+                                        updateAIEngine({ ai_context_epochs: val });
+                                    }}>keyboard_arrow_down</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div className="space-y-3">
+                            <div className="flex justify-between items-center">
+                                <label className="text-sm text-slate-300">Sensitivity</label>
+                                <span className="text-xs font-mono text-primary bg-primary/10 px-2 py-0.5 rounded border border-primary/20 shadow-[0_0_10px_rgba(37,106,244,0.2)]">
+                                    {Math.round(localAnomalyThreshold * 100)}%
+                                </span>
+                            </div>
+                            <input
+                                className="w-full"
+                                max="1"
+                                min="0"
+                                step="0.01"
+                                type="range"
+                                value={localAnomalyThreshold}
+                                onChange={(e) => setLocalAnomalyThreshold(e.target.value)}
+                                onMouseUp={(e) => updateAIEngine({ ai_anomaly_threshold: parseFloat(e.target.value) })}
+                                onTouchEnd={(e) => updateAIEngine({ ai_anomaly_threshold: parseFloat(e.target.value) })}
+                            />
                         </div>
                     </div>
                 </div>
@@ -442,16 +574,32 @@ export default function Configuration() {
                             <div className="space-y-5">
                                 <div>
                                     <label className="text-[11px] font-bold text-slate-400 mb-2 block uppercase tracking-wider">Context Epochs</label>
-                                    <input className="w-full input-glass" placeholder="Value..." type="number" defaultValue="5" />
+                                    <input
+                                        className="w-full input-glass"
+                                        type="number"
+                                        value={localContextEpochs}
+                                        onChange={(e) => setLocalContextEpochs(e.target.value)}
+                                        onBlur={(e) => updateAIEngine({ ai_context_epochs: parseInt(e.target.value) })}
+                                    />
                                 </div>
                                 <div>
                                     <div className="flex justify-between items-center mb-3">
                                         <label className="text-[11px] font-bold text-slate-400 block uppercase tracking-wider !mb-0">Anomaly Sensitivity</label>
                                         <span className="text-[10px] font-bold text-emerald-400 bg-emerald-400/10 px-2 py-0.5 rounded-full border border-emerald-400/30 shadow-[0_0_10px_rgba(16,185,129,0.3)]">
-                                            0.90
+                                            {localAnomalyThreshold}
                                         </span>
                                     </div>
-                                    <input className="w-full" max="1" min="0" step="0.01" type="range" defaultValue="0.9" />
+                                    <input
+                                        className="w-full"
+                                        max="1"
+                                        min="0"
+                                        step="0.01"
+                                        type="range"
+                                        value={localAnomalyThreshold}
+                                        onChange={(e) => setLocalAnomalyThreshold(e.target.value)}
+                                        onMouseUp={(e) => updateAIEngine({ ai_anomaly_threshold: parseFloat(e.target.value) })}
+                                        onTouchEnd={(e) => updateAIEngine({ ai_anomaly_threshold: parseFloat(e.target.value) })}
+                                    />
                                 </div>
                             </div>
                         </div>
@@ -536,7 +684,14 @@ export default function Configuration() {
                                 </div>
                                 <div>
                                     <label className="text-[11px] font-bold text-slate-400 mb-2 block uppercase tracking-wider">History Count</label>
-                                    <input className="w-full input-glass" placeholder="10" type="number" defaultValue="10" />
+                                    <input
+                                        className="w-full input-glass"
+                                        placeholder="10"
+                                        type="number"
+                                        value={localMaxCheckpoints}
+                                        onChange={(e) => setLocalMaxCheckpoints(e.target.value)}
+                                        onBlur={(e) => updateCheckpointHistory(e.target.value)}
+                                    />
                                 </div>
                             </div>
                         </div>

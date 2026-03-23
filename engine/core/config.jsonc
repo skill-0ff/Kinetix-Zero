@@ -16,7 +16,7 @@
     "max_checkpoints_history": 8,
     "forensic_sample_rate": 58,
     "forensic_sample_mode": "sequence",
-    "misp_enabled": false,
+    "misp_enabled": true,
     "misp_url": "https://misp.local",
     "misp_verify_ssl": true,
     "storage_policy": {

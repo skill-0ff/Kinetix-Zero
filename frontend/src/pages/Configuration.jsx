@@ -30,6 +30,12 @@ export default function Configuration() {
     });
     const [localMemDedup, setLocalMemDedup] = useState(0.05);
     const [localMemQuery, setLocalMemQuery] = useState(0.1);
+    const [localQdrantPath, setLocalQdrantPath] = useState("DB/vector");
+    const [localQdrantUrl, setLocalQdrantUrl] = useState("");
+    const [localMongoUri, setLocalMongoUri] = useState("mongodb://localhost:27017/");
+    const [localMispEnabled, setLocalMispEnabled] = useState(false);
+    const [localMispUrl, setLocalMispUrl] = useState("https://misp.local");
+    const [localMispVerify, setLocalMispVerify] = useState(true);
     const [isDragging, setIsDragging] = useState(false);
 
     useEffect(() => {
@@ -77,6 +83,24 @@ export default function Configuration() {
         }
         if (config.memory_query_dist !== undefined) {
             setLocalMemQuery(config.memory_query_dist);
+        }
+        if (config.qdrant_path !== undefined) {
+            setLocalQdrantPath(config.qdrant_path);
+        }
+        if (config.qdrant_url !== undefined) {
+            setLocalQdrantUrl(config.qdrant_url || "");
+        }
+        if (config.mongo_uri !== undefined) {
+            setLocalMongoUri(config.mongo_uri);
+        }
+        if (config.misp_enabled !== undefined) {
+            setLocalMispEnabled(config.misp_enabled);
+        }
+        if (config.misp_url !== undefined) {
+            setLocalMispUrl(config.misp_url);
+        }
+        if (config.misp_verify_ssl !== undefined) {
+            setLocalMispVerify(config.misp_verify_ssl);
         }
     }, [config, updating, isDragging]);
 
@@ -338,6 +362,52 @@ export default function Configuration() {
         }
     };
 
+    const updateMisp = async (payload) => {
+        if (!config) return;
+        setUpdating(true);
+        try {
+            const token = localStorage.getItem('token');
+            const res = await fetch('http://localhost:8000/api/v1/data/config', {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json',
+                    ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+                },
+                body: JSON.stringify(payload)
+            });
+            if (res.ok) {
+                refreshConfig();
+            }
+        } catch (err) {
+            console.error("Failed to update MISP", err);
+        } finally {
+            setUpdating(false);
+        }
+    };
+
+    const updateDatabase = async (payload) => {
+        if (!config) return;
+        setUpdating(true);
+        try {
+            const token = localStorage.getItem('token');
+            const res = await fetch('http://localhost:8000/api/v1/data/config', {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json',
+                    ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+                },
+                body: JSON.stringify(payload)
+            });
+            if (res.ok) {
+                refreshConfig();
+            }
+        } catch (err) {
+            console.error("Failed to update Database", err);
+        } finally {
+            setUpdating(false);
+        }
+    };
+
     return (
         <main className="flex-1 pt-28 pb-8 px-8 max-w-[1440px] mx-auto w-full">
             <div className="flex items-end justify-between mb-8">
@@ -365,10 +435,13 @@ export default function Configuration() {
             {/* Upper Config Grid */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-12">
                 {/* 1. Alert Management */}
-                <div className="glass-card rounded-2xl p-6 flex flex-col gap-6 neon-border-blue">
-                    <div className="flex items-center gap-3">
-                        <span className="material-symbols-outlined text-primary neon-text-blue">notification_important</span>
-                        <h3 className="text-lg font-semibold text-white">Alert Management</h3>
+                <div className="glass-card rounded-[2rem] p-6 neon-border-blue relative overflow-hidden group">
+                    <div className="absolute -right-4 -top-4 size-32 bg-primary/20 blur-3xl rounded-full"></div>
+                    <div className="flex items-center gap-4 mb-6">
+                        <div className="size-10 rounded-xl bg-primary/10 flex items-center justify-center text-primary border border-primary/30 shadow-[0_0_15px_rgba(37,106,244,0.2)]">
+                            <span className="material-symbols-outlined text-[22px]">notification_important</span>
+                        </div>
+                        <h3 className="text-lg font-bold text-white tracking-tight">Alert Management</h3>
                     </div>
                     <div className="space-y-4">
                         <div className="flex items-center justify-between">
@@ -381,7 +454,7 @@ export default function Configuration() {
                             </button>
                         </div>
                         <div className="flex items-center justify-between">
-                            <span className="text-sm text-slate-300">Known Alerts</span>
+                            <span className="text-sm text-slate-300">Known Threats</span>
                             <button
                                 onClick={() => updateAlertPolicy('known_threat', !(config?.alert_policy?.console_alerts?.known_threat))}
                                 disabled={updating || !config}
@@ -390,7 +463,7 @@ export default function Configuration() {
                             </button>
                         </div>
                         <div className="flex items-center justify-between">
-                            <span className="text-sm text-slate-300">FP Alerts</span>
+                            <span className="text-sm text-slate-300">False Positives</span>
                             <button
                                 onClick={() => updateAlertPolicy('false_positive', !(config?.alert_policy?.console_alerts?.false_positive))}
                                 disabled={updating || !config}
@@ -402,13 +475,16 @@ export default function Configuration() {
                 </div>
 
                 {/* 2. Role Management */}
-                <div className="glass-card rounded-2xl p-6 flex flex-col gap-4 lg:row-span-2 neon-border-purple">
-                    <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-3">
-                            <span className="material-symbols-outlined text-accent-purple">shield_person</span>
-                            <h3 className="text-lg font-semibold text-white">Role Management</h3>
+                <div className="glass-card rounded-[2rem] p-6 lg:row-span-2 neon-border-purple relative overflow-hidden group">
+                    <div className="absolute -right-4 -top-4 size-32 bg-purple-400/20 blur-3xl rounded-full"></div>
+                    <div className="flex items-center justify-between mb-6">
+                        <div className="flex items-center gap-4">
+                            <div className="size-10 rounded-xl bg-purple-400/10 flex items-center justify-center text-purple-400 border border-purple-400/30 shadow-[0_0_15px_rgba(168,85,247,0.2)]">
+                                <span className="material-symbols-outlined text-[22px]">shield_person</span>
+                            </div>
+                            <h3 className="text-lg font-bold text-white tracking-tight">Role Management</h3>
                         </div>
-                        <button className="size-8 rounded-lg bg-white/5 flex items-center justify-center hover:bg-white/10 transition-colors border border-white/10">
+                        <button className="size-8 rounded-lg bg-white/5 flex items-center justify-center hover:bg-white/10 transition-colors border border-white/10 shadow-[0_0_10px_rgba(255,255,255,0.05)]">
                             <span className="material-symbols-outlined text-xl text-white">add</span>
                         </button>
                     </div>
@@ -442,14 +518,17 @@ export default function Configuration() {
                 </div>
 
                 {/* 3. Log Storage Control */}
-                <div className="glass-card rounded-2xl p-6 flex flex-col gap-6 neon-border-blue">
-                    <div className="flex items-center gap-3">
-                        <span className="material-symbols-outlined text-blue-400">database</span>
-                        <h3 className="text-lg font-semibold text-white">Log Storage</h3>
+                <div className="glass-card rounded-[2rem] p-6 neon-border-blue relative overflow-hidden group">
+                    <div className="absolute -right-4 -top-4 size-32 bg-primary/20 blur-3xl rounded-full"></div>
+                    <div className="flex items-center gap-4 mb-6">
+                        <div className="size-10 rounded-xl bg-primary/10 flex items-center justify-center text-primary border border-primary/30 shadow-[0_0_15px_rgba(37,106,244,0.2)]">
+                            <span className="material-symbols-outlined text-[22px]">database</span>
+                        </div>
+                        <h3 className="text-lg font-bold text-white tracking-tight">Log Storage</h3>
                     </div>
                     <div className="grid grid-cols-2 gap-4">
-                        <div className="flex items-center justify-between p-3 rounded-xl bg-white/5 border border-white/10">
-                            <span className="text-xs text-slate-400">Safe</span>
+                        <div className="flex items-center justify-between p-3 rounded-2xl bg-white/5 border border-white/10">
+                            <span className="text-xs font-bold text-slate-400 uppercase tracking-tighter">Safe</span>
                             <button
                                 onClick={() => updateLogStorage('ai_safe', !(config?.storage_policy?.save_logs?.ai_safe))}
                                 disabled={updating || !config}
@@ -457,8 +536,8 @@ export default function Configuration() {
                                 <span className={`absolute top-0.5 size-3 rounded-full transition-all ${config?.storage_policy?.save_logs?.ai_safe ? 'right-0.5 bg-white' : 'left-0.5 bg-slate-400'}`}></span>
                             </button>
                         </div>
-                        <div className="flex items-center justify-between p-3 rounded-xl bg-white/5 border border-white/10">
-                            <span className="text-xs text-slate-400">Threat</span>
+                        <div className="flex items-center justify-between p-3 rounded-2xl bg-white/5 border border-white/10">
+                            <span className="text-xs font-bold text-slate-400 uppercase tracking-tighter">Threat</span>
                             <button
                                 onClick={() => updateLogStorage('anomaly', !(config?.storage_policy?.save_logs?.anomaly))}
                                 disabled={updating || !config}
@@ -470,15 +549,18 @@ export default function Configuration() {
                 </div>
 
                 {/* 4. Checkpointing */}
-                <div className="glass-card rounded-2xl p-6 flex flex-col gap-6 neon-border-amber">
-                    <div className="flex items-center gap-3">
-                        <span className="material-symbols-outlined text-orange-400">save</span>
-                        <h3 className="text-lg font-semibold text-white">Checkpointing</h3>
+                <div className="glass-card rounded-[2rem] p-6 neon-border-amber relative overflow-hidden group">
+                    <div className="absolute -right-4 -top-4 size-32 bg-amber-400/20 blur-3xl rounded-full"></div>
+                    <div className="flex items-center gap-4 mb-6">
+                        <div className="size-10 rounded-xl bg-amber-400/10 flex items-center justify-center text-amber-400 border border-amber-400/30 shadow-[0_0_15px_rgba(251,191,36,0.2)]">
+                            <span className="material-symbols-outlined text-[22px]">save</span>
+                        </div>
+                        <h3 className="text-lg font-bold text-white tracking-tight">Checkpointing</h3>
                     </div>
                     <div className="space-y-6">
                         <div className="space-y-3">
                             <div className="flex justify-between items-center">
-                                <label className="text-sm text-slate-300">Auto-save frequency</label>
+                                <label className="text-sm font-bold text-slate-300 uppercase tracking-wider">Auto-save frequency</label>
                                 <span className="text-xs font-mono text-primary bg-primary/10 px-2 py-0.5 rounded border border-primary/20 shadow-[0_0_10px_rgba(37,106,244,0.2)]">
                                     {localCheckpointInterval}s
                                 </span>
@@ -496,7 +578,7 @@ export default function Configuration() {
                         </div>
                         <div className="space-y-3">
                             <div className="flex justify-between items-center">
-                                <label className="text-sm text-slate-300">History Rotation</label>
+                                <label className="text-sm font-bold text-slate-300 uppercase tracking-wider">History Rotation</label>
                                 <span className="text-xs font-mono text-primary bg-primary/10 px-2 py-0.5 rounded border border-primary/20 shadow-[0_0_10px_rgba(37,106,244,0.2)]">
                                     {localMaxCheckpoints} files
                                 </span>
@@ -516,15 +598,18 @@ export default function Configuration() {
                 </div>
 
                 {/* 5. Forensics Control */}
-                <div className="glass-card rounded-2xl p-6 flex flex-col gap-6 neon-border-amber">
-                    <div className="flex items-center gap-3">
-                        <span className="material-symbols-outlined text-amber-400">fingerprint</span>
-                        <h3 className="text-lg font-semibold text-white">Forensics Control</h3>
+                <div className="glass-card rounded-[2rem] p-6 neon-border-amber relative overflow-hidden group">
+                    <div className="absolute -right-4 -top-4 size-32 bg-amber-400/20 blur-3xl rounded-full"></div>
+                    <div className="flex items-center gap-4 mb-6">
+                        <div className="size-10 rounded-xl bg-amber-400/10 flex items-center justify-center text-amber-400 border border-amber-400/30 shadow-[0_0_15px_rgba(251,191,36,0.2)]">
+                            <span className="material-symbols-outlined text-[22px]">fingerprint</span>
+                        </div>
+                        <h3 className="text-lg font-bold text-white tracking-tight">Forensics Control</h3>
                     </div>
                     <div className="space-y-6">
                         <div className="space-y-3">
                             <div className="flex justify-between items-center">
-                                <label className="text-sm text-slate-300">Sample Rate (%)</label>
+                                <label className="text-sm font-bold text-slate-300 uppercase tracking-wider">Sample Rate (%)</label>
                                 <span className="text-xs font-mono text-primary bg-primary/10 px-2 py-0.5 rounded border border-primary/20 shadow-[0_0_10px_rgba(37,106,244,0.2)]">
                                     {localForensicRate}%
                                 </span>
@@ -549,7 +634,7 @@ export default function Configuration() {
                             />
                         </div>
                         <div className="flex items-center justify-between">
-                            <span className="text-sm text-slate-300">Mode</span>
+                            <span className="text-sm font-bold text-slate-300 uppercase tracking-wider">Mode</span>
                             <div className="flex p-1 bg-white/5 rounded-xl border border-white/10">
                                 <button
                                     onClick={() => updateForensics({ forensic_sample_mode: 'random' })}
@@ -567,14 +652,17 @@ export default function Configuration() {
                 </div>
 
                 {/* 6. AI Engine */}
-                <div className="glass-card rounded-2xl p-6 flex flex-col gap-6 neon-border-emerald">
-                    <div className="flex items-center gap-3">
-                        <span className="material-symbols-outlined text-emerald-400">neurology</span>
-                        <h3 className="text-lg font-semibold text-white">AI Engine</h3>
+                <div className="glass-card rounded-[2rem] p-6 neon-border-emerald relative overflow-hidden group">
+                    <div className="absolute -right-4 -top-4 size-32 bg-emerald-400/20 blur-3xl rounded-full"></div>
+                    <div className="flex items-center gap-4 mb-6">
+                        <div className="size-10 rounded-xl bg-emerald-400/10 flex items-center justify-center text-emerald-400 border border-emerald-400/30 shadow-[0_0_15px_rgba(52,211,153,0.2)]">
+                            <span className="material-symbols-outlined text-[22px]">neurology</span>
+                        </div>
+                        <h3 className="text-lg font-bold text-white tracking-tight">AI Engine</h3>
                     </div>
                     <div className="space-y-6">
                         <div className="space-y-3">
-                            <label className="text-sm text-slate-300 block">Context Memory</label>
+                            <label className="text-sm font-bold text-slate-300 uppercase tracking-wider block">Context Memory</label>
                             <div className="relative flex items-center stepper-container">
                                 <input
                                     className="w-full input-glass !pr-8"
@@ -599,7 +687,7 @@ export default function Configuration() {
                         </div>
                         <div className="space-y-3">
                             <div className="flex justify-between items-center">
-                                <label className="text-sm text-slate-300">Sensitivity</label>
+                                <label className="text-sm font-bold text-slate-300 uppercase tracking-wider">Sensitivity</label>
                                 <span className="text-xs font-mono text-primary bg-primary/10 px-2 py-0.5 rounded border border-primary/20 shadow-[0_0_10px_rgba(37,106,244,0.2)]">
                                     {Math.round(localAnomalyThreshold * 100)}%
                                 </span>
@@ -632,11 +720,55 @@ export default function Configuration() {
                     </div>
 
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8 items-start">
+                        {/* Database */}
+                        <div className="glass-card rounded-[2rem] p-6 neon-border-cyan relative overflow-hidden group">
+                            <div className="absolute -right-4 -top-4 size-32 bg-cyan-400/20 blur-3xl rounded-full"></div>
+                            <div className="flex items-center gap-4 mb-6">
+                                <div className="size-10 rounded-xl bg-cyan-400/10 flex items-center justify-center text-cyan-400 border border-cyan-400/30 shadow-[0_0_15px_rgba(34,211,238,0.2)]">
+                                    <span className="material-symbols-outlined text-[22px]">database</span>
+                                </div>
+                                <h3 className="text-lg font-bold text-white tracking-tight">Database</h3>
+                            </div>
+                            <div className="space-y-4">
+                                <div>
+                                    <label className="text-[11px] font-bold text-slate-400 mb-2 block uppercase tracking-wider">Qdrant Path</label>
+                                    <input
+                                        className="w-full input-glass text-xs font-mono"
+                                        type="text"
+                                        value={localQdrantPath}
+                                        onChange={(e) => setLocalQdrantPath(e.target.value)}
+                                        onBlur={(e) => updateDatabase({ qdrant_path: e.target.value })}
+                                    />
+                                </div>
+                                <div>
+                                    <label className="text-[11px] font-bold text-slate-400 mb-2 block uppercase tracking-wider">Qdrant URL (optional)</label>
+                                    <input
+                                        className="w-full input-glass text-xs font-mono"
+                                        placeholder="null"
+                                        type="text"
+                                        value={localQdrantUrl}
+                                        onChange={(e) => setLocalQdrantUrl(e.target.value)}
+                                        onBlur={(e) => updateDatabase({ qdrant_url: e.target.value || null })}
+                                    />
+                                </div>
+                                <div>
+                                    <label className="text-[11px] font-bold text-slate-400 mb-2 block uppercase tracking-wider">Mongo URI</label>
+                                    <input
+                                        className="w-full input-glass text-xs font-mono"
+                                        type="text"
+                                        value={localMongoUri}
+                                        onChange={(e) => setLocalMongoUri(e.target.value)}
+                                        onBlur={(e) => updateDatabase({ mongo_uri: e.target.value })}
+                                    />
+                                </div>
+                            </div>
+                        </div>
+
                         {/* Network */}
                         <div className="glass-card rounded-[2rem] p-6 neon-border-blue relative overflow-hidden group">
                             <div className="absolute -right-4 -top-4 size-32 bg-primary/20 blur-3xl rounded-full"></div>
                             <div className="flex items-center gap-4 mb-6">
-                                <div className="size-10 rounded-xl bg-cyan-400/10 flex items-center justify-center text-cyan-400 border border-cyan-400/30 shadow-[0_0_15px_rgba(34,211,238,0.2)]">
+                                <div className="size-10 rounded-xl bg-primary/10 flex items-center justify-center text-primary border border-primary/30 shadow-[0_0_15px_rgba(37,106,244,0.2)]">
                                     <span className="material-symbols-outlined text-[22px]">lan</span>
                                 </div>
                                 <h3 className="text-lg font-bold text-white tracking-tight">Network</h3>
@@ -646,7 +778,7 @@ export default function Configuration() {
                                     <label className="text-[11px] font-bold text-slate-400 mb-2 block uppercase tracking-wider">Service Port</label>
                                     <div className="relative flex items-center stepper-container">
                                         <input
-                                            className="w-full input-glass !pr-12"
+                                            className="w-full input-glass !pr-12 font-mono text-xs"
                                             id="port-input"
                                             placeholder="Enter port..."
                                             type="number"
@@ -659,12 +791,12 @@ export default function Configuration() {
                                                 const val = parseInt(localPort) + 1;
                                                 setLocalPort(val);
                                                 updateNetwork(val);
-                                            }}>add</span>
+                                            }}>keyboard_arrow_up</span>
                                             <span className="material-symbols-outlined text-[14px] stepper-btn font-bold" onClick={() => {
                                                 const val = Math.max(1, parseInt(localPort) - 1);
                                                 setLocalPort(val);
                                                 updateNetwork(val);
-                                            }}>remove</span>
+                                            }}>keyboard_arrow_down</span>
                                         </div>
                                     </div>
                                 </div>
@@ -672,20 +804,20 @@ export default function Configuration() {
                         </div>
 
                         {/* Brain Logic */}
-                        <div className="glass-card rounded-[2rem] p-6 neon-border-rose relative overflow-hidden group">
-                            <div className="absolute -right-4 -top-4 size-32 bg-rose-400/20 blur-3xl rounded-full"></div>
+                        <div className="glass-card rounded-[2rem] p-6 neon-border-indigo relative overflow-hidden group">
+                            <div className="absolute -right-4 -top-4 size-32 bg-indigo-400/20 blur-3xl rounded-full"></div>
                             <div className="flex items-center gap-4 mb-6">
-                                <div className="size-10 rounded-xl bg-rose-400/10 flex items-center justify-center text-rose-400 border border-rose-400/30 shadow-[0_0_15px_rgba(244,63,94,0.2)]">
+                                <div className="size-10 rounded-xl bg-indigo-400/10 flex items-center justify-center text-indigo-400 border border-indigo-400/30 shadow-[0_0_15px_rgba(129,140,248,0.2)]">
                                     <span className="material-symbols-outlined text-[22px]">psychology</span>
                                 </div>
                                 <h3 className="text-lg font-bold text-white tracking-tight">Brain Logic</h3>
                             </div>
-                            <div className="grid grid-cols-2 gap-4">
+                            <div className="grid grid-cols-2 gap-x-4 gap-y-5">
                                 <div className="col-span-1">
                                     <label className="text-[11px] font-bold text-slate-400 mb-2 block uppercase tracking-wider">Time Win</label>
                                     <div className="relative flex items-center stepper-container">
                                         <input
-                                            className="w-full input-glass !pr-8"
+                                            className="w-full input-glass !pr-8 font-mono text-xs"
                                             id="timewin-input"
                                             step="0.1"
                                             type="number"
@@ -711,7 +843,7 @@ export default function Configuration() {
                                     <label className="text-[11px] font-bold text-slate-400 mb-2 block uppercase tracking-wider">Max Seq</label>
                                     <div className="relative flex items-center stepper-container">
                                         <input
-                                            className="w-full input-glass !pr-8"
+                                            className="w-full input-glass !pr-8 font-mono text-xs"
                                             id="maxseq-input"
                                             type="number"
                                             value={localMaxSequence}
@@ -736,7 +868,7 @@ export default function Configuration() {
                                     <label className="text-[11px] font-bold text-slate-400 mb-2 block uppercase tracking-wider">DDoS Thr</label>
                                     <div className="relative flex items-center stepper-container">
                                         <input
-                                            className="w-full input-glass !pr-8"
+                                            className="w-full input-glass !pr-8 font-mono text-xs"
                                             id="ddos-input"
                                             type="number"
                                             value={localDDoSThreshold}
@@ -761,7 +893,7 @@ export default function Configuration() {
                                     <label className="text-[11px] font-bold text-slate-400 mb-2 block uppercase tracking-wider">Queue Size</label>
                                     <div className="relative flex items-center stepper-container">
                                         <input
-                                            className="w-full input-glass !pr-8"
+                                            className="w-full input-glass !pr-8 font-mono text-xs"
                                             id="queue-input"
                                             type="number"
                                             value={localMaxQueueSize}
@@ -785,88 +917,23 @@ export default function Configuration() {
                             </div>
                         </div>
 
-                        {/* AI Engine */}
-                        <div className="glass-card rounded-[2rem] p-6 neon-border-emerald relative overflow-hidden group">
-                            <div className="absolute -right-4 -top-4 size-32 bg-emerald-400/20 blur-3xl rounded-full"></div>
-                            <div className="flex items-center gap-4 mb-6">
-                                <div className="size-10 rounded-xl bg-emerald-400/10 flex items-center justify-center text-emerald-400 border border-emerald-400/30 shadow-[0_0_15px_rgba(16,185,129,0.2)]">
-                                    <span className="material-symbols-outlined text-[22px]">neurology</span>
-                                </div>
-                                <h3 className="text-lg font-bold text-white tracking-tight">AI Engine</h3>
-                            </div>
-                            <div className="space-y-5">
-                                <div>
-                                    <label className="text-[11px] font-bold text-slate-400 mb-2 block uppercase tracking-wider">Context Epochs</label>
-                                    <input
-                                        className="w-full input-glass"
-                                        type="number"
-                                        value={localContextEpochs}
-                                        onChange={(e) => setLocalContextEpochs(e.target.value)}
-                                        onBlur={(e) => updateAIEngine({ ai_context_epochs: parseInt(e.target.value) })}
-                                    />
-                                </div>
-                                <div>
-                                    <div className="flex justify-between items-center mb-3">
-                                        <label className="text-[11px] font-bold text-slate-400 block uppercase tracking-wider !mb-0">Anomaly Sensitivity</label>
-                                        <span className="text-[10px] font-bold text-emerald-400 bg-emerald-400/10 px-2 py-0.5 rounded-full border border-emerald-400/30 shadow-[0_0_10px_rgba(16,185,129,0.3)]">
-                                            {localAnomalyThreshold}
-                                        </span>
-                                    </div>
-                                    <input
-                                        className="w-full"
-                                        max="1"
-                                        min="0"
-                                        step="0.01"
-                                        type="range"
-                                        value={localAnomalyThreshold}
-                                        onChange={(e) => setLocalAnomalyThreshold(e.target.value)}
-                                        onMouseUp={(e) => updateAIEngine({ ai_anomaly_threshold: parseFloat(e.target.value) })}
-                                        onTouchEnd={(e) => updateAIEngine({ ai_anomaly_threshold: parseFloat(e.target.value) })}
-                                    />
-                                </div>
-                            </div>
-                        </div>
 
-                        {/* Database */}
+
+                        {/* Memory */}
                         <div className="glass-card rounded-[2rem] p-6 neon-border-purple relative overflow-hidden group">
                             <div className="absolute -right-4 -top-4 size-32 bg-purple-400/20 blur-3xl rounded-full"></div>
                             <div className="flex items-center gap-4 mb-6">
-                                <div className="size-10 rounded-xl bg-indigo-400/10 flex items-center justify-center text-indigo-400 border border-indigo-400/30 shadow-[0_0_15px_rgba(129,140,248,0.2)]">
-                                    <span className="material-symbols-outlined text-[22px]">storage</span>
-                                </div>
-                                <h3 className="text-lg font-bold text-white tracking-tight">Database</h3>
-                            </div>
-                            <div className="space-y-4">
-                                <div>
-                                    <label className="text-[11px] font-bold text-slate-400 mb-2 block uppercase tracking-wider">Vector Path</label>
-                                    <input className="w-full input-glass font-mono text-xs" placeholder="/path/to/db" type="text" defaultValue="DB/vector" />
-                                </div>
-                                <div>
-                                    <label className="text-[11px] font-bold text-slate-400 mb-2 block uppercase tracking-wider">Remote URL</label>
-                                    <input className="w-full input-glass font-mono text-xs" placeholder="None specified" type="text" />
-                                </div>
-                                <div>
-                                    <label className="text-[11px] font-bold text-slate-400 mb-2 block uppercase tracking-wider">Mongo URI</label>
-                                    <input className="w-full input-glass font-mono text-xs" placeholder="mongodb://..." type="text" defaultValue="mongodb://localhost:27017/" />
-                                </div>
-                            </div>
-                        </div>
-
-                        {/* Memory */}
-                        <div className="glass-card rounded-[2rem] p-6 neon-border-rose relative overflow-hidden group">
-                            <div className="absolute -right-4 -top-4 size-32 bg-pink-400/20 blur-3xl rounded-full"></div>
-                            <div className="flex items-center gap-4 mb-6">
-                                <div className="size-10 rounded-xl bg-pink-400/10 flex items-center justify-center text-pink-400 border border-pink-400/30 shadow-[0_0_15px_rgba(244,114,182,0.2)]">
+                                <div className="size-10 rounded-xl bg-purple-400/10 flex items-center justify-center text-purple-400 border border-purple-400/30 shadow-[0_0_15px_rgba(168,85,247,0.2)]">
                                     <span className="material-symbols-outlined text-[22px]">data_array</span>
                                 </div>
                                 <h3 className="text-lg font-bold text-white tracking-tight">Memory</h3>
                             </div>
-                            <div className="space-y-4">
+                            <div className="space-y-5">
                                 <div>
                                     <label className="text-[11px] font-bold text-slate-400 mb-2 block uppercase tracking-wider">Dedup Distance</label>
                                     <div className="relative flex items-center stepper-container">
                                         <input
-                                            className="w-full input-glass !pr-10"
+                                            className="w-full input-glass !pr-10 font-mono text-xs"
                                             id="mem-dedup-input"
                                             step="0.01"
                                             type="number"
@@ -879,19 +946,19 @@ export default function Configuration() {
                                                 const val = parseFloat(localMemDedup) - 0.01;
                                                 setLocalMemDedup(val.toFixed(2));
                                                 updateMemory({ memory_dedup_dist: val });
-                                            }}>remove</span>
+                                            }}>keyboard_arrow_left</span>
                                             <span className="material-symbols-outlined text-[16px] stepper-btn" onClick={() => {
                                                 const val = parseFloat(localMemDedup) + 0.01;
                                                 setLocalMemDedup(val.toFixed(2));
                                                 updateMemory({ memory_dedup_dist: val });
-                                            }}>add</span>
+                                            }}>keyboard_arrow_right</span>
                                         </div>
                                     </div>
                                 </div>
                                 <div>
                                     <label className="text-[11px] font-bold text-slate-400 mb-2 block uppercase tracking-wider">Query Distance</label>
                                     <input
-                                        className="w-full input-glass"
+                                        className="w-full input-glass font-mono text-xs"
                                         step="0.01"
                                         type="number"
                                         value={localMemQuery}
@@ -903,7 +970,7 @@ export default function Configuration() {
                         </div>
 
                         {/* Persistence */}
-                        <div className="glass-card rounded-[2rem] p-6 neon-border-amber relative overflow-hidden group">
+                        <div className="glass-card rounded-[2rem] p-6 neon-border-orange relative overflow-hidden group">
                             <div className="absolute -right-4 -top-4 size-32 bg-orange-400/20 blur-3xl rounded-full"></div>
                             <div className="flex items-center justify-between mb-6">
                                 <div className="flex items-center gap-4">
@@ -923,13 +990,12 @@ export default function Configuration() {
                                     <span className={`absolute top-1 size-3 rounded-full transition-all ${localRetentionEnabled ? 'right-1 bg-white' : 'left-1 bg-slate-500'}`}></span>
                                 </button>
                             </div>
-                            <div className={`space-y-3 transition-all duration-500 ${!localRetentionEnabled ? 'opacity-40 grayscale pointer-events-none blur-[1px]' : ''}`}>
-
+                            <div className={`space-y-4 transition-all duration-500 ${!localRetentionEnabled ? 'opacity-40 grayscale pointer-events-none blur-[1px]' : ''}`}>
                                 <div className="relative">
                                     <label className="text-[11px] font-bold text-slate-400 mb-2 block uppercase tracking-wider">Run Frequency (hrs)</label>
                                     <div className="relative flex items-center stepper-container">
                                         <input
-                                            className="w-full input-glass !pr-8"
+                                            className="w-full input-glass !pr-8 font-mono text-xs"
                                             type="number"
                                             value={localRetentionInterval}
                                             onChange={(e) => setLocalRetentionInterval(e.target.value)}
@@ -961,7 +1027,7 @@ export default function Configuration() {
                                             { key: 'ddos_evidence', label: 'DDoS' }
                                         ].map(item => (
                                             <div key={item.key} className="flex items-center justify-between gap-2 border-b border-white/5 pb-1">
-                                                <label className="text-slate-500 font-mono">{item.label}</label>
+                                                <label className="text-slate-500 font-bold uppercase tracking-tighter">{item.label}</label>
                                                 <input
                                                     className="w-14 bg-white/5 border border-white/10 rounded px-1.5 py-0.5 text-white font-mono text-right focus:border-primary/50 outline-none transition-colors"
                                                     type="number"
@@ -987,28 +1053,48 @@ export default function Configuration() {
 
                         {/* MISP Integration */}
                         <div className="glass-card rounded-[2rem] p-6 neon-border-rose relative overflow-hidden group">
-                            <div className="absolute -right-4 -top-4 size-32 bg-red-400/20 blur-3xl rounded-full"></div>
-                            <div className="flex items-center gap-4 mb-6">
-                                <div className="size-10 rounded-xl bg-red-400/10 flex items-center justify-center text-red-400 border border-red-400/30 shadow-[0_0_15px_rgba(248,113,113,0.2)]">
-                                    <span className="material-symbols-outlined text-[22px]">share_reviews</span>
+                            <div className="absolute -right-4 -top-4 size-32 bg-rose-400/20 blur-3xl rounded-full"></div>
+                            <div className="flex items-center justify-between mb-6">
+                                <div className="flex items-center gap-4">
+                                    <div className="size-10 rounded-xl bg-rose-400/10 flex items-center justify-center text-rose-400 border border-rose-400/30 shadow-[0_0_15px_rgba(244,63,94,0.2)]">
+                                        <span className="material-symbols-outlined text-[22px]">share_reviews</span>
+                                    </div>
+                                    <h3 className="text-lg font-bold text-white tracking-tight">MISP Integration</h3>
                                 </div>
-                                <h3 className="text-lg font-bold text-white tracking-tight">MISP</h3>
+                                <button
+                                    onClick={() => {
+                                        const val = !localMispEnabled;
+                                        setLocalMispEnabled(val);
+                                        updateMisp({ misp_enabled: val });
+                                    }}
+                                    className={`w-10 h-5 rounded-full relative transition-all ${localMispEnabled ? 'bg-primary shadow-[0_0_10px_rgba(37,106,244,0.4)]' : 'bg-white/10'}`}
+                                >
+                                    <span className={`absolute top-1 size-3 rounded-full transition-all ${localMispEnabled ? 'right-1 bg-white' : 'left-1 bg-slate-500'}`}></span>
+                                </button>
                             </div>
-                            <div className="space-y-5">
-                                <div className="flex items-center justify-between p-3 rounded-2xl bg-white/5 border border-white/10">
-                                    <label className="text-xs font-bold text-slate-400 uppercase tracking-tighter">Status</label>
-                                    <button className="w-10 h-5 bg-white/10 rounded-full relative transition-all">
-                                        <span className="absolute left-1 top-1 size-3 bg-slate-500 rounded-full"></span>
-                                    </button>
-                                </div>
+                            <div className={`space-y-4 transition-all duration-500 ${!localMispEnabled ? 'opacity-40 grayscale pointer-events-none blur-[1px]' : ''}`}>
                                 <div>
                                     <label className="text-[11px] font-bold text-slate-400 mb-2 block uppercase tracking-wider">Endpoint URL</label>
-                                    <input className="w-full input-glass text-xs" placeholder="https://..." type="text" defaultValue="https://misp.local" />
+                                    <input
+                                        className="w-full input-glass font-mono text-xs"
+                                        placeholder="https://..."
+                                        type="text"
+                                        value={localMispUrl}
+                                        onChange={(e) => setLocalMispUrl(e.target.value)}
+                                        onBlur={(e) => updateMisp({ misp_url: e.target.value })}
+                                    />
                                 </div>
                                 <div className="flex items-center justify-between p-3 rounded-2xl bg-white/5 border border-white/10">
                                     <label className="text-xs font-bold text-slate-400 uppercase tracking-tighter">SSL Verify</label>
-                                    <button className="w-10 h-5 bg-primary rounded-full relative transition-all shadow-[0_0_10px_rgba(37,106,244,0.4)]">
-                                        <span className="absolute right-1 top-1 size-3 bg-white rounded-full"></span>
+                                    <button
+                                        onClick={() => {
+                                            const val = !localMispVerify;
+                                            setLocalMispVerify(val);
+                                            updateMisp({ misp_verify_ssl: val });
+                                        }}
+                                        className={`w-10 h-5 rounded-full relative transition-all ${localMispVerify ? 'bg-primary shadow-[0_0_10px_rgba(37,106,244,0.4)]' : 'bg-white/10'}`}
+                                    >
+                                        <span className={`absolute top-1 size-3 rounded-full transition-all ${localMispVerify ? 'right-1 bg-white' : 'left-1 bg-slate-500'}`}></span>
                                     </button>
                                 </div>
                             </div>
@@ -1018,42 +1104,19 @@ export default function Configuration() {
             )}
 
             {/* Footer Quick Controls */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 pt-2">
-                <div className="glass-card rounded-2xl p-6 neon-border-amber flex flex-col gap-4">
-                    <div className="flex items-center gap-3">
-                        <span className="material-symbols-outlined text-amber-400 text-xl">key</span>
-                        <h3 className="text-sm font-semibold text-white">API Key</h3>
+            <div className="flex items-center justify-start gap-6 pt-2">
+                <div className="glass-card rounded-[2rem] p-6 neon-border-amber flex flex-col gap-4 min-w-[320px] relative overflow-hidden group">
+                    <div className="absolute -right-4 -top-4 size-32 bg-amber-400/20 blur-3xl rounded-full"></div>
+                    <div className="flex items-center gap-4">
+                        <div className="size-10 rounded-xl bg-amber-400/10 flex items-center justify-center text-amber-400 border border-amber-400/30 shadow-[0_0_15px_rgba(251,191,36,0.2)]">
+                            <span className="material-symbols-outlined text-[20px]">key</span>
+                        </div>
+                        <h3 className="text-sm font-bold text-white tracking-widest uppercase">API Key</h3>
                     </div>
                     <div className="relative">
-                        <input className="w-full input-glass !py-2.5 !px-4 !text-xs" readOnly type="password" defaultValue="••••••••••••••••" />
-                        <button className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white transition-colors">
+                        <input className="w-full input-glass !py-2.5 !px-4 font-mono text-xs tracking-widest bg-black/40" readOnly type="password" defaultValue="••••••••••••••••" />
+                        <button className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white transition-colors">
                             <span className="material-symbols-outlined text-[18px]">visibility</span>
-                        </button>
-                    </div>
-                </div>
-
-                <div className="glass-card rounded-2xl p-6 neon-border-blue flex flex-col gap-4">
-                    <div className="flex items-center gap-3">
-                        <span className="material-symbols-outlined text-blue-400 text-xl">monitor_heart</span>
-                        <h3 className="text-sm font-semibold text-white">Heartbeat</h3>
-                    </div>
-                    <div className="space-y-3">
-                        <div className="flex justify-between items-center">
-                            <span className="text-[10px] font-mono text-primary neon-text-blue">30000ms</span>
-                        </div>
-                        <input className="w-full" max="60000" min="5000" step="1000" type="range" defaultValue="30000" />
-                    </div>
-                </div>
-
-                <div className="glass-card rounded-2xl p-6 neon-border-purple flex flex-col gap-4">
-                    <div className="flex items-center gap-3">
-                        <span className="material-symbols-outlined text-purple-400 text-xl">enhanced_encryption</span>
-                        <h3 className="text-sm font-semibold text-white">Encryption</h3>
-                    </div>
-                    <div className="flex items-center justify-between p-2.5 rounded-xl bg-white/5 border border-purple-400/30 shadow-[0_0_10px_rgba(168,85,247,0.1)]">
-                        <span className="text-xs text-slate-300 font-mono">AES-256-GCM</span>
-                        <button className="w-8 h-4 bg-primary rounded-full relative transition-all shadow-[0_0_10px_rgba(37,106,244,0.4)]">
-                            <span className="absolute right-0.5 top-0.5 size-3 bg-white rounded-full"></span>
                         </button>
                     </div>
                 </div>

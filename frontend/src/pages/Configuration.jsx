@@ -172,11 +172,64 @@ export default function Configuration() {
         }
     };
 
-    // --- Reset to server values ---
+    // --- Reset to curated production defaults ---
     const handleReset = () => {
-        setIsDirty(false);
+        // Network & Brain
+        setLocalPort(5001);
+        setLocalTimeWindow(5.0);
+        setLocalMaxSequence(100);
+        setLocalDDoSThreshold(50);
+        setLocalMaxQueueSize(10000);
+
+        // AI Engine — 0.85 balances detection rate vs false-positive noise
+        setLocalContextEpochs(5);
+        setLocalAnomalyThreshold(0.85);
+
+        // Checkpointing — hourly saves, keep last 5 snapshots
+        setLocalCheckpointInterval(3600);
+        setLocalMaxCheckpoints(5);
+
+        // Forensics — full capture in random mode for unbiased sampling
+        setLocalForensicRate(100);
+        setLocalForensicMode('random');
+
+        // Memory — tight dedup, wider query radius
+        setLocalMemDedup(0.05);
+        setLocalMemQuery(0.15);
+
+        // Database — local defaults
+        setLocalQdrantPath("DB/vector");
+        setLocalQdrantUrl("");
+        setLocalMongoUri("mongodb://localhost:27017/");
+
+        // Alerts — surface threats, suppress known-safe noise
+        setLocalAlertNew(true);
+        setLocalAlertKnown(true);
+        setLocalAlertFP(false);
+
+        // Storage — persist everything for audit trail
+        setLocalStorageSafe(true);
+        setLocalStorageAnomaly(true);
+
+        // MISP — disabled by default (requires external server)
+        setLocalMispEnabled(false);
+        setLocalMispUrl("https://misp.local");
+        setLocalMispVerify(true);
+
+        // Retention — tiered: safe=7d, anomalies=90d, threats=365d
+        setLocalRetentionEnabled(true);
+        setLocalRetentionInterval(24);
+        setLocalRetentionDays({
+            ai_safe: 7,
+            new_anomaly: 90,
+            known_threat: 365,
+            false_positive: 3,
+            misp_alert: 365,
+            ddos_evidence: 14
+        });
+
+        setIsDirty(true);
         setSaveStatus(null);
-        refreshConfig();
     };
 
     return (

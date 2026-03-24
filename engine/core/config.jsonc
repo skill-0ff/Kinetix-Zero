@@ -1,21 +1,21 @@
 {
     "port": 5001,
-    "time_window": 5,
+    "time_window": 5.2,
     "max_sequence": 100,
     "ddos_threshold": 50,
     "max_queue_size": 10000,
     "ai_context_epochs": 5,
-    "ai_anomaly_threshold": 0.65,
+    "ai_anomaly_threshold": 0.85,
     "qdrant_path": "DB/vector",
     "qdrant_url": null,
     "mongo_uri": "mongodb://localhost:27017/",
-    "memory_dedup_dist": 0.06,
-    "memory_query_dist": 0.1,
+    "memory_dedup_dist": 0.05,
+    "memory_query_dist": 0.15,
     "ai_checkpoint_file": "auto",
-    "checkpoint_interval_seconds": 68296,
-    "max_checkpoints_history": 10,
+    "checkpoint_interval_seconds": 3600,
+    "max_checkpoints_history": 5,
     "forensic_sample_rate": 100,
-    "forensic_sample_mode": "sequence",
+    "forensic_sample_mode": "random",
     "misp_enabled": false,
     "misp_url": "https://misp.local",
     "misp_verify_ssl": true,
@@ -35,19 +35,19 @@
         "console_alerts": {
             "new_anomaly": true,
             "known_threat": true,
-            "false_positive": true
+            "false_positive": false
         }
     },
     "retention_policy": {
         "enabled": true,
         "run_interval_hours": 24,
         "keep_days": {
-            "ai_safe": 30,
+            "ai_safe": 7,
             "new_anomaly": 90,
             "known_threat": 365,
-            "false_positive": 7,
+            "false_positive": 3,
             "misp_alert": 365,
-            "ddos_evidence": 3
+            "ddos_evidence": 14
         }
     }
 }

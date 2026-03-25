@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useKinetixData } from '../hooks/useKinetixData';
 import './Configuration.css';
 
@@ -6,11 +6,17 @@ export default function Configuration() {
     const [showAdvanced, setShowAdvanced] = useState(false);
     const { data: configData, loading: configLoading, refresh: refreshConfig } = useKinetixData('config');
     const config = configData?.[0] || null;
+    const [saving, setSaving] = useState(false);
+    const [isDirty, setIsDirty] = useState(false);
+    const [saveStatus, setSaveStatus] = useState(null); // 'success' | 'error' | null
+    const [isInteracting, setIsInteracting] = useState(false);
     const [updating, setUpdating] = useState(false);
 
+    // --- Local State (mirrors config, editable by user) ---
     const [localCheckpointInterval, setLocalCheckpointInterval] = useState(3600);
     const [localMaxCheckpoints, setLocalMaxCheckpoints] = useState(10);
     const [localForensicRate, setLocalForensicRate] = useState(100);
+    const [localForensicMode, setLocalForensicMode] = useState('random');
     const [localContextEpochs, setLocalContextEpochs] = useState(5);
     const [localAnomalyThreshold, setLocalAnomalyThreshold] = useState(0.9);
     const [localPort, setLocalPort] = useState(5001);
@@ -36,192 +42,113 @@ export default function Configuration() {
     const [localMispEnabled, setLocalMispEnabled] = useState(false);
     const [localMispUrl, setLocalMispUrl] = useState("https://misp.local");
     const [localMispVerify, setLocalMispVerify] = useState(true);
-    const [isInteracting, setIsInteracting] = useState(false);
 
+    const [localAlertNew, setLocalAlertNew] = useState(true);
+    const [localAlertKnown, setLocalAlertKnown] = useState(true);
+    const [localAlertFP, setLocalAlertFP] = useState(false);
+    const [localStorageSafe, setLocalStorageSafe] = useState(true);
+    const [localStorageAnomaly, setLocalStorageAnomaly] = useState(true);
+
+    // --- Sync from server config into local state (only when not dirty/interacting) ---
     useEffect(() => {
-        if (updating || isInteracting || !config) return;
+        if (updating || isInteracting || !config || isDirty) return;
 
-        if (config.checkpoint_interval_seconds) {
-            setLocalCheckpointInterval(config.checkpoint_interval_seconds);
-        }
-        if (config.max_checkpoints_history !== undefined) {
-            setLocalMaxCheckpoints(config.max_checkpoints_history);
-        }
-        if (config.forensic_sample_rate !== undefined) {
-            setLocalForensicRate(config.forensic_sample_rate);
-        }
-        if (config.ai_context_epochs !== undefined) {
-            setLocalContextEpochs(config.ai_context_epochs);
-        }
-        if (config.ai_anomaly_threshold !== undefined) {
-            setLocalAnomalyThreshold(config.ai_anomaly_threshold);
-        }
-        if (config.port !== undefined) {
-            setLocalPort(config.port);
-        }
-        if (config.time_window !== undefined) {
-            setLocalTimeWindow(config.time_window);
-        }
-        if (config.max_sequence !== undefined) {
-            setLocalMaxSequence(config.max_sequence);
-        }
-        if (config.ddos_threshold !== undefined) {
-            setLocalDDoSThreshold(config.ddos_threshold);
-        }
-        if (config.max_queue_size !== undefined) {
-            setLocalMaxQueueSize(config.max_queue_size);
-        }
+        if (config.checkpoint_interval_seconds !== undefined) setLocalCheckpointInterval(config.checkpoint_interval_seconds);
+        if (config.max_checkpoints_history !== undefined) setLocalMaxCheckpoints(config.max_checkpoints_history);
+        if (config.forensic_sample_rate !== undefined) setLocalForensicRate(config.forensic_sample_rate);
+        if (config.forensic_sample_mode !== undefined) setLocalForensicMode(config.forensic_sample_mode);
+        if (config.ai_context_epochs !== undefined) setLocalContextEpochs(config.ai_context_epochs);
+        if (config.ai_anomaly_threshold !== undefined) setLocalAnomalyThreshold(config.ai_anomaly_threshold);
+        if (config.port !== undefined) setLocalPort(config.port);
+        if (config.time_window !== undefined) setLocalTimeWindow(config.time_window);
+        if (config.max_sequence !== undefined) setLocalMaxSequence(config.max_sequence);
+        if (config.ddos_threshold !== undefined) setLocalDDoSThreshold(config.ddos_threshold);
+        if (config.max_queue_size !== undefined) setLocalMaxQueueSize(config.max_queue_size);
         if (config.retention_policy) {
             setLocalRetentionEnabled(config.retention_policy.enabled);
             setLocalRetentionInterval(config.retention_policy.run_interval_hours);
-            if (config.retention_policy.keep_days) {
-                setLocalRetentionDays(config.retention_policy.keep_days);
-            }
+            if (config.retention_policy.keep_days) setLocalRetentionDays(config.retention_policy.keep_days);
         }
-        if (config.memory_dedup_dist !== undefined) {
-            setLocalMemDedup(config.memory_dedup_dist);
+        if (config.memory_dedup_dist !== undefined) setLocalMemDedup(config.memory_dedup_dist);
+        if (config.memory_query_dist !== undefined) setLocalMemQuery(config.memory_query_dist);
+        if (config.qdrant_path !== undefined) setLocalQdrantPath(config.qdrant_path);
+        if (config.qdrant_url !== undefined) setLocalQdrantUrl(config.qdrant_url || "");
+        if (config.mongo_uri !== undefined) setLocalMongoUri(config.mongo_uri);
+        if (config.misp_enabled !== undefined) setLocalMispEnabled(config.misp_enabled);
+        if (config.misp_url !== undefined) setLocalMispUrl(config.misp_url);
+        if (config.misp_verify_ssl !== undefined) setLocalMispVerify(config.misp_verify_ssl);
+        if (config.alert_policy?.console_alerts) {
+            setLocalAlertNew(config.alert_policy.console_alerts.new_anomaly ?? true);
+            setLocalAlertKnown(config.alert_policy.console_alerts.known_threat ?? true);
+            setLocalAlertFP(config.alert_policy.console_alerts.false_positive ?? false);
         }
-        if (config.memory_query_dist !== undefined) {
-            setLocalMemQuery(config.memory_query_dist);
+        if (config.storage_policy?.save_logs) {
+            setLocalStorageSafe(config.storage_policy.save_logs.ai_safe ?? true);
+            setLocalStorageAnomaly(config.storage_policy.save_logs.anomaly ?? true);
         }
-        if (config.qdrant_path !== undefined) {
-            setLocalQdrantPath(config.qdrant_path);
-        }
-        if (config.qdrant_url !== undefined) {
-            setLocalQdrantUrl(config.qdrant_url || "");
-        }
-        if (config.mongo_uri !== undefined) {
-            setLocalMongoUri(config.mongo_uri);
-        }
-        if (config.misp_enabled !== undefined) {
-            setLocalMispEnabled(config.misp_enabled);
-        }
-        if (config.misp_url !== undefined) {
-            setLocalMispUrl(config.misp_url);
-        }
-        if (config.misp_verify_ssl !== undefined) {
-            setLocalMispVerify(config.misp_verify_ssl);
-        }
-    }, [config, updating, isInteracting]);
+    }, [config, updating, isInteracting, isDirty]);
 
-    const updateAlertPolicy = async (key, value) => {
-        if (!config) return;
-        setUpdating(true);
-        try {
-            const token = localStorage.getItem('token');
-            const payload = {
-                alert_policy: {
-                    console_alerts: {
-                        [key]: value
-                    }
-                }
-            };
-            const res = await fetch('http://localhost:8000/api/v1/data/config', {
-                method: 'PUT',
-                headers: {
-                    'Content-Type': 'application/json',
-                    ...(token ? { 'Authorization': `Bearer ${token}` } : {})
-                },
-                body: JSON.stringify(payload)
-            });
-            if (res.ok) {
-                refreshConfig();
-            }
-        } catch (err) {
-            console.error("Failed to update config", err);
-        } finally {
-            setUpdating(false);
-        }
-    };
+    // --- Mark dirty on any local change ---
+    const markDirty = useCallback((setter) => {
+        return (value) => {
+            setter(value);
+            setIsDirty(true);
+            setSaveStatus(null);
+        };
+    }, []);
 
-    const updateLogStorage = async (key, value) => {
-        if (!config) return;
-        setUpdating(true);
-        try {
-            const token = localStorage.getItem('token');
-            const payload = {
-                storage_policy: {
-                    save_logs: {
-                        [key]: value
-                    },
-                    save_vectors: {
-                        [key]: value
-                    }
-                }
-            };
-            const res = await fetch('http://localhost:8000/api/v1/data/config', {
-                method: 'PUT',
-                headers: {
-                    'Content-Type': 'application/json',
-                    ...(token ? { 'Authorization': `Bearer ${token}` } : {})
-                },
-                body: JSON.stringify(payload)
-            });
-            if (res.ok) {
-                refreshConfig();
+    // --- Build full config payload from ALL local state ---
+    const buildPayload = () => ({
+        port: parseInt(localPort),
+        time_window: parseFloat(localTimeWindow),
+        max_sequence: parseInt(localMaxSequence),
+        ddos_threshold: parseInt(localDDoSThreshold),
+        max_queue_size: parseInt(localMaxQueueSize),
+        ai_context_epochs: parseInt(localContextEpochs),
+        ai_anomaly_threshold: parseFloat(localAnomalyThreshold),
+        qdrant_path: localQdrantPath,
+        qdrant_url: localQdrantUrl || null,
+        mongo_uri: localMongoUri,
+        memory_dedup_dist: parseFloat(localMemDedup),
+        memory_query_dist: parseFloat(localMemQuery),
+        ai_checkpoint_file: config?.ai_checkpoint_file || "auto",
+        checkpoint_interval_seconds: parseInt(localCheckpointInterval),
+        max_checkpoints_history: parseInt(localMaxCheckpoints),
+        forensic_sample_rate: parseInt(localForensicRate),
+        forensic_sample_mode: localForensicMode,
+        misp_enabled: localMispEnabled,
+        misp_url: localMispUrl,
+        misp_verify_ssl: localMispVerify,
+        storage_policy: {
+            save_vectors: {
+                ai_safe: localStorageSafe,
+                anomaly: localStorageAnomaly
+            },
+            save_logs: {
+                ai_safe: localStorageSafe,
+                anomaly: localStorageAnomaly,
+                ddos_evidence: config?.storage_policy?.save_logs?.ddos_evidence ?? true
             }
-        } catch (err) {
-            console.error("Failed to update config", err);
-        } finally {
-            setUpdating(false);
-        }
-    };
-
-    const updateCheckpoint = async (value) => {
-        if (!config) return;
-        setUpdating(true);
-        try {
-            const token = localStorage.getItem('token');
-            const payload = {
-                checkpoint_interval_seconds: parseInt(value)
-            };
-            const res = await fetch('http://localhost:8000/api/v1/data/config', {
-                method: 'PUT',
-                headers: {
-                    'Content-Type': 'application/json',
-                    ...(token ? { 'Authorization': `Bearer ${token}` } : {})
-                },
-                body: JSON.stringify(payload)
-            });
-            if (res.ok) {
-                refreshConfig();
+        },
+        alert_policy: {
+            misp_report: config?.alert_policy?.misp_report ?? true,
+            console_alerts: {
+                new_anomaly: localAlertNew,
+                known_threat: localAlertKnown,
+                false_positive: localAlertFP
             }
-        } catch (err) {
-            console.error("Failed to update checkpoint interval", err);
-        } finally {
-            setUpdating(false);
+        },
+        retention_policy: {
+            enabled: localRetentionEnabled,
+            run_interval_hours: parseInt(localRetentionInterval),
+            keep_days: localRetentionDays
         }
-    };
+    });
 
-    const updateCheckpointHistory = async (value) => {
-        if (!config) return;
-        setUpdating(true);
-        try {
-            const token = localStorage.getItem('token');
-            const payload = {
-                max_checkpoints_history: parseInt(value)
-            };
-            const res = await fetch('http://localhost:8000/api/v1/data/config', {
-                method: 'PUT',
-                headers: {
-                    'Content-Type': 'application/json',
-                    ...(token ? { 'Authorization': `Bearer ${token}` } : {})
-                },
-                body: JSON.stringify(payload)
-            });
-            if (res.ok) {
-                refreshConfig();
-            }
-        } catch (err) {
-            console.error("Failed to update checkpoint history", err);
-        } finally {
-            setUpdating(false);
-        }
-    };
-
-    const updateForensics = async (payload) => {
-        if (!config) return;
-        setUpdating(true);
+    // --- Single Apply Handler ---
+    const handleApply = async () => {
+        setSaving(true);
+        setSaveStatus(null);
         try {
             const token = localStorage.getItem('token');
             const res = await fetch('http://localhost:8000/api/v1/data/config', {
@@ -230,183 +157,85 @@ export default function Configuration() {
                     'Content-Type': 'application/json',
                     ...(token ? { 'Authorization': `Bearer ${token}` } : {})
                 },
-                body: JSON.stringify(payload)
+                body: JSON.stringify(buildPayload())
             });
             if (res.ok) {
+                setIsDirty(false);
+                setSaveStatus('success');
                 refreshConfig();
+                setTimeout(() => setSaveStatus(null), 3000);
+            } else {
+                setSaveStatus('error');
             }
         } catch (err) {
-            console.error("Failed to update forensics", err);
+            console.error("Failed to save config", err);
+            setSaveStatus('error');
         } finally {
-            setUpdating(false);
+            setSaving(false);
         }
     };
 
-    const updateAIEngine = async (payload) => {
-        if (!config) return;
-        setUpdating(true);
-        try {
-            const token = localStorage.getItem('token');
-            const res = await fetch('http://localhost:8000/api/v1/data/config', {
-                method: 'PUT',
-                headers: {
-                    'Content-Type': 'application/json',
-                    ...(token ? { 'Authorization': `Bearer ${token}` } : {})
-                },
-                body: JSON.stringify(payload)
-            });
-            if (res.ok) {
-                refreshConfig();
-            }
-        } catch (err) {
-            console.error("Failed to update AI Engine", err);
-        } finally {
-            setUpdating(false);
-        }
+    // --- Reset to curated production defaults ---
+    const handleReset = () => {
+        // Network & Brain
+        setLocalPort(5001);
+        setLocalTimeWindow(5.0);
+        setLocalMaxSequence(100);
+        setLocalDDoSThreshold(50);
+        setLocalMaxQueueSize(10000);
+
+        // AI Engine — 0.85 balances detection rate vs false-positive noise
+        setLocalContextEpochs(5);
+        setLocalAnomalyThreshold(0.85);
+
+        // Checkpointing — hourly saves, keep last 5 snapshots
+        setLocalCheckpointInterval(3600);
+        setLocalMaxCheckpoints(5);
+
+        // Forensics — full capture in random mode for unbiased sampling
+        setLocalForensicRate(100);
+        setLocalForensicMode('random');
+
+        // Memory — tight dedup, wider query radius
+        setLocalMemDedup(0.05);
+        setLocalMemQuery(0.15);
+
+        // Database — local defaults
+        setLocalQdrantPath("DB/vector");
+        setLocalQdrantUrl("");
+        setLocalMongoUri("mongodb://localhost:27017/");
+
+        // Alerts — surface threats, suppress known-safe noise
+        setLocalAlertNew(true);
+        setLocalAlertKnown(true);
+        setLocalAlertFP(false);
+
+        // Storage — persist everything for audit trail
+        setLocalStorageSafe(true);
+        setLocalStorageAnomaly(true);
+
+        // MISP — disabled by default (requires external server)
+        setLocalMispEnabled(false);
+        setLocalMispUrl("https://misp.local");
+        setLocalMispVerify(true);
+
+        // Retention — tiered: safe=7d, anomalies=90d, threats=365d
+        setLocalRetentionEnabled(true);
+        setLocalRetentionInterval(24);
+        setLocalRetentionDays({
+            ai_safe: 7,
+            new_anomaly: 90,
+            known_threat: 365,
+            false_positive: 3,
+            misp_alert: 365,
+            ddos_evidence: 14
+        });
+
+        setIsDirty(true);
+        setSaveStatus(null);
     };
 
-    const updateNetwork = async (value) => {
-        if (!config) return;
-        setUpdating(true);
-        try {
-            const token = localStorage.getItem('token');
-            const payload = {
-                port: parseInt(value)
-            };
-            const res = await fetch('http://localhost:8000/api/v1/data/config', {
-                method: 'PUT',
-                headers: {
-                    'Content-Type': 'application/json',
-                    ...(token ? { 'Authorization': `Bearer ${token}` } : {})
-                },
-                body: JSON.stringify(payload)
-            });
-            if (res.ok) {
-                refreshConfig();
-            }
-        } catch (err) {
-            console.error("Failed to update Network", err);
-        } finally {
-            setUpdating(false);
-        }
-    };
-
-    const updateBrainLogic = async (payload) => {
-        if (!config) return;
-        setUpdating(true);
-        try {
-            const token = localStorage.getItem('token');
-            const res = await fetch('http://localhost:8000/api/v1/data/config', {
-                method: 'PUT',
-                headers: {
-                    'Content-Type': 'application/json',
-                    ...(token ? { 'Authorization': `Bearer ${token}` } : {})
-                },
-                body: JSON.stringify(payload)
-            });
-            if (res.ok) {
-                refreshConfig();
-            }
-        } catch (err) {
-            console.error("Failed to update Brain Logic", err);
-        } finally {
-            setUpdating(false);
-        }
-    };
-
-    const updatePersistence = async (payload) => {
-        if (!config) return;
-        setUpdating(true);
-        try {
-            const token = localStorage.getItem('token');
-            const res = await fetch('http://localhost:8000/api/v1/data/config', {
-                method: 'PUT',
-                headers: {
-                    'Content-Type': 'application/json',
-                    ...(token ? { 'Authorization': `Bearer ${token}` } : {})
-                },
-                body: JSON.stringify({
-                    retention_policy: payload
-                })
-            });
-            if (res.ok) {
-                refreshConfig();
-            }
-        } catch (err) {
-            console.error("Failed to update Persistence", err);
-        } finally {
-            setUpdating(false);
-        }
-    };
-
-    const updateMemory = async (payload) => {
-        if (!config) return;
-        setUpdating(true);
-        try {
-            const token = localStorage.getItem('token');
-            const res = await fetch('http://localhost:8000/api/v1/data/config', {
-                method: 'PUT',
-                headers: {
-                    'Content-Type': 'application/json',
-                    ...(token ? { 'Authorization': `Bearer ${token}` } : {})
-                },
-                body: JSON.stringify(payload)
-            });
-            if (res.ok) {
-                refreshConfig();
-            }
-        } catch (err) {
-            console.error("Failed to update Memory", err);
-        } finally {
-            setUpdating(false);
-        }
-    };
-
-    const updateMisp = async (payload) => {
-        if (!config) return;
-        setUpdating(true);
-        try {
-            const token = localStorage.getItem('token');
-            const res = await fetch('http://localhost:8000/api/v1/data/config', {
-                method: 'PUT',
-                headers: {
-                    'Content-Type': 'application/json',
-                    ...(token ? { 'Authorization': `Bearer ${token}` } : {})
-                },
-                body: JSON.stringify(payload)
-            });
-            if (res.ok) {
-                refreshConfig();
-            }
-        } catch (err) {
-            console.error("Failed to update MISP", err);
-        } finally {
-            setUpdating(false);
-        }
-    };
-
-    const updateDatabase = async (payload) => {
-        if (!config) return;
-        setUpdating(true);
-        try {
-            const token = localStorage.getItem('token');
-            const res = await fetch('http://localhost:8000/api/v1/data/config', {
-                method: 'PUT',
-                headers: {
-                    'Content-Type': 'application/json',
-                    ...(token ? { 'Authorization': `Bearer ${token}` } : {})
-                },
-                body: JSON.stringify(payload)
-            });
-            if (res.ok) {
-                refreshConfig();
-            }
-        } catch (err) {
-            console.error("Failed to update Database", err);
-        } finally {
-            setUpdating(false);
-        }
-    };
+    if (configLoading && !config) return <div className="p-8 text-slate-400">Loading configuration...</div>;
 
     return (
         <main className="flex-1 pt-28 pb-8 px-8 max-w-[1440px] mx-auto w-full">
@@ -415,7 +244,25 @@ export default function Configuration() {
                     <h2 className="text-2xl font-bold text-white mb-1">System Configuration</h2>
                     <p className="text-slate-400 text-sm">Fine-tune the security engine and network protocols.</p>
                 </div>
-                <div className="flex gap-4">
+                <div className="flex gap-4 items-center">
+                    {isDirty && (
+                        <span className="text-xs text-amber-400 flex items-center gap-1 animate-pulse">
+                            <span className="material-symbols-outlined text-[14px]">warning</span>
+                            Unsaved changes
+                        </span>
+                    )}
+                    {saveStatus === 'success' && (
+                        <span className="text-xs text-emerald-400 flex items-center gap-1">
+                            <span className="material-symbols-outlined text-[14px]">check_circle</span>
+                            Saved
+                        </span>
+                    )}
+                    {saveStatus === 'error' && (
+                        <span className="text-xs text-red-400 flex items-center gap-1">
+                            <span className="material-symbols-outlined text-[14px]">error</span>
+                            Save failed
+                        </span>
+                    )}
                     <button
                         className={`flex items-center gap-2 px-6 py-2.5 rounded-xl border transition-all text-sm font-medium group ${showAdvanced ? 'bg-primary/20 text-primary border-primary/30' : 'border-white/10 text-slate-300 hover:bg-white/5'}`}
                         onClick={() => setShowAdvanced(!showAdvanced)}
@@ -423,11 +270,18 @@ export default function Configuration() {
                         <span className={`material-symbols-outlined text-[18px] transition-transform ${showAdvanced ? 'rotate-90' : 'group-hover:rotate-45'}`}>settings</span>
                         Advanced Settings
                     </button>
-                    <button className="px-6 py-2.5 rounded-xl border border-white/10 text-slate-300 hover:bg-white/5 transition-all text-sm font-medium">
+                    <button
+                        className="px-6 py-2.5 rounded-xl border border-white/10 text-slate-300 hover:bg-white/5 transition-all text-sm font-medium"
+                        onClick={handleReset}
+                    >
                         Reset Defaults
                     </button>
-                    <button className="px-6 py-2.5 rounded-xl bg-primary text-white shadow-[0_0_20px_rgba(37,106,244,0.5)] hover:brightness-110 transition-all text-sm font-semibold">
-                        Apply Changes
+                    <button
+                        className={`px-6 py-2.5 rounded-xl text-white transition-all text-sm font-semibold ${isDirty ? 'bg-primary shadow-[0_0_20px_rgba(37,106,244,0.5)] hover:brightness-110' : 'bg-white/10 text-slate-500 cursor-not-allowed'}`}
+                        onClick={handleApply}
+                        disabled={!isDirty || saving}
+                    >
+                        {saving ? 'Saving...' : 'Apply Changes'}
                     </button>
                 </div>
             </div>
@@ -447,28 +301,25 @@ export default function Configuration() {
                         <div className="flex items-center justify-between">
                             <span className="text-sm text-slate-300">New Alerts</span>
                             <button
-                                onClick={() => updateAlertPolicy('new_anomaly', !(config?.alert_policy?.console_alerts?.new_anomaly))}
-                                disabled={updating || !config}
-                                className={`w-10 h-5 rounded-full relative transition-all ${config?.alert_policy?.console_alerts?.new_anomaly ? 'bg-primary shadow-[0_0_10px_rgba(37,106,244,0.5)]' : 'bg-white/10'}`}>
-                                <span className={`absolute top-1 size-3 rounded-full transition-all ${config?.alert_policy?.console_alerts?.new_anomaly ? 'right-1 bg-white' : 'left-1 bg-slate-400'}`}></span>
+                                onClick={() => markDirty(setLocalAlertNew)(!localAlertNew)}
+                                className={`w-10 h-5 rounded-full relative transition-all ${localAlertNew ? 'bg-primary shadow-[0_0_10px_rgba(37,106,244,0.5)]' : 'bg-white/10'}`}>
+                                <span className={`absolute top-1 size-3 rounded-full transition-all ${localAlertNew ? 'right-1 bg-white' : 'left-1 bg-slate-400'}`}></span>
                             </button>
                         </div>
                         <div className="flex items-center justify-between">
                             <span className="text-sm text-slate-300">Known Alerts</span>
                             <button
-                                onClick={() => updateAlertPolicy('known_threat', !(config?.alert_policy?.console_alerts?.known_threat))}
-                                disabled={updating || !config}
-                                className={`w-10 h-5 rounded-full relative transition-all ${config?.alert_policy?.console_alerts?.known_threat ? 'bg-primary shadow-[0_0_10px_rgba(37,106,244,0.5)]' : 'bg-white/10'}`}>
-                                <span className={`absolute top-1 size-3 rounded-full transition-all ${config?.alert_policy?.console_alerts?.known_threat ? 'right-1 bg-white' : 'left-1 bg-slate-400'}`}></span>
+                                onClick={() => markDirty(setLocalAlertKnown)(!localAlertKnown)}
+                                className={`w-10 h-5 rounded-full relative transition-all ${localAlertKnown ? 'bg-primary shadow-[0_0_10px_rgba(37,106,244,0.5)]' : 'bg-white/10'}`}>
+                                <span className={`absolute top-1 size-3 rounded-full transition-all ${localAlertKnown ? 'right-1 bg-white' : 'left-1 bg-slate-400'}`}></span>
                             </button>
                         </div>
                         <div className="flex items-center justify-between">
                             <span className="text-sm text-slate-300">FP Alerts</span>
                             <button
-                                onClick={() => updateAlertPolicy('false_positive', !(config?.alert_policy?.console_alerts?.false_positive))}
-                                disabled={updating || !config}
-                                className={`w-10 h-5 rounded-full relative transition-all ${config?.alert_policy?.console_alerts?.false_positive ? 'bg-primary shadow-[0_0_10px_rgba(37,106,244,0.5)]' : 'bg-white/10'}`}>
-                                <span className={`absolute top-1 size-3 rounded-full transition-all ${config?.alert_policy?.console_alerts?.false_positive ? 'right-1 bg-white' : 'left-1 bg-slate-400'}`}></span>
+                                onClick={() => markDirty(setLocalAlertFP)(!localAlertFP)}
+                                className={`w-10 h-5 rounded-full relative transition-all ${localAlertFP ? 'bg-primary shadow-[0_0_10px_rgba(37,106,244,0.5)]' : 'bg-white/10'}`}>
+                                <span className={`absolute top-1 size-3 rounded-full transition-all ${localAlertFP ? 'right-1 bg-white' : 'left-1 bg-slate-400'}`}></span>
                             </button>
                         </div>
                     </div>
@@ -530,25 +381,70 @@ export default function Configuration() {
                         <div className="flex items-center justify-between p-3 rounded-xl bg-white/5 border border-white/10">
                             <span className="text-xs text-slate-400">Safe</span>
                             <button
-                                onClick={() => updateLogStorage('ai_safe', !(config?.storage_policy?.save_logs?.ai_safe))}
-                                disabled={updating || !config}
-                                className={`w-8 h-4 rounded-full relative transition-all ${config?.storage_policy?.save_logs?.ai_safe ? 'bg-primary shadow-[0_0_8px_rgba(37,106,244,0.4)]' : 'bg-white/10'}`}>
-                                <span className={`absolute top-0.5 size-3 rounded-full transition-all ${config?.storage_policy?.save_logs?.ai_safe ? 'right-0.5 bg-white' : 'left-0.5 bg-slate-400'}`}></span>
+                                onClick={() => markDirty(setLocalStorageSafe)(!localStorageSafe)}
+                                className={`w-8 h-4 rounded-full relative transition-all ${localStorageSafe ? 'bg-primary shadow-[0_0_8px_rgba(37,106,244,0.4)]' : 'bg-white/10'}`}>
+                                <span className={`absolute top-0.5 size-3 rounded-full transition-all ${localStorageSafe ? 'right-0.5 bg-white' : 'left-0.5 bg-slate-400'}`}></span>
                             </button>
                         </div>
                         <div className="flex items-center justify-between p-3 rounded-xl bg-white/5 border border-white/10">
                             <span className="text-xs text-slate-400">Threat</span>
                             <button
-                                onClick={() => updateLogStorage('anomaly', !(config?.storage_policy?.save_logs?.anomaly))}
-                                disabled={updating || !config}
-                                className={`w-8 h-4 rounded-full relative transition-all ${config?.storage_policy?.save_logs?.anomaly ? 'bg-primary shadow-[0_0_8px_rgba(37,106,244,0.4)]' : 'bg-white/10'}`}>
-                                <span className={`absolute top-0.5 size-3 rounded-full transition-all ${config?.storage_policy?.save_logs?.anomaly ? 'right-0.5 bg-white' : 'left-0.5 bg-slate-400'}`}></span>
+                                onClick={() => markDirty(setLocalStorageAnomaly)(!localStorageAnomaly)}
+                                className={`w-8 h-4 rounded-full relative transition-all ${localStorageAnomaly ? 'bg-primary shadow-[0_0_8px_rgba(37,106,244,0.4)]' : 'bg-white/10'}`}>
+                                <span className={`absolute top-0.5 size-3 rounded-full transition-all ${localStorageAnomaly ? 'right-0.5 bg-white' : 'left-0.5 bg-slate-400'}`}></span>
                             </button>
                         </div>
                     </div>
                 </div>
 
-
+                {/* 4. Checkpointing */}
+                <div className="glass-card rounded-[2rem] p-6 flex flex-col gap-6 neon-border-cyan relative overflow-hidden group">
+                    <div className="absolute -right-4 -top-4 size-32 bg-primary/20 blur-3xl rounded-full"></div>
+                    <div className="flex items-center gap-4 relative z-10 transition-all duration-500">
+                        <div className="size-10 rounded-xl bg-primary/10 flex items-center justify-center text-primary border border-primary/30 shadow-[0_0_15px_rgba(37,106,244,0.2)]">
+                            <span className="material-symbols-outlined text-[22px]">save</span>
+                        </div>
+                        <h3 className="text-lg font-bold text-white tracking-tight">Checkpointing</h3>
+                    </div>
+                    <div className="space-y-6">
+                        <div className="space-y-3">
+                            <div className="flex justify-between items-center">
+                                <label className="text-sm text-slate-300">Auto-save frequency</label>
+                                <span className="text-xs font-mono text-primary bg-primary/10 px-2 py-0.5 rounded border border-primary/20 shadow-[0_0_10px_rgba(37,106,244,0.2)]">
+                                    {localCheckpointInterval}s
+                                </span>
+                            </div>
+                            <input
+                                className="w-full"
+                                max="86400"
+                                min="60"
+                                type="range"
+                                value={localCheckpointInterval}
+                                onMouseDown={() => setIsInteracting(true)}
+                                onChange={(e) => { setLocalCheckpointInterval(e.target.value); setIsDirty(true); setSaveStatus(null); }}
+                                onMouseUp={() => setIsInteracting(false)}
+                            />
+                        </div>
+                        <div className="space-y-3">
+                            <div className="flex justify-between items-center">
+                                <label className="text-sm text-slate-300">History Rotation</label>
+                                <span className="text-xs font-mono text-primary bg-primary/10 px-2 py-0.5 rounded border border-primary/20 shadow-[0_0_10px_rgba(37,106,244,0.2)]">
+                                    {localMaxCheckpoints} files
+                                </span>
+                            </div>
+                            <input
+                                className="w-full"
+                                max="50"
+                                min="1"
+                                type="range"
+                                value={localMaxCheckpoints}
+                                onMouseDown={() => setIsInteracting(true)}
+                                onChange={(e) => { setLocalMaxCheckpoints(e.target.value); setIsDirty(true); setSaveStatus(null); }}
+                                onMouseUp={() => setIsInteracting(false)}
+                            />
+                        </div>
+                    </div>
+                </div>
 
                 {/* 5. Forensics Control */}
                 <div className="glass-card rounded-[2rem] p-6 flex flex-col gap-6 neon-border-cyan relative overflow-hidden group">
@@ -574,29 +470,21 @@ export default function Configuration() {
                                 type="range"
                                 value={localForensicRate}
                                 onMouseDown={() => setIsInteracting(true)}
-                                onTouchStart={() => setIsInteracting(true)}
-                                onChange={(e) => setLocalForensicRate(parseInt(e.target.value) || 0)}
-                                onMouseUp={() => {
-                                    setIsInteracting(false);
-                                    updateForensics({ forensic_sample_rate: parseInt(localForensicRate) });
-                                }}
-                                onTouchEnd={() => {
-                                    setIsInteracting(false);
-                                    updateForensics({ forensic_sample_rate: parseInt(localForensicRate) });
-                                }}
+                                onChange={(e) => { setLocalForensicRate(parseInt(e.target.value) || 0); setIsDirty(true); setSaveStatus(null); }}
+                                onMouseUp={() => setIsInteracting(false)}
                             />
                         </div>
                         <div className="flex items-center justify-between">
                             <span className="text-sm text-slate-300">Mode</span>
                             <div className="flex p-1 bg-white/5 rounded-xl border border-white/10">
                                 <button
-                                    onClick={() => updateForensics({ forensic_sample_mode: 'random' })}
-                                    className={`px-3 py-1 text-[10px] font-bold rounded-lg transition-all ${config?.forensic_sample_mode === 'random' ? 'bg-primary text-white shadow-[0_0_10px_rgba(37,106,244,0.3)]' : 'text-slate-500 hover:text-slate-300'}`}>
+                                    onClick={() => markDirty(setLocalForensicMode)('random')}
+                                    className={`px-3 py-1 text-[10px] font-bold rounded-lg transition-all ${localForensicMode === 'random' ? 'bg-primary text-white shadow-[0_0_10px_rgba(37,106,244,0.3)]' : 'text-slate-500 hover:text-slate-300'}`}>
                                     RANDOM
                                 </button>
                                 <button
-                                    onClick={() => updateForensics({ forensic_sample_mode: 'sequence' })}
-                                    className={`px-3 py-1 text-[10px] font-bold rounded-lg transition-all ${config?.forensic_sample_mode === 'sequence' ? 'bg-primary text-white shadow-[0_0_10px_rgba(37,106,244,0.3)]' : 'text-slate-500 hover:text-slate-300'}`}>
+                                    onClick={() => markDirty(setLocalForensicMode)('sequence')}
+                                    className={`px-3 py-1 text-[10px] font-bold rounded-lg transition-all ${localForensicMode === 'sequence' ? 'bg-primary text-white shadow-[0_0_10px_rgba(37,106,244,0.3)]' : 'text-slate-500 hover:text-slate-300'}`}>
                                     SEQ
                                 </button>
                             </div>
@@ -616,17 +504,26 @@ export default function Configuration() {
                     <div className="space-y-5 relative z-10">
                         <div>
                             <label className="text-[11px] font-bold text-slate-400 mb-2 block uppercase tracking-wider">Context Epochs</label>
-                            <input
-                                className="w-full input-glass text-xs font-mono"
-                                type="number"
-                                value={localContextEpochs}
-                                onFocus={() => setIsInteracting(true)}
-                                onChange={(e) => setLocalContextEpochs(e.target.value)}
-                                onBlur={(e) => {
-                                    setIsInteracting(false);
-                                    updateAIEngine({ ai_context_epochs: parseInt(e.target.value) });
-                                }}
-                            />
+                            <div className="relative flex items-center stepper-container">
+                                <input
+                                    className="w-full input-glass text-xs font-mono !pr-8"
+                                    type="number"
+                                    value={localContextEpochs}
+                                    onFocus={() => setIsInteracting(true)}
+                                    onChange={(e) => { setLocalContextEpochs(e.target.value); setIsDirty(true); setSaveStatus(null); }}
+                                    onBlur={() => setIsInteracting(false)}
+                                />
+                                <div className="absolute right-2 flex flex-col opacity-60">
+                                    <span className="material-symbols-outlined text-[12px] stepper-btn" onClick={() => {
+                                        const val = parseInt(localContextEpochs) + 1;
+                                        setLocalContextEpochs(val); setIsDirty(true); setSaveStatus(null);
+                                    }}>keyboard_arrow_up</span>
+                                    <span className="material-symbols-outlined text-[12px] stepper-btn" onClick={() => {
+                                        const val = Math.max(1, parseInt(localContextEpochs) - 1);
+                                        setLocalContextEpochs(val); setIsDirty(true); setSaveStatus(null);
+                                    }}>keyboard_arrow_down</span>
+                                </div>
+                            </div>
                         </div>
                         <div>
                             <div className="flex justify-between items-center mb-3">
@@ -643,22 +540,12 @@ export default function Configuration() {
                                 type="range"
                                 value={localAnomalyThreshold}
                                 onMouseDown={() => setIsInteracting(true)}
-                                onTouchStart={() => setIsInteracting(true)}
-                                onChange={(e) => setLocalAnomalyThreshold(e.target.value)}
-                                onMouseUp={() => {
-                                    setIsInteracting(false);
-                                    updateAIEngine({ ai_anomaly_threshold: parseFloat(localAnomalyThreshold) });
-                                }}
-                                onTouchEnd={() => {
-                                    setIsInteracting(false);
-                                    updateAIEngine({ ai_anomaly_threshold: parseFloat(localAnomalyThreshold) });
-                                }}
+                                onChange={(e) => { setLocalAnomalyThreshold(e.target.value); setIsDirty(true); setSaveStatus(null); }}
+                                onMouseUp={() => setIsInteracting(false)}
                             />
                         </div>
                     </div>
                 </div>
-
-
 
                 {/* 8. MISP Integration */}
                 <div className="glass-card rounded-[2rem] p-6 neon-border-cyan relative overflow-hidden group">
@@ -674,7 +561,8 @@ export default function Configuration() {
                             onClick={() => {
                                 const val = !localMispEnabled;
                                 setLocalMispEnabled(val);
-                                updateMisp({ misp_enabled: val });
+                                setIsDirty(true);
+                                setSaveStatus(null);
                             }}
                             className={`w-10 h-5 rounded-full relative transition-all ${localMispEnabled ? 'bg-primary shadow-[0_0_10px_rgba(37,106,244,0.4)]' : 'bg-white/10'}`}
                         >
@@ -691,9 +579,10 @@ export default function Configuration() {
                                 value={localMispUrl}
                                 onFocus={() => setIsInteracting(true)}
                                 onChange={(e) => setLocalMispUrl(e.target.value)}
-                                onBlur={(e) => {
+                                onBlur={() => {
                                     setIsInteracting(false);
-                                    updateMisp({ misp_url: e.target.value });
+                                    setIsDirty(true);
+                                    setSaveStatus(null);
                                 }}
                             />
                         </div>
@@ -703,7 +592,8 @@ export default function Configuration() {
                                 onClick={() => {
                                     const val = !localMispVerify;
                                     setLocalMispVerify(val);
-                                    updateMisp({ misp_verify_ssl: val });
+                                    setIsDirty(true);
+                                    setSaveStatus(null);
                                 }}
                                 className={`w-10 h-5 rounded-full relative transition-all ${localMispVerify ? 'bg-primary shadow-[0_0_10px_rgba(37,106,244,0.4)]' : 'bg-white/10'}`}
                             >
@@ -726,6 +616,39 @@ export default function Configuration() {
                     </div>
 
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8 items-start">
+                        {/* Database */}
+                        <div className="glass-card rounded-[2rem] p-6 neon-border-cyan relative overflow-hidden group">
+                            <div className="absolute -right-4 -top-4 size-32 bg-cyan-400/20 blur-3xl rounded-full"></div>
+                            <div className="flex items-center gap-4 mb-6">
+                                <div className="size-10 rounded-xl bg-cyan-400/10 flex items-center justify-center text-cyan-400 border border-cyan-400/30 shadow-[0_0_15px_rgba(34,211,238,0.2)]">
+                                    <span className="material-symbols-outlined text-[22px]">database</span>
+                                </div>
+                                <h3 className="text-lg font-bold text-white tracking-tight">Database</h3>
+                            </div>
+                            <div className="space-y-4">
+                                <div>
+                                    <label className="text-[11px] font-bold text-slate-400 mb-2 block uppercase tracking-wider">Qdrant Path</label>
+                                    <input className="w-full input-glass text-xs font-mono" type="text" value={localQdrantPath}
+                                        onFocus={() => setIsInteracting(true)}
+                                        onChange={(e) => { setLocalQdrantPath(e.target.value); setIsDirty(true); setSaveStatus(null); }}
+                                        onBlur={() => setIsInteracting(false)} />
+                                </div>
+                                <div>
+                                    <label className="text-[11px] font-bold text-slate-400 mb-2 block uppercase tracking-wider">Qdrant URL (optional)</label>
+                                    <input className="w-full input-glass text-xs font-mono" placeholder="null" type="text" value={localQdrantUrl}
+                                        onFocus={() => setIsInteracting(true)}
+                                        onChange={(e) => { setLocalQdrantUrl(e.target.value); setIsDirty(true); setSaveStatus(null); }}
+                                        onBlur={() => setIsInteracting(false)} />
+                                </div>
+                                <div>
+                                    <label className="text-[11px] font-bold text-slate-400 mb-2 block uppercase tracking-wider">Mongo URI</label>
+                                    <input className="w-full input-glass text-xs font-mono" type="text" value={localMongoUri}
+                                        onFocus={() => setIsInteracting(true)}
+                                        onChange={(e) => { setLocalMongoUri(e.target.value); setIsDirty(true); setSaveStatus(null); }}
+                                        onBlur={() => setIsInteracting(false)} />
+                                </div>
+                            </div>
+                        </div>
 
                         {/* Network */}
                         <div className="glass-card rounded-[2rem] p-6 neon-border-cyan relative overflow-hidden group">
@@ -740,30 +663,20 @@ export default function Configuration() {
                                 <div className="relative">
                                     <label className="text-[11px] font-bold text-slate-400 mb-2 block uppercase tracking-wider">Service Port</label>
                                     <div className="relative flex items-center stepper-container">
-                                        <input
-                                            className="w-full input-glass !pr-12 text-xs font-mono"
-                                            id="port-input"
-                                            placeholder="Enter port..."
-                                            type="number"
+                                        <input className="w-full input-glass !pr-12 text-xs font-mono" id="port-input" placeholder="Enter port..." type="number"
                                             value={localPort}
                                             onFocus={() => setIsInteracting(true)}
-                                            onChange={(e) => setLocalPort(e.target.value)}
-                                            onBlur={(e) => {
-                                                setIsInteracting(false);
-                                                updateNetwork(e.target.value);
-                                            }}
-                                        />
-                                        <div className="absolute right-2 flex items-center gap-1 opacity-60">
-                                            <span className="material-symbols-outlined text-[16px] stepper-btn" onClick={() => {
-                                                const val = Math.max(1, (parseInt(localPort) || 0) - 1);
-                                                setLocalPort(val);
-                                                updateNetwork(val);
-                                            }}>remove</span>
-                                            <span className="material-symbols-outlined text-[16px] stepper-btn" onClick={() => {
-                                                const val = (parseInt(localPort) || 0) + 1;
-                                                setLocalPort(val);
-                                                updateNetwork(val);
+                                            onChange={(e) => { setLocalPort(e.target.value); setIsDirty(true); setSaveStatus(null); }}
+                                            onBlur={() => setIsInteracting(false)} />
+                                        <div className="absolute right-2 flex flex-col gap-0.5 opacity-60">
+                                            <span className="material-symbols-outlined text-[14px] stepper-btn font-bold" onClick={() => {
+                                                const val = parseInt(localPort) + 1;
+                                                setLocalPort(val); setIsDirty(true); setSaveStatus(null);
                                             }}>add</span>
+                                            <span className="material-symbols-outlined text-[14px] stepper-btn font-bold" onClick={() => {
+                                                const val = Math.max(1, parseInt(localPort) - 1);
+                                                setLocalPort(val); setIsDirty(true); setSaveStatus(null);
+                                            }}>remove</span>
                                         </div>
                                     </div>
                                 </div>
@@ -783,403 +696,75 @@ export default function Configuration() {
                                 <div className="col-span-1">
                                     <label className="text-[11px] font-bold text-slate-400 mb-2 block uppercase tracking-wider">Time Win</label>
                                     <div className="relative flex items-center stepper-container">
-                                        <input
-                                            className="w-full input-glass !pr-8 text-xs font-mono"
-                                            id="timewin-input"
-                                            step="0.1"
-                                            type="number"
+                                        <input className="w-full input-glass !pr-8 text-xs font-mono" id="timewin-input" step="0.1" type="number"
                                             value={localTimeWindow}
                                             onFocus={() => setIsInteracting(true)}
-                                            onChange={(e) => setLocalTimeWindow(e.target.value)}
-                                            onBlur={(e) => {
-                                                setIsInteracting(false);
-                                                updateBrainLogic({ time_window: parseFloat(e.target.value) });
-                                            }}
-                                        />
-                                        <div className="absolute right-2 flex flex-col opacity-60">
-                                            <span className="material-symbols-outlined text-[12px] stepper-btn" onClick={() => {
-                                                const val = parseFloat(localTimeWindow) + 0.1;
-                                                setLocalTimeWindow(val.toFixed(1));
-                                                updateBrainLogic({ time_window: val });
-                                            }}>keyboard_arrow_up</span>
-                                            <span className="material-symbols-outlined text-[12px] stepper-btn" onClick={() => {
-                                                const val = Math.max(0.1, parseFloat(localTimeWindow) - 0.1);
-                                                setLocalTimeWindow(val.toFixed(1));
-                                                updateBrainLogic({ time_window: val });
-                                            }}>keyboard_arrow_down</span>
-                                        </div>
+                                            onChange={(e) => { setLocalTimeWindow(e.target.value); setIsDirty(true); setSaveStatus(null); }}
+                                            onBlur={() => setIsInteracting(false)} />
                                     </div>
                                 </div>
                                 <div className="col-span-1">
                                     <label className="text-[11px] font-bold text-slate-400 mb-2 block uppercase tracking-wider">Max Seq</label>
                                     <div className="relative flex items-center stepper-container">
-                                        <input
-                                            className="w-full input-glass !pr-8 text-xs font-mono"
-                                            id="maxseq-input"
-                                            type="number"
+                                        <input className="w-full input-glass !pr-8 text-xs font-mono" id="maxseq-input" type="number"
                                             value={localMaxSequence}
                                             onFocus={() => setIsInteracting(true)}
-                                            onChange={(e) => setLocalMaxSequence(e.target.value)}
-                                            onBlur={(e) => {
-                                                setIsInteracting(false);
-                                                updateBrainLogic({ max_sequence: parseInt(e.target.value) });
-                                            }}
-                                        />
-                                        <div className="absolute right-2 flex flex-col opacity-60">
-                                            <span className="material-symbols-outlined text-[12px] stepper-btn" onClick={() => {
-                                                const val = (parseInt(localMaxSequence) || 0) + 1;
-                                                setLocalMaxSequence(val);
-                                                updateBrainLogic({ max_sequence: val });
-                                            }}>keyboard_arrow_up</span>
-                                            <span className="material-symbols-outlined text-[12px] stepper-btn" onClick={() => {
-                                                const val = Math.max(1, (parseInt(localMaxSequence) || 0) - 1);
-                                                setLocalMaxSequence(val);
-                                                updateBrainLogic({ max_sequence: val });
-                                            }}>keyboard_arrow_down</span>
-                                        </div>
+                                            onChange={(e) => { setLocalMaxSequence(e.target.value); setIsDirty(true); setSaveStatus(null); }}
+                                            onBlur={() => setIsInteracting(false)} />
                                     </div>
                                 </div>
                                 <div className="col-span-1">
                                     <label className="text-[11px] font-bold text-slate-400 mb-2 block uppercase tracking-wider">DDoS Thr</label>
                                     <div className="relative flex items-center stepper-container">
-                                        <input
-                                            className="w-full input-glass !pr-8 text-xs font-mono"
-                                            id="ddos-input"
-                                            type="number"
+                                        <input className="w-full input-glass !pr-8 text-xs font-mono" id="ddos-input" type="number"
                                             value={localDDoSThreshold}
                                             onFocus={() => setIsInteracting(true)}
-                                            onChange={(e) => setLocalDDoSThreshold(e.target.value)}
-                                            onBlur={(e) => {
-                                                setIsInteracting(false);
-                                                updateBrainLogic({ ddos_threshold: parseInt(e.target.value) });
-                                            }}
-                                        />
-                                        <div className="absolute right-2 flex flex-col opacity-60">
-                                            <span className="material-symbols-outlined text-[12px] stepper-btn" onClick={() => {
-                                                const val = (parseInt(localDDoSThreshold) || 0) + 10;
-                                                setLocalDDoSThreshold(val);
-                                                updateBrainLogic({ ddos_threshold: val });
-                                            }}>keyboard_arrow_up</span>
-                                            <span className="material-symbols-outlined text-[12px] stepper-btn" onClick={() => {
-                                                const val = Math.max(0, (parseInt(localDDoSThreshold) || 0) - 10);
-                                                setLocalDDoSThreshold(val);
-                                                updateBrainLogic({ ddos_threshold: val });
-                                            }}>keyboard_arrow_down</span>
-                                        </div>
+                                            onChange={(e) => { setLocalDDoSThreshold(e.target.value); setIsDirty(true); setSaveStatus(null); }}
+                                            onBlur={() => setIsInteracting(false)} />
                                     </div>
                                 </div>
                                 <div className="col-span-1">
-                                    <label className="text-[11px] font-bold text-slate-400 mb-2 block uppercase tracking-wider">Queue Size</label>
+                                    <label className="text-[11px] font-bold text-slate-400 mb-2 block uppercase tracking-wider">Queue Sz</label>
                                     <div className="relative flex items-center stepper-container">
-                                        <input
-                                            className="w-full input-glass !pr-8 text-xs font-mono"
-                                            id="queue-input"
-                                            type="number"
+                                        <input className="w-full input-glass !pr-8 text-xs font-mono" id="queue-input" type="number"
                                             value={localMaxQueueSize}
                                             onFocus={() => setIsInteracting(true)}
-                                            onChange={(e) => setLocalMaxQueueSize(e.target.value)}
-                                            onBlur={(e) => {
-                                                setIsInteracting(false);
-                                                updateBrainLogic({ max_queue_size: parseInt(e.target.value) });
-                                            }}
-                                        />
-                                        <div className="absolute right-2 flex flex-col opacity-60">
-                                            <span className="material-symbols-outlined text-[12px] stepper-btn" onClick={() => {
-                                                const val = (parseInt(localMaxQueueSize) || 0) + 1000;
-                                                setLocalMaxQueueSize(val);
-                                                updateBrainLogic({ max_queue_size: val });
-                                            }}>keyboard_arrow_up</span>
-                                            <span className="material-symbols-outlined text-[12px] stepper-btn" onClick={() => {
-                                                const val = Math.max(100, (parseInt(localMaxQueueSize) || 0) - 1000);
-                                                setLocalMaxQueueSize(val);
-                                                updateBrainLogic({ max_queue_size: val });
-                                            }}>keyboard_arrow_down</span>
-                                        </div>
+                                            onChange={(e) => { setLocalMaxQueueSize(e.target.value); setIsDirty(true); setSaveStatus(null); }}
+                                            onBlur={() => setIsInteracting(false)} />
                                     </div>
                                 </div>
                             </div>
                         </div>
 
-
-                        {/* Memory */}
+                        {/* Retention */}
                         <div className="glass-card rounded-[2rem] p-6 neon-border-cyan relative overflow-hidden group">
-                            <div className="absolute -right-4 -top-4 size-32 bg-pink-400/20 blur-3xl rounded-full"></div>
-                            <div className="flex items-center gap-4 mb-6">
-                                <div className="size-10 rounded-xl bg-pink-400/10 flex items-center justify-center text-pink-400 border border-pink-400/30 shadow-[0_0_15px_rgba(244,114,182,0.2)]">
-                                    <span className="material-symbols-outlined text-[22px]">data_array</span>
-                                </div>
-                                <h3 className="text-lg font-bold text-white tracking-tight">Memory</h3>
-                            </div>
-                            <div className="space-y-4">
-                                <div>
-                                    <label className="text-[11px] font-bold text-slate-400 mb-2 block uppercase tracking-wider">Dedup Distance</label>
-                                    <div className="relative flex items-center stepper-container">
-                                        <input
-                                            className="w-full input-glass !pr-10 text-xs font-mono"
-                                            id="mem-dedup-input"
-                                            step="0.01"
-                                            type="number"
-                                            value={localMemDedup}
-                                            onFocus={() => setIsInteracting(true)}
-                                            onChange={(e) => setLocalMemDedup(e.target.value)}
-                                            onBlur={(e) => {
-                                                setIsInteracting(false);
-                                                updateMemory({ memory_dedup_dist: parseFloat(e.target.value) });
-                                            }}
-                                        />
-                                        <div className="absolute right-2 flex items-center gap-1 opacity-60">
-                                            <span className="material-symbols-outlined text-[16px] stepper-btn" onClick={() => {
-                                                const val = parseFloat(localMemDedup) - 0.01;
-                                                setLocalMemDedup(val.toFixed(2));
-                                                updateMemory({ memory_dedup_dist: val });
-                                            }}>remove</span>
-                                            <span className="material-symbols-outlined text-[16px] stepper-btn" onClick={() => {
-                                                const val = parseFloat(localMemDedup) + 0.01;
-                                                setLocalMemDedup(val.toFixed(2));
-                                                updateMemory({ memory_dedup_dist: val });
-                                            }}>add</span>
-                                        </div>
-                                    </div>
-                                </div>
-                                <div>
-                                    <label className="text-[11px] font-bold text-slate-400 mb-2 block uppercase tracking-wider">Query Distance</label>
-                                    <input
-                                        className="w-full input-glass text-xs font-mono"
-                                        step="0.01"
-                                        type="number"
-                                        value={localMemQuery}
-                                        onFocus={() => setIsInteracting(true)}
-                                        onChange={(e) => setLocalMemQuery(e.target.value)}
-                                        onBlur={(e) => {
-                                            setIsInteracting(false);
-                                            updateMemory({ memory_query_dist: parseFloat(e.target.value) });
-                                        }}
-                                    />
-                                </div>
-                            </div>
-                        </div>
-
-                        {/* Persistence */}
-                        <div className="glass-card rounded-[2rem] p-6 neon-border-cyan relative overflow-hidden group">
-                            <div className="absolute -right-4 -top-4 size-32 bg-orange-400/20 blur-3xl rounded-full"></div>
+                            <div className="absolute -right-4 -top-4 size-32 bg-primary/20 blur-3xl rounded-full"></div>
                             <div className="flex items-center justify-between mb-6">
                                 <div className="flex items-center gap-4">
-                                    <div className="size-10 rounded-xl bg-orange-400/10 flex items-center justify-center text-orange-400 border border-orange-400/30 shadow-[0_0_15px_rgba(251,146,60,0.2)]">
-                                        <span className="material-symbols-outlined text-[22px]">restore</span>
+                                    <div className="size-10 rounded-xl bg-primary/10 flex items-center justify-center text-primary border border-primary/30 shadow-[0_0_15px_rgba(37,106,244,0.2)]">
+                                        <span className="material-symbols-outlined text-[22px]">history</span>
                                     </div>
-                                    <h3 className="text-lg font-bold text-white tracking-tight">Persistence</h3>
+                                    <h3 className="text-lg font-bold text-white tracking-tight">Retention</h3>
                                 </div>
                                 <button
-                                    onClick={() => {
-                                        const val = !localRetentionEnabled;
-                                        setLocalRetentionEnabled(val);
-                                        updatePersistence({ enabled: val, run_interval_hours: localRetentionInterval, keep_days: localRetentionDays });
-                                    }}
-                                    className={`w-10 h-5 rounded-full relative transition-all ${localRetentionEnabled ? 'bg-primary shadow-[0_0_10px_rgba(37,106,244,0.4)]' : 'bg-white/10'}`}
-                                >
+                                    onClick={() => markDirty(setLocalRetentionEnabled)(!localRetentionEnabled)}
+                                    className={`w-10 h-5 rounded-full relative transition-all ${localRetentionEnabled ? 'bg-primary shadow-[0_0_10px_rgba(37,106,244,0.4)]' : 'bg-white/10'}`}>
                                     <span className={`absolute top-1 size-3 rounded-full transition-all ${localRetentionEnabled ? 'right-1 bg-white' : 'left-1 bg-slate-500'}`}></span>
                                 </button>
                             </div>
-                            <div className={`space-y-3 transition-all duration-500 ${!localRetentionEnabled ? 'opacity-40 grayscale pointer-events-none blur-[1px]' : ''}`}>
-
-                                <div className="relative">
-                                    <label className="text-[11px] font-bold text-slate-400 mb-2 block uppercase tracking-wider">Run Frequency (hrs)</label>
-                                    <div className="relative flex items-center stepper-container">
-                                        <input
-                                            className="w-full input-glass !pr-8 text-xs font-mono"
-                                            type="number"
-                                            value={localRetentionInterval}
-                                            onFocus={() => setIsInteracting(true)}
-                                            onChange={(e) => setLocalRetentionInterval(e.target.value)}
-                                            onBlur={(e) => {
-                                                setIsInteracting(false);
-                                                updatePersistence({ enabled: localRetentionEnabled, run_interval_hours: parseInt(e.target.value), keep_days: localRetentionDays });
-                                            }}
-                                        />
-                                        <div className="absolute right-2 flex flex-col opacity-60">
-                                            <span className="material-symbols-outlined text-[12px] stepper-btn" onClick={() => {
-                                                const val = (parseInt(localRetentionInterval) || 0) + 1;
-                                                setLocalRetentionInterval(val);
-                                                updatePersistence({ enabled: localRetentionEnabled, run_interval_hours: val, keep_days: localRetentionDays });
-                                            }}>keyboard_arrow_up</span>
-                                            <span className="material-symbols-outlined text-[12px] stepper-btn" onClick={() => {
-                                                const val = Math.max(1, (parseInt(localRetentionInterval) || 0) - 1);
-                                                setLocalRetentionInterval(val);
-                                                updatePersistence({ enabled: localRetentionEnabled, run_interval_hours: val, keep_days: localRetentionDays });
-                                            }}>keyboard_arrow_down</span>
-                                        </div>
-                                    </div>
-                                </div>
+                            <div className={`space-y-4 ${!localRetentionEnabled ? 'opacity-40 grayscale pointer-events-none' : ''}`}>
                                 <div>
-                                    <label className="text-[11px] font-bold text-slate-400 mb-2 block uppercase tracking-wider">Retention Days</label>
-                                    <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-[10px]">
-                                        {[
-                                            { key: 'ai_safe', label: 'Safe' },
-                                            { key: 'new_anomaly', label: 'Threat' },
-                                            { key: 'known_threat', label: 'Known' },
-                                            { key: 'false_positive', label: 'FP' },
-                                            { key: 'misp_alert', label: 'MISP' },
-                                            { key: 'ddos_evidence', label: 'DDoS' }
-                                        ].map(item => (
-                                            <div key={item.key} className="flex items-center justify-between gap-2 border-b border-white/5 pb-1">
-                                                <label className="text-slate-500 font-mono">{item.label}</label>
-                                                <input
-                                                    className="w-14 bg-white/5 border border-white/10 rounded px-1.5 py-0.5 text-white font-mono text-right focus:border-primary/50 outline-none transition-colors"
-                                                    type="number"
-                                                    value={localRetentionDays[item.key]}
-                                                    onChange={(e) => {
-                                                        const newVal = parseInt(e.target.value) || 0;
-                                                        setLocalRetentionDays(prev => ({ ...prev, [item.key]: newVal }));
-                                                    }}
-                                                    onBlur={() => updatePersistence({
-                                                        enabled: localRetentionEnabled,
-                                                        run_interval_hours: localRetentionInterval,
-                                                        keep_days: localRetentionDays
-                                                    })}
-                                                />
-                                            </div>
-                                        ))}
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-
-
-
-
-                        {/* Database */}
-                        <div className="glass-card rounded-[2rem] p-6 neon-border-cyan relative overflow-hidden group">
-                            <div className="absolute -right-4 -top-4 size-32 bg-cyan-400/20 blur-3xl rounded-full"></div>
-                            <div className="flex items-center gap-4 mb-6">
-                                <div className="size-10 rounded-xl bg-cyan-400/10 flex items-center justify-center text-cyan-400 border border-cyan-400/30 shadow-[0_0_15px_rgba(34,211,238,0.2)]">
-                                    <span className="material-symbols-outlined text-[22px]">database</span>
-                                </div>
-                                <h3 className="text-lg font-bold text-white tracking-tight">Database</h3>
-                            </div>
-                            <div className="space-y-4">
-                                <div>
-                                    <label className="text-[11px] font-bold text-slate-400 mb-2 block uppercase tracking-wider">Qdrant Path</label>
-                                    <input
-                                        className="w-full input-glass text-xs font-mono"
-                                        id="qdrant-path"
-                                        type="text"
-                                        value={localQdrantPath}
+                                    <label className="text-[11px] font-bold text-slate-400 mb-2 block uppercase tracking-wider">Run Interval (hours)</label>
+                                    <input className="w-full input-glass text-xs font-mono" type="number" value={localRetentionInterval}
                                         onFocus={() => setIsInteracting(true)}
-                                        onChange={(e) => setLocalQdrantPath(e.target.value)}
-                                        onBlur={(e) => {
-                                            setIsInteracting(false);
-                                            updateDatabase({ qdrant_path: e.target.value });
-                                        }}
-                                    />
-                                </div>
-                                <div>
-                                    <label className="text-[11px] font-bold text-slate-400 mb-2 block uppercase tracking-wider">Qdrant URL (optional)</label>
-                                    <input
-                                        className="w-full input-glass text-xs font-mono"
-                                        id="qdrant-url"
-                                        placeholder="http://localhost:6333"
-                                        type="text"
-                                        value={localQdrantUrl}
-                                        onFocus={() => setIsInteracting(true)}
-                                        onChange={(e) => setLocalQdrantUrl(e.target.value)}
-                                        onBlur={(e) => {
-                                            setIsInteracting(false);
-                                            updateDatabase({ qdrant_url: e.target.value || null });
-                                        }}
-                                    />
-                                </div>
-                                <div>
-                                    <label className="text-[11px] font-bold text-slate-400 mb-2 block uppercase tracking-wider">Mongo URI</label>
-                                    <input
-                                        className="w-full input-glass text-xs font-mono"
-                                        id="mongo-uri"
-                                        type="text"
-                                        value={localMongoUri}
-                                        onFocus={() => setIsInteracting(true)}
-                                        onChange={(e) => setLocalMongoUri(e.target.value)}
-                                        onBlur={(e) => {
-                                            setIsInteracting(false);
-                                            updateDatabase({ mongo_uri: e.target.value });
-                                        }}
-                                    />
-                                </div>
-                            </div>
-                        </div>
-
-                        {/* Checkpointing */}
-                        <div className="glass-card rounded-[2rem] p-6 flex flex-col gap-6 neon-border-cyan relative overflow-hidden group">
-                            <div className="absolute -right-4 -top-4 size-32 bg-orange-400/20 blur-3xl rounded-full"></div>
-                            <div className="flex items-center gap-4 relative z-10">
-                                <div className="size-10 rounded-xl bg-orange-400/10 flex items-center justify-center text-orange-400 border border-orange-400/30 shadow-[0_0_15px_rgba(251,146,60,0.2)]">
-                                    <span className="material-symbols-outlined text-[22px]">save</span>
-                                </div>
-                                <h3 className="text-lg font-bold text-white tracking-tight">Checkpointing</h3>
-                            </div>
-                            <div className="space-y-6">
-                                <div className="space-y-3">
-                                    <div className="flex justify-between items-center">
-                                        <label className="text-sm text-slate-300">Auto-save frequency</label>
-                                        <span className="text-xs font-mono text-primary bg-primary/10 px-2 py-0.5 rounded border border-primary/20 shadow-[0_0_10px_rgba(37,106,244,0.2)]">
-                                            {localCheckpointInterval}s
-                                        </span>
-                                    </div>
-                                    <input
-                                        className="w-full"
-                                        max="86400"
-                                        min="60"
-                                        type="range"
-                                        value={localCheckpointInterval}
-                                        onMouseDown={() => setIsInteracting(true)}
-                                        onTouchStart={() => setIsInteracting(true)}
-                                        onChange={(e) => setLocalCheckpointInterval(e.target.value)}
-                                        onMouseUp={() => {
-                                            setIsInteracting(false);
-                                            updateCheckpoint(localCheckpointInterval);
-                                        }}
-                                        onTouchEnd={() => {
-                                            setIsInteracting(false);
-                                            updateCheckpoint(localCheckpointInterval);
-                                        }}
-                                    />
-                                </div>
-                                <div className="space-y-3">
-                                    <div className="flex justify-between items-center">
-                                        <label className="text-sm text-slate-300">History Rotation</label>
-                                        <span className="text-xs font-mono text-primary bg-primary/10 px-2 py-0.5 rounded border border-primary/20 shadow-[0_0_10px_rgba(37,106,244,0.2)]">
-                                            {localMaxCheckpoints} f
-                                        </span>
-                                    </div>
-                                    <input
-                                        className="w-full"
-                                        max="50"
-                                        min="1"
-                                        type="range"
-                                        value={localMaxCheckpoints}
-                                        onMouseDown={() => setIsInteracting(true)}
-                                        onTouchStart={() => setIsInteracting(true)}
-                                        onChange={(e) => setLocalMaxCheckpoints(e.target.value)}
-                                        onMouseUp={() => {
-                                            setIsInteracting(false);
-                                            updateCheckpointHistory(localMaxCheckpoints);
-                                        }}
-                                        onTouchEnd={() => {
-                                            setIsInteracting(false);
-                                            updateCheckpointHistory(localMaxCheckpoints);
-                                        }}
-                                    />
+                                        onChange={(e) => { setLocalRetentionInterval(e.target.value); setIsDirty(true); setSaveStatus(null); }}
+                                        onBlur={() => setIsInteracting(false)} />
                                 </div>
                             </div>
                         </div>
                     </div>
                 </div>
             )}
-
-
-            {/* Mobile Bottom Bar Actions */}
-            <div className="mt-12 pt-8 border-t border-white/10 flex items-center justify-between lg:hidden">
-                <button className="text-slate-400 text-sm font-medium">Reset all to factory defaults</button>
-                <button className="bg-primary text-white px-8 py-3 rounded-xl font-bold shadow-[0_0_25px_rgba(37,106,244,0.6)]">Apply All</button>
-            </div>
         </main>
     );
 }

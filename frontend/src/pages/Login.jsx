@@ -20,13 +20,14 @@ export default function Login() {
                 <div className="absolute -left-4 -bottom-4 size-32 bg-accent-purple/20 rounded-full blur-3xl transition-all glow-layer"></div>
 
                 <div className="relative z-10 flex flex-col items-center mb-8">
-                    <div className="size-14 bg-gradient-to-br from-primary to-blue-600 rounded-2xl flex items-center justify-center shadow-lg shadow-primary/30 mb-5 relative group-hover:scale-105 transition-transform duration-500">
-                        <span className="material-symbols-outlined text-white text-3xl">deployed_code</span>
-                        <div className="absolute inset-0 bg-white/20 rounded-2xl blur opacity-0 group-hover:opacity-100 transition-opacity"></div>
+                    <div className="mb-5 relative group-hover:scale-105 transition-transform duration-500">
+                        <img 
+                            src="/kinetix-logo.jpg" 
+                            alt="Kinetix-Zero Access" 
+                            className="h-24 w-auto rounded-xl object-contain shadow-lg shadow-primary/30"
+                        />
+                        <div className="absolute inset-0 bg-white/10 rounded-xl blur opacity-0 group-hover:opacity-100 transition-opacity"></div>
                     </div>
-                    <h2 className="text-2xl font-bold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-white to-slate-400">
-                        Kinetix-Zero Access
-                    </h2>
                     <p className="text-slate-400 text-[13px] mt-2 tracking-wide">Authenticate to enter the neural core</p>
                 </div>
 

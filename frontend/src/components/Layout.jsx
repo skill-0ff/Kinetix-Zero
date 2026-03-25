@@ -26,12 +26,11 @@ export default function Layout() {
                 <div className="max-w-full mx-auto flex items-center justify-between h-12">
                     {/* Logo */}
                     <div className="flex items-center gap-3.5 cursor-pointer" onClick={() => navigate('/')}>
-                        <div className="size-8 bg-primary rounded-lg flex items-center justify-center shadow-lg shadow-primary/20">
-                            <span className="material-symbols-outlined text-white text-xl">deployed_code</span>
-                        </div>
-                        <h1 className="text-xl font-bold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-white to-white/60">
-                            Kinetix-Zero
-                        </h1>
+                        <img 
+                            src="/kinetix-logo.jpg" 
+                            alt="Kinetix-Zero" 
+                            className="h-8 w-auto rounded object-contain"
+                        />
                     </div>
                     {/* Nav Center */}
                     <nav className="hidden lg:flex items-center gap-1 bg-white/5 p-1 rounded-xl border border-white/10">

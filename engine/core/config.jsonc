@@ -1,28 +1,29 @@
 {
     "port": 5001,
-    "time_window": 5.0,
+    "time_window": 5,
     "max_sequence": 100,
     "ddos_threshold": 50,
     "max_queue_size": 10000,
     "ai_context_epochs": 5,
-    "ai_anomaly_threshold": 0.81,
+    "ai_anomaly_threshold": 0.18,
     "qdrant_path": "DB/vector",
     "qdrant_url": null,
     "mongo_uri": "mongodb://localhost:27017/",
     "memory_dedup_dist": 0.05,
     "memory_query_dist": 0.1,
     "ai_checkpoint_file": "auto",
-    "checkpoint_interval_seconds": 8215,
-    "max_checkpoints_history": 8,
-    "forensic_sample_rate": 58,
-    "forensic_sample_mode": "sequence",
+    "checkpoint_interval_seconds": 7697,
+    "max_checkpoints_history": 7,
+    "forensic_sample_rate": 100,
+    "forensic_sample_mode": "random",
     "misp_enabled": true,
     "misp_url": "https://misp.local",
     "misp_verify_ssl": true,
     "storage_policy": {
         "save_vectors": {
             "ai_safe": true,
-            "anomaly": true
+            "anomaly": true,
+            "ddos_evidence": true
         },
         "save_logs": {
             "ai_safe": true,

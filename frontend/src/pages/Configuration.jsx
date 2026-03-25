@@ -36,10 +36,10 @@ export default function Configuration() {
     const [localMispEnabled, setLocalMispEnabled] = useState(false);
     const [localMispUrl, setLocalMispUrl] = useState("https://misp.local");
     const [localMispVerify, setLocalMispVerify] = useState(true);
-    const [isDragging, setIsDragging] = useState(false);
+    const [isInteracting, setIsInteracting] = useState(false);
 
     useEffect(() => {
-        if (updating || isDragging || !config) return;
+        if (updating || isInteracting || !config) return;
 
         if (config.checkpoint_interval_seconds) {
             setLocalCheckpointInterval(config.checkpoint_interval_seconds);
@@ -102,7 +102,7 @@ export default function Configuration() {
         if (config.misp_verify_ssl !== undefined) {
             setLocalMispVerify(config.misp_verify_ssl);
         }
-    }, [config, updating, isDragging]);
+    }, [config, updating, isInteracting]);
 
     const updateAlertPolicy = async (key, value) => {
         if (!config) return;
@@ -433,14 +433,17 @@ export default function Configuration() {
             </div>
 
             {/* Upper Config Grid */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-12">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-12 items-start">
                 {/* 1. Alert Management */}
-                <div className="glass-card rounded-2xl p-6 flex flex-col gap-6 neon-border-blue">
-                    <div className="flex items-center gap-3">
-                        <span className="material-symbols-outlined text-primary neon-text-blue">notification_important</span>
-                        <h3 className="text-lg font-semibold text-white">Alert Management</h3>
+                <div className="glass-card rounded-[2rem] p-6 flex flex-col gap-6 neon-border-cyan relative overflow-hidden group">
+                    <div className="absolute -right-4 -top-4 size-32 bg-primary/20 blur-3xl rounded-full"></div>
+                    <div className="flex items-center gap-4 relative z-10 transition-all duration-500">
+                        <div className="size-10 rounded-xl bg-primary/10 flex items-center justify-center text-primary border border-primary/30 shadow-[0_0_15px_rgba(37,106,244,0.2)]">
+                            <span className="material-symbols-outlined text-[22px]">notification_important</span>
+                        </div>
+                        <h3 className="text-lg font-bold text-white tracking-tight">Alert Management</h3>
                     </div>
-                    <div className="space-y-4">
+                    <div className="space-y-4 relative z-10">
                         <div className="flex items-center justify-between">
                             <span className="text-sm text-slate-300">New Alerts</span>
                             <button
@@ -472,11 +475,14 @@ export default function Configuration() {
                 </div>
 
                 {/* 2. Role Management */}
-                <div className="glass-card rounded-2xl p-6 flex flex-col gap-4 lg:row-span-2 neon-border-purple">
-                    <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-3">
-                            <span className="material-symbols-outlined text-accent-purple">shield_person</span>
-                            <h3 className="text-lg font-semibold text-white">Role Management</h3>
+                <div className="glass-card rounded-[2rem] p-6 flex flex-col gap-4 neon-border-cyan relative overflow-hidden group">
+                    <div className="absolute -right-4 -top-4 size-32 bg-accent-purple/20 blur-3xl rounded-full"></div>
+                    <div className="flex items-center justify-between relative z-10 transition-all duration-500">
+                        <div className="flex items-center gap-4">
+                            <div className="size-10 rounded-xl bg-accent-purple/10 flex items-center justify-center text-accent-purple border border-accent-purple/30 shadow-[0_0_15px_rgba(168,85,247,0.2)]">
+                                <span className="material-symbols-outlined text-[22px]">shield_person</span>
+                            </div>
+                            <h3 className="text-lg font-bold text-white tracking-tight">Role Management</h3>
                         </div>
                         <button className="size-8 rounded-lg bg-white/5 flex items-center justify-center hover:bg-white/10 transition-colors border border-white/10">
                             <span className="material-symbols-outlined text-xl text-white">add</span>
@@ -486,7 +492,7 @@ export default function Configuration() {
                         <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 text-lg">search</span>
                         <input className="w-full input-glass !pl-10 !py-2" placeholder="Search roles..." type="text" />
                     </div>
-                    <div className="flex-1 space-y-2 overflow-y-auto max-h-[400px] pr-2 custom-scrollbar">
+                    <div className="space-y-2 overflow-y-auto max-h-[400px] pr-2 custom-scrollbar">
                         <div className="p-3 rounded-xl bg-white/5 border border-white/10 flex items-center justify-between group hover:bg-white/10 transition-all">
                             <div className="flex items-center gap-3">
                                 <div className="size-2 rounded-full bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.6)]"></div>
@@ -512,10 +518,13 @@ export default function Configuration() {
                 </div>
 
                 {/* 3. Log Storage Control */}
-                <div className="glass-card rounded-2xl p-6 flex flex-col gap-6 neon-border-blue">
-                    <div className="flex items-center gap-3">
-                        <span className="material-symbols-outlined text-blue-400">database</span>
-                        <h3 className="text-lg font-semibold text-white">Log Storage</h3>
+                <div className="glass-card rounded-[2rem] p-6 flex flex-col gap-6 neon-border-cyan relative overflow-hidden group">
+                    <div className="absolute -right-4 -top-4 size-32 bg-primary/20 blur-3xl rounded-full"></div>
+                    <div className="flex items-center gap-4 relative z-10 transition-all duration-500">
+                        <div className="size-10 rounded-xl bg-primary/10 flex items-center justify-center text-primary border border-primary/30 shadow-[0_0_15px_rgba(37,106,244,0.2)]">
+                            <span className="material-symbols-outlined text-[22px]">database</span>
+                        </div>
+                        <h3 className="text-lg font-bold text-white tracking-tight">Log Storage</h3>
                     </div>
                     <div className="grid grid-cols-2 gap-4">
                         <div className="flex items-center justify-between p-3 rounded-xl bg-white/5 border border-white/10">
@@ -539,57 +548,16 @@ export default function Configuration() {
                     </div>
                 </div>
 
-                {/* 4. Checkpointing */}
-                <div className="glass-card rounded-2xl p-6 flex flex-col gap-6 neon-border-amber">
-                    <div className="flex items-center gap-3">
-                        <span className="material-symbols-outlined text-orange-400">save</span>
-                        <h3 className="text-lg font-semibold text-white">Checkpointing</h3>
-                    </div>
-                    <div className="space-y-6">
-                        <div className="space-y-3">
-                            <div className="flex justify-between items-center">
-                                <label className="text-sm text-slate-300">Auto-save frequency</label>
-                                <span className="text-xs font-mono text-primary bg-primary/10 px-2 py-0.5 rounded border border-primary/20 shadow-[0_0_10px_rgba(37,106,244,0.2)]">
-                                    {localCheckpointInterval}s
-                                </span>
-                            </div>
-                            <input
-                                className="w-full"
-                                max="86400"
-                                min="60"
-                                type="range"
-                                value={localCheckpointInterval}
-                                onChange={(e) => setLocalCheckpointInterval(e.target.value)}
-                                onMouseUp={(e) => updateCheckpoint(e.target.value)}
-                                onTouchEnd={(e) => updateCheckpoint(e.target.value)}
-                            />
-                        </div>
-                        <div className="space-y-3">
-                            <div className="flex justify-between items-center">
-                                <label className="text-sm text-slate-300">History Rotation</label>
-                                <span className="text-xs font-mono text-primary bg-primary/10 px-2 py-0.5 rounded border border-primary/20 shadow-[0_0_10px_rgba(37,106,244,0.2)]">
-                                    {localMaxCheckpoints} files
-                                </span>
-                            </div>
-                            <input
-                                className="w-full"
-                                max="50"
-                                min="1"
-                                type="range"
-                                value={localMaxCheckpoints}
-                                onChange={(e) => setLocalMaxCheckpoints(e.target.value)}
-                                onMouseUp={(e) => updateCheckpointHistory(e.target.value)}
-                                onTouchEnd={(e) => updateCheckpointHistory(e.target.value)}
-                            />
-                        </div>
-                    </div>
-                </div>
+
 
                 {/* 5. Forensics Control */}
-                <div className="glass-card rounded-2xl p-6 flex flex-col gap-6 neon-border-amber">
-                    <div className="flex items-center gap-3">
-                        <span className="material-symbols-outlined text-amber-400">fingerprint</span>
-                        <h3 className="text-lg font-semibold text-white">Forensics Control</h3>
+                <div className="glass-card rounded-[2rem] p-6 flex flex-col gap-6 neon-border-cyan relative overflow-hidden group">
+                    <div className="absolute -right-4 -top-4 size-32 bg-amber-400/20 blur-3xl rounded-full"></div>
+                    <div className="flex items-center gap-4 relative z-10">
+                        <div className="size-10 rounded-xl bg-amber-400/10 flex items-center justify-center text-amber-400 border border-amber-400/30 shadow-[0_0_15px_rgba(245,158,11,0.2)]">
+                            <span className="material-symbols-outlined text-[22px]">fingerprint</span>
+                        </div>
+                        <h3 className="text-lg font-bold text-white tracking-tight">Forensics Control</h3>
                     </div>
                     <div className="space-y-6">
                         <div className="space-y-3">
@@ -605,15 +573,15 @@ export default function Configuration() {
                                 min="0"
                                 type="range"
                                 value={localForensicRate}
-                                onMouseDown={() => setIsDragging(true)}
-                                onTouchStart={() => setIsDragging(true)}
+                                onMouseDown={() => setIsInteracting(true)}
+                                onTouchStart={() => setIsInteracting(true)}
                                 onChange={(e) => setLocalForensicRate(parseInt(e.target.value) || 0)}
                                 onMouseUp={() => {
-                                    setIsDragging(false);
+                                    setIsInteracting(false);
                                     updateForensics({ forensic_sample_rate: parseInt(localForensicRate) });
                                 }}
                                 onTouchEnd={() => {
-                                    setIsDragging(false);
+                                    setIsInteracting(false);
                                     updateForensics({ forensic_sample_rate: parseInt(localForensicRate) });
                                 }}
                             />
@@ -637,40 +605,33 @@ export default function Configuration() {
                 </div>
 
                 {/* 6. AI Engine */}
-                <div className="glass-card rounded-2xl p-6 flex flex-col gap-6 neon-border-emerald">
-                    <div className="flex items-center gap-3">
-                        <span className="material-symbols-outlined text-emerald-400">neurology</span>
-                        <h3 className="text-lg font-semibold text-white">AI Engine</h3>
-                    </div>
-                    <div className="space-y-6">
-                        <div className="space-y-3">
-                            <label className="text-sm text-slate-300 block">Context Memory</label>
-                            <div className="relative flex items-center stepper-container">
-                                <input
-                                    className="w-full input-glass !pr-8"
-                                    type="number"
-                                    value={localContextEpochs}
-                                    onChange={(e) => setLocalContextEpochs(e.target.value)}
-                                    onBlur={(e) => updateAIEngine({ ai_context_epochs: parseInt(e.target.value) })}
-                                />
-                                <div className="absolute right-2 flex flex-col opacity-60">
-                                    <span className="material-symbols-outlined text-[12px] stepper-btn" onClick={() => {
-                                        const val = parseInt(localContextEpochs) + 1;
-                                        setLocalContextEpochs(val);
-                                        updateAIEngine({ ai_context_epochs: val });
-                                    }}>keyboard_arrow_up</span>
-                                    <span className="material-symbols-outlined text-[12px] stepper-btn" onClick={() => {
-                                        const val = Math.max(1, parseInt(localContextEpochs) - 1);
-                                        setLocalContextEpochs(val);
-                                        updateAIEngine({ ai_context_epochs: val });
-                                    }}>keyboard_arrow_down</span>
-                                </div>
-                            </div>
+                <div className="glass-card rounded-[2rem] p-6 neon-border-cyan relative overflow-hidden group">
+                    <div className="absolute -right-4 -top-4 size-32 bg-emerald-400/20 blur-3xl rounded-full"></div>
+                    <div className="flex items-center gap-4 mb-6 relative z-10">
+                        <div className="size-10 rounded-xl bg-emerald-400/10 flex items-center justify-center text-emerald-400 border border-emerald-400/30 shadow-[0_0_15px_rgba(16,185,129,0.2)]">
+                            <span className="material-symbols-outlined text-[22px]">neurology</span>
                         </div>
-                        <div className="space-y-3">
-                            <div className="flex justify-between items-center">
-                                <label className="text-sm text-slate-300">Sensitivity</label>
-                                <span className="text-xs font-mono text-primary bg-primary/10 px-2 py-0.5 rounded border border-primary/20 shadow-[0_0_10px_rgba(37,106,244,0.2)]">
+                        <h3 className="text-lg font-bold text-white tracking-tight">AI Engine</h3>
+                    </div>
+                    <div className="space-y-5 relative z-10">
+                        <div>
+                            <label className="text-[11px] font-bold text-slate-400 mb-2 block uppercase tracking-wider">Context Epochs</label>
+                            <input
+                                className="w-full input-glass text-xs font-mono"
+                                type="number"
+                                value={localContextEpochs}
+                                onFocus={() => setIsInteracting(true)}
+                                onChange={(e) => setLocalContextEpochs(e.target.value)}
+                                onBlur={(e) => {
+                                    setIsInteracting(false);
+                                    updateAIEngine({ ai_context_epochs: parseInt(e.target.value) });
+                                }}
+                            />
+                        </div>
+                        <div>
+                            <div className="flex justify-between items-center mb-3">
+                                <label className="text-[11px] font-bold text-slate-400 block uppercase tracking-wider !mb-0">Anomaly Sensitivity</label>
+                                <span className="text-[10px] font-mono font-bold text-emerald-400 bg-emerald-400/10 px-2 py-0.5 rounded-full border border-emerald-400/30 shadow-[0_0_10px_rgba(16,185,129,0.3)]">
                                     {Math.round(localAnomalyThreshold * 100)}%
                                 </span>
                             </div>
@@ -681,10 +642,73 @@ export default function Configuration() {
                                 step="0.01"
                                 type="range"
                                 value={localAnomalyThreshold}
+                                onMouseDown={() => setIsInteracting(true)}
+                                onTouchStart={() => setIsInteracting(true)}
                                 onChange={(e) => setLocalAnomalyThreshold(e.target.value)}
-                                onMouseUp={(e) => updateAIEngine({ ai_anomaly_threshold: parseFloat(e.target.value) })}
-                                onTouchEnd={(e) => updateAIEngine({ ai_anomaly_threshold: parseFloat(e.target.value) })}
+                                onMouseUp={() => {
+                                    setIsInteracting(false);
+                                    updateAIEngine({ ai_anomaly_threshold: parseFloat(localAnomalyThreshold) });
+                                }}
+                                onTouchEnd={() => {
+                                    setIsInteracting(false);
+                                    updateAIEngine({ ai_anomaly_threshold: parseFloat(localAnomalyThreshold) });
+                                }}
                             />
+                        </div>
+                    </div>
+                </div>
+
+
+
+                {/* 8. MISP Integration */}
+                <div className="glass-card rounded-[2rem] p-6 neon-border-cyan relative overflow-hidden group">
+                    <div className="absolute -right-4 -top-4 size-32 bg-red-400/20 blur-3xl rounded-full"></div>
+                    <div className="flex items-center justify-between mb-6">
+                        <div className="flex items-center gap-4">
+                            <div className="size-10 rounded-xl bg-red-400/10 flex items-center justify-center text-red-400 border border-red-400/30 shadow-[0_0_15px_rgba(248,113,113,0.2)]">
+                                <span className="material-symbols-outlined text-[22px]">share_reviews</span>
+                            </div>
+                            <h3 className="text-lg font-bold text-white tracking-tight">MISP Integration</h3>
+                        </div>
+                        <button
+                            onClick={() => {
+                                const val = !localMispEnabled;
+                                setLocalMispEnabled(val);
+                                updateMisp({ misp_enabled: val });
+                            }}
+                            className={`w-10 h-5 rounded-full relative transition-all ${localMispEnabled ? 'bg-primary shadow-[0_0_10px_rgba(37,106,244,0.4)]' : 'bg-white/10'}`}
+                        >
+                            <span className={`absolute top-1 size-3 rounded-full transition-all ${localMispEnabled ? 'right-1 bg-white' : 'left-1 bg-slate-500'}`}></span>
+                        </button>
+                    </div>
+                    <div className={`space-y-4 transition-all duration-500 ${!localMispEnabled ? 'opacity-40 grayscale pointer-events-none blur-[1px]' : ''}`}>
+                        <div>
+                            <label className="text-[11px] font-bold text-slate-400 mb-2 block uppercase tracking-wider">Endpoint URL</label>
+                            <input
+                                className="w-full input-glass text-xs font-mono"
+                                placeholder="https://..."
+                                type="text"
+                                value={localMispUrl}
+                                onFocus={() => setIsInteracting(true)}
+                                onChange={(e) => setLocalMispUrl(e.target.value)}
+                                onBlur={(e) => {
+                                    setIsInteracting(false);
+                                    updateMisp({ misp_url: e.target.value });
+                                }}
+                            />
+                        </div>
+                        <div className="flex items-center justify-between p-3 rounded-2xl bg-white/5 border border-white/10">
+                            <label className="text-xs font-bold text-slate-400 uppercase tracking-tighter">SSL Verify</label>
+                            <button
+                                onClick={() => {
+                                    const val = !localMispVerify;
+                                    setLocalMispVerify(val);
+                                    updateMisp({ misp_verify_ssl: val });
+                                }}
+                                className={`w-10 h-5 rounded-full relative transition-all ${localMispVerify ? 'bg-primary shadow-[0_0_10px_rgba(37,106,244,0.4)]' : 'bg-white/10'}`}
+                            >
+                                <span className={`absolute top-1 size-3 rounded-full transition-all ${localMispVerify ? 'right-1 bg-white' : 'left-1 bg-slate-500'}`}></span>
+                            </button>
                         </div>
                     </div>
                 </div>
@@ -702,56 +726,13 @@ export default function Configuration() {
                     </div>
 
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8 items-start">
-                        {/* Database */}
-                        <div className="glass-card rounded-[2rem] p-6 neon-border-cyan relative overflow-hidden group">
-                            <div className="absolute -right-4 -top-4 size-32 bg-cyan-400/20 blur-3xl rounded-full"></div>
-                            <div className="flex items-center gap-4 mb-6">
-                                <div className="size-10 rounded-xl bg-cyan-400/10 flex items-center justify-center text-cyan-400 border border-cyan-400/30 shadow-[0_0_15px_rgba(34,211,238,0.2)]">
-                                    <span className="material-symbols-outlined text-[22px]">database</span>
-                                </div>
-                                <h3 className="text-lg font-bold text-white tracking-tight">Database</h3>
-                            </div>
-                            <div className="space-y-4">
-                                <div>
-                                    <label className="text-[11px] font-bold text-slate-400 mb-2 block uppercase tracking-wider">Qdrant Path</label>
-                                    <input
-                                        className="w-full input-glass text-xs font-mono"
-                                        type="text"
-                                        value={localQdrantPath}
-                                        onChange={(e) => setLocalQdrantPath(e.target.value)}
-                                        onBlur={(e) => updateDatabase({ qdrant_path: e.target.value })}
-                                    />
-                                </div>
-                                <div>
-                                    <label className="text-[11px] font-bold text-slate-400 mb-2 block uppercase tracking-wider">Qdrant URL (optional)</label>
-                                    <input
-                                        className="w-full input-glass text-xs font-mono"
-                                        placeholder="null"
-                                        type="text"
-                                        value={localQdrantUrl}
-                                        onChange={(e) => setLocalQdrantUrl(e.target.value)}
-                                        onBlur={(e) => updateDatabase({ qdrant_url: e.target.value || null })}
-                                    />
-                                </div>
-                                <div>
-                                    <label className="text-[11px] font-bold text-slate-400 mb-2 block uppercase tracking-wider">Mongo URI</label>
-                                    <input
-                                        className="w-full input-glass text-xs font-mono"
-                                        type="text"
-                                        value={localMongoUri}
-                                        onChange={(e) => setLocalMongoUri(e.target.value)}
-                                        onBlur={(e) => updateDatabase({ mongo_uri: e.target.value })}
-                                    />
-                                </div>
-                            </div>
-                        </div>
 
                         {/* Network */}
-                        <div className="glass-card rounded-[2rem] p-6 neon-border-blue relative overflow-hidden group">
+                        <div className="glass-card rounded-[2rem] p-6 neon-border-cyan relative overflow-hidden group">
                             <div className="absolute -right-4 -top-4 size-32 bg-primary/20 blur-3xl rounded-full"></div>
                             <div className="flex items-center gap-4 mb-6">
-                                <div className="size-10 rounded-xl bg-cyan-400/10 flex items-center justify-center text-cyan-400 border border-cyan-400/30 shadow-[0_0_15px_rgba(34,211,238,0.2)]">
-                                    <span className="material-symbols-outlined text-[22px]">lan</span>
+                                <div className="size-10 rounded-xl bg-primary/10 flex items-center justify-center text-primary border border-primary/30 shadow-[0_0_15px_rgba(37,106,244,0.2)]">
+                                    <span className="material-symbols-outlined text-[22px]">router</span>
                                 </div>
                                 <h3 className="text-lg font-bold text-white tracking-tight">Network</h3>
                             </div>
@@ -760,25 +741,29 @@ export default function Configuration() {
                                     <label className="text-[11px] font-bold text-slate-400 mb-2 block uppercase tracking-wider">Service Port</label>
                                     <div className="relative flex items-center stepper-container">
                                         <input
-                                            className="w-full input-glass !pr-12"
+                                            className="w-full input-glass !pr-12 text-xs font-mono"
                                             id="port-input"
                                             placeholder="Enter port..."
                                             type="number"
                                             value={localPort}
+                                            onFocus={() => setIsInteracting(true)}
                                             onChange={(e) => setLocalPort(e.target.value)}
-                                            onBlur={(e) => updateNetwork(e.target.value)}
+                                            onBlur={(e) => {
+                                                setIsInteracting(false);
+                                                updateNetwork(e.target.value);
+                                            }}
                                         />
-                                        <div className="absolute right-2 flex flex-col gap-0.5 opacity-60">
-                                            <span className="material-symbols-outlined text-[14px] stepper-btn font-bold" onClick={() => {
-                                                const val = parseInt(localPort) + 1;
-                                                setLocalPort(val);
-                                                updateNetwork(val);
-                                            }}>add</span>
-                                            <span className="material-symbols-outlined text-[14px] stepper-btn font-bold" onClick={() => {
-                                                const val = Math.max(1, parseInt(localPort) - 1);
+                                        <div className="absolute right-2 flex items-center gap-1 opacity-60">
+                                            <span className="material-symbols-outlined text-[16px] stepper-btn" onClick={() => {
+                                                const val = Math.max(1, (parseInt(localPort) || 0) - 1);
                                                 setLocalPort(val);
                                                 updateNetwork(val);
                                             }}>remove</span>
+                                            <span className="material-symbols-outlined text-[16px] stepper-btn" onClick={() => {
+                                                const val = (parseInt(localPort) || 0) + 1;
+                                                setLocalPort(val);
+                                                updateNetwork(val);
+                                            }}>add</span>
                                         </div>
                                     </div>
                                 </div>
@@ -786,10 +771,10 @@ export default function Configuration() {
                         </div>
 
                         {/* Brain Logic */}
-                        <div className="glass-card rounded-[2rem] p-6 neon-border-rose relative overflow-hidden group">
-                            <div className="absolute -right-4 -top-4 size-32 bg-rose-400/20 blur-3xl rounded-full"></div>
+                        <div className="glass-card rounded-[2rem] p-6 neon-border-cyan relative overflow-hidden group">
+                            <div className="absolute -right-4 -top-4 size-32 bg-emerald-400/20 blur-3xl rounded-full"></div>
                             <div className="flex items-center gap-4 mb-6">
-                                <div className="size-10 rounded-xl bg-rose-400/10 flex items-center justify-center text-rose-400 border border-rose-400/30 shadow-[0_0_15px_rgba(244,63,94,0.2)]">
+                                <div className="size-10 rounded-xl bg-emerald-400/10 flex items-center justify-center text-emerald-400 border border-emerald-400/30 shadow-[0_0_15px_rgba(16,185,129,0.2)]">
                                     <span className="material-symbols-outlined text-[22px]">psychology</span>
                                 </div>
                                 <h3 className="text-lg font-bold text-white tracking-tight">Brain Logic</h3>
@@ -799,13 +784,17 @@ export default function Configuration() {
                                     <label className="text-[11px] font-bold text-slate-400 mb-2 block uppercase tracking-wider">Time Win</label>
                                     <div className="relative flex items-center stepper-container">
                                         <input
-                                            className="w-full input-glass !pr-8"
+                                            className="w-full input-glass !pr-8 text-xs font-mono"
                                             id="timewin-input"
                                             step="0.1"
                                             type="number"
                                             value={localTimeWindow}
+                                            onFocus={() => setIsInteracting(true)}
                                             onChange={(e) => setLocalTimeWindow(e.target.value)}
-                                            onBlur={(e) => updateBrainLogic({ time_window: parseFloat(e.target.value) })}
+                                            onBlur={(e) => {
+                                                setIsInteracting(false);
+                                                updateBrainLogic({ time_window: parseFloat(e.target.value) });
+                                            }}
                                         />
                                         <div className="absolute right-2 flex flex-col opacity-60">
                                             <span className="material-symbols-outlined text-[12px] stepper-btn" onClick={() => {
@@ -825,21 +814,25 @@ export default function Configuration() {
                                     <label className="text-[11px] font-bold text-slate-400 mb-2 block uppercase tracking-wider">Max Seq</label>
                                     <div className="relative flex items-center stepper-container">
                                         <input
-                                            className="w-full input-glass !pr-8"
+                                            className="w-full input-glass !pr-8 text-xs font-mono"
                                             id="maxseq-input"
                                             type="number"
                                             value={localMaxSequence}
+                                            onFocus={() => setIsInteracting(true)}
                                             onChange={(e) => setLocalMaxSequence(e.target.value)}
-                                            onBlur={(e) => updateBrainLogic({ max_sequence: parseInt(e.target.value) })}
+                                            onBlur={(e) => {
+                                                setIsInteracting(false);
+                                                updateBrainLogic({ max_sequence: parseInt(e.target.value) });
+                                            }}
                                         />
                                         <div className="absolute right-2 flex flex-col opacity-60">
                                             <span className="material-symbols-outlined text-[12px] stepper-btn" onClick={() => {
-                                                const val = parseInt(localMaxSequence) + 1;
+                                                const val = (parseInt(localMaxSequence) || 0) + 1;
                                                 setLocalMaxSequence(val);
                                                 updateBrainLogic({ max_sequence: val });
                                             }}>keyboard_arrow_up</span>
                                             <span className="material-symbols-outlined text-[12px] stepper-btn" onClick={() => {
-                                                const val = Math.max(1, parseInt(localMaxSequence) - 1);
+                                                const val = Math.max(1, (parseInt(localMaxSequence) || 0) - 1);
                                                 setLocalMaxSequence(val);
                                                 updateBrainLogic({ max_sequence: val });
                                             }}>keyboard_arrow_down</span>
@@ -850,21 +843,25 @@ export default function Configuration() {
                                     <label className="text-[11px] font-bold text-slate-400 mb-2 block uppercase tracking-wider">DDoS Thr</label>
                                     <div className="relative flex items-center stepper-container">
                                         <input
-                                            className="w-full input-glass !pr-8"
+                                            className="w-full input-glass !pr-8 text-xs font-mono"
                                             id="ddos-input"
                                             type="number"
                                             value={localDDoSThreshold}
+                                            onFocus={() => setIsInteracting(true)}
                                             onChange={(e) => setLocalDDoSThreshold(e.target.value)}
-                                            onBlur={(e) => updateBrainLogic({ ddos_threshold: parseInt(e.target.value) })}
+                                            onBlur={(e) => {
+                                                setIsInteracting(false);
+                                                updateBrainLogic({ ddos_threshold: parseInt(e.target.value) });
+                                            }}
                                         />
                                         <div className="absolute right-2 flex flex-col opacity-60">
                                             <span className="material-symbols-outlined text-[12px] stepper-btn" onClick={() => {
-                                                const val = parseInt(localDDoSThreshold) + 10;
+                                                const val = (parseInt(localDDoSThreshold) || 0) + 10;
                                                 setLocalDDoSThreshold(val);
                                                 updateBrainLogic({ ddos_threshold: val });
                                             }}>keyboard_arrow_up</span>
                                             <span className="material-symbols-outlined text-[12px] stepper-btn" onClick={() => {
-                                                const val = Math.max(0, parseInt(localDDoSThreshold) - 10);
+                                                const val = Math.max(0, (parseInt(localDDoSThreshold) || 0) - 10);
                                                 setLocalDDoSThreshold(val);
                                                 updateBrainLogic({ ddos_threshold: val });
                                             }}>keyboard_arrow_down</span>
@@ -875,21 +872,25 @@ export default function Configuration() {
                                     <label className="text-[11px] font-bold text-slate-400 mb-2 block uppercase tracking-wider">Queue Size</label>
                                     <div className="relative flex items-center stepper-container">
                                         <input
-                                            className="w-full input-glass !pr-8"
+                                            className="w-full input-glass !pr-8 text-xs font-mono"
                                             id="queue-input"
                                             type="number"
                                             value={localMaxQueueSize}
+                                            onFocus={() => setIsInteracting(true)}
                                             onChange={(e) => setLocalMaxQueueSize(e.target.value)}
-                                            onBlur={(e) => updateBrainLogic({ max_queue_size: parseInt(e.target.value) })}
+                                            onBlur={(e) => {
+                                                setIsInteracting(false);
+                                                updateBrainLogic({ max_queue_size: parseInt(e.target.value) });
+                                            }}
                                         />
                                         <div className="absolute right-2 flex flex-col opacity-60">
                                             <span className="material-symbols-outlined text-[12px] stepper-btn" onClick={() => {
-                                                const val = parseInt(localMaxQueueSize) + 1000;
+                                                const val = (parseInt(localMaxQueueSize) || 0) + 1000;
                                                 setLocalMaxQueueSize(val);
                                                 updateBrainLogic({ max_queue_size: val });
                                             }}>keyboard_arrow_up</span>
                                             <span className="material-symbols-outlined text-[12px] stepper-btn" onClick={() => {
-                                                const val = Math.max(100, parseInt(localMaxQueueSize) - 1000);
+                                                const val = Math.max(100, (parseInt(localMaxQueueSize) || 0) - 1000);
                                                 setLocalMaxQueueSize(val);
                                                 updateBrainLogic({ max_queue_size: val });
                                             }}>keyboard_arrow_down</span>
@@ -899,75 +900,9 @@ export default function Configuration() {
                             </div>
                         </div>
 
-                        {/* AI Engine */}
-                        <div className="glass-card rounded-[2rem] p-6 neon-border-emerald relative overflow-hidden group">
-                            <div className="absolute -right-4 -top-4 size-32 bg-emerald-400/20 blur-3xl rounded-full"></div>
-                            <div className="flex items-center gap-4 mb-6">
-                                <div className="size-10 rounded-xl bg-emerald-400/10 flex items-center justify-center text-emerald-400 border border-emerald-400/30 shadow-[0_0_15px_rgba(16,185,129,0.2)]">
-                                    <span className="material-symbols-outlined text-[22px]">neurology</span>
-                                </div>
-                                <h3 className="text-lg font-bold text-white tracking-tight">AI Engine</h3>
-                            </div>
-                            <div className="space-y-5">
-                                <div>
-                                    <label className="text-[11px] font-bold text-slate-400 mb-2 block uppercase tracking-wider">Context Epochs</label>
-                                    <input
-                                        className="w-full input-glass"
-                                        type="number"
-                                        value={localContextEpochs}
-                                        onChange={(e) => setLocalContextEpochs(e.target.value)}
-                                        onBlur={(e) => updateAIEngine({ ai_context_epochs: parseInt(e.target.value) })}
-                                    />
-                                </div>
-                                <div>
-                                    <div className="flex justify-between items-center mb-3">
-                                        <label className="text-[11px] font-bold text-slate-400 block uppercase tracking-wider !mb-0">Anomaly Sensitivity</label>
-                                        <span className="text-[10px] font-bold text-emerald-400 bg-emerald-400/10 px-2 py-0.5 rounded-full border border-emerald-400/30 shadow-[0_0_10px_rgba(16,185,129,0.3)]">
-                                            {localAnomalyThreshold}
-                                        </span>
-                                    </div>
-                                    <input
-                                        className="w-full"
-                                        max="1"
-                                        min="0"
-                                        step="0.01"
-                                        type="range"
-                                        value={localAnomalyThreshold}
-                                        onChange={(e) => setLocalAnomalyThreshold(e.target.value)}
-                                        onMouseUp={(e) => updateAIEngine({ ai_anomaly_threshold: parseFloat(e.target.value) })}
-                                        onTouchEnd={(e) => updateAIEngine({ ai_anomaly_threshold: parseFloat(e.target.value) })}
-                                    />
-                                </div>
-                            </div>
-                        </div>
-
-                        {/* Database */}
-                        <div className="glass-card rounded-[2rem] p-6 neon-border-purple relative overflow-hidden group">
-                            <div className="absolute -right-4 -top-4 size-32 bg-purple-400/20 blur-3xl rounded-full"></div>
-                            <div className="flex items-center gap-4 mb-6">
-                                <div className="size-10 rounded-xl bg-indigo-400/10 flex items-center justify-center text-indigo-400 border border-indigo-400/30 shadow-[0_0_15px_rgba(129,140,248,0.2)]">
-                                    <span className="material-symbols-outlined text-[22px]">storage</span>
-                                </div>
-                                <h3 className="text-lg font-bold text-white tracking-tight">Database</h3>
-                            </div>
-                            <div className="space-y-4">
-                                <div>
-                                    <label className="text-[11px] font-bold text-slate-400 mb-2 block uppercase tracking-wider">Vector Path</label>
-                                    <input className="w-full input-glass font-mono text-xs" placeholder="/path/to/db" type="text" defaultValue="DB/vector" />
-                                </div>
-                                <div>
-                                    <label className="text-[11px] font-bold text-slate-400 mb-2 block uppercase tracking-wider">Remote URL</label>
-                                    <input className="w-full input-glass font-mono text-xs" placeholder="None specified" type="text" />
-                                </div>
-                                <div>
-                                    <label className="text-[11px] font-bold text-slate-400 mb-2 block uppercase tracking-wider">Mongo URI</label>
-                                    <input className="w-full input-glass font-mono text-xs" placeholder="mongodb://..." type="text" defaultValue="mongodb://localhost:27017/" />
-                                </div>
-                            </div>
-                        </div>
 
                         {/* Memory */}
-                        <div className="glass-card rounded-[2rem] p-6 neon-border-rose relative overflow-hidden group">
+                        <div className="glass-card rounded-[2rem] p-6 neon-border-cyan relative overflow-hidden group">
                             <div className="absolute -right-4 -top-4 size-32 bg-pink-400/20 blur-3xl rounded-full"></div>
                             <div className="flex items-center gap-4 mb-6">
                                 <div className="size-10 rounded-xl bg-pink-400/10 flex items-center justify-center text-pink-400 border border-pink-400/30 shadow-[0_0_15px_rgba(244,114,182,0.2)]">
@@ -980,13 +915,17 @@ export default function Configuration() {
                                     <label className="text-[11px] font-bold text-slate-400 mb-2 block uppercase tracking-wider">Dedup Distance</label>
                                     <div className="relative flex items-center stepper-container">
                                         <input
-                                            className="w-full input-glass !pr-10"
+                                            className="w-full input-glass !pr-10 text-xs font-mono"
                                             id="mem-dedup-input"
                                             step="0.01"
                                             type="number"
                                             value={localMemDedup}
+                                            onFocus={() => setIsInteracting(true)}
                                             onChange={(e) => setLocalMemDedup(e.target.value)}
-                                            onBlur={(e) => updateMemory({ memory_dedup_dist: parseFloat(e.target.value) })}
+                                            onBlur={(e) => {
+                                                setIsInteracting(false);
+                                                updateMemory({ memory_dedup_dist: parseFloat(e.target.value) });
+                                            }}
                                         />
                                         <div className="absolute right-2 flex items-center gap-1 opacity-60">
                                             <span className="material-symbols-outlined text-[16px] stepper-btn" onClick={() => {
@@ -1005,19 +944,23 @@ export default function Configuration() {
                                 <div>
                                     <label className="text-[11px] font-bold text-slate-400 mb-2 block uppercase tracking-wider">Query Distance</label>
                                     <input
-                                        className="w-full input-glass"
+                                        className="w-full input-glass text-xs font-mono"
                                         step="0.01"
                                         type="number"
                                         value={localMemQuery}
+                                        onFocus={() => setIsInteracting(true)}
                                         onChange={(e) => setLocalMemQuery(e.target.value)}
-                                        onBlur={(e) => updateMemory({ memory_query_dist: parseFloat(e.target.value) })}
+                                        onBlur={(e) => {
+                                            setIsInteracting(false);
+                                            updateMemory({ memory_query_dist: parseFloat(e.target.value) });
+                                        }}
                                     />
                                 </div>
                             </div>
                         </div>
 
                         {/* Persistence */}
-                        <div className="glass-card rounded-[2rem] p-6 neon-border-amber relative overflow-hidden group">
+                        <div className="glass-card rounded-[2rem] p-6 neon-border-cyan relative overflow-hidden group">
                             <div className="absolute -right-4 -top-4 size-32 bg-orange-400/20 blur-3xl rounded-full"></div>
                             <div className="flex items-center justify-between mb-6">
                                 <div className="flex items-center gap-4">
@@ -1043,20 +986,24 @@ export default function Configuration() {
                                     <label className="text-[11px] font-bold text-slate-400 mb-2 block uppercase tracking-wider">Run Frequency (hrs)</label>
                                     <div className="relative flex items-center stepper-container">
                                         <input
-                                            className="w-full input-glass !pr-8"
+                                            className="w-full input-glass !pr-8 text-xs font-mono"
                                             type="number"
                                             value={localRetentionInterval}
+                                            onFocus={() => setIsInteracting(true)}
                                             onChange={(e) => setLocalRetentionInterval(e.target.value)}
-                                            onBlur={(e) => updatePersistence({ enabled: localRetentionEnabled, run_interval_hours: parseInt(e.target.value), keep_days: localRetentionDays })}
+                                            onBlur={(e) => {
+                                                setIsInteracting(false);
+                                                updatePersistence({ enabled: localRetentionEnabled, run_interval_hours: parseInt(e.target.value), keep_days: localRetentionDays });
+                                            }}
                                         />
                                         <div className="absolute right-2 flex flex-col opacity-60">
                                             <span className="material-symbols-outlined text-[12px] stepper-btn" onClick={() => {
-                                                const val = parseInt(localRetentionInterval) + 1;
+                                                const val = (parseInt(localRetentionInterval) || 0) + 1;
                                                 setLocalRetentionInterval(val);
                                                 updatePersistence({ enabled: localRetentionEnabled, run_interval_hours: val, keep_days: localRetentionDays });
                                             }}>keyboard_arrow_up</span>
                                             <span className="material-symbols-outlined text-[12px] stepper-btn" onClick={() => {
-                                                const val = Math.max(1, parseInt(localRetentionInterval) - 1);
+                                                const val = Math.max(1, (parseInt(localRetentionInterval) || 0) - 1);
                                                 setLocalRetentionInterval(val);
                                                 updatePersistence({ enabled: localRetentionEnabled, run_interval_hours: val, keep_days: localRetentionDays });
                                             }}>keyboard_arrow_down</span>
@@ -1099,51 +1046,127 @@ export default function Configuration() {
 
 
 
-                        {/* MISP Integration */}
-                        <div className="glass-card rounded-[2rem] p-6 neon-border-rose relative overflow-hidden group">
-                            <div className="absolute -right-4 -top-4 size-32 bg-red-400/20 blur-3xl rounded-full"></div>
-                            <div className="flex items-center justify-between mb-6">
-                                <div className="flex items-center gap-4">
-                                    <div className="size-10 rounded-xl bg-red-400/10 flex items-center justify-center text-red-400 border border-red-400/30 shadow-[0_0_15px_rgba(248,113,113,0.2)]">
-                                        <span className="material-symbols-outlined text-[22px]">share_reviews</span>
-                                    </div>
-                                    <h3 className="text-lg font-bold text-white tracking-tight">MISP Integration</h3>
+
+                        {/* Database */}
+                        <div className="glass-card rounded-[2rem] p-6 neon-border-cyan relative overflow-hidden group">
+                            <div className="absolute -right-4 -top-4 size-32 bg-cyan-400/20 blur-3xl rounded-full"></div>
+                            <div className="flex items-center gap-4 mb-6">
+                                <div className="size-10 rounded-xl bg-cyan-400/10 flex items-center justify-center text-cyan-400 border border-cyan-400/30 shadow-[0_0_15px_rgba(34,211,238,0.2)]">
+                                    <span className="material-symbols-outlined text-[22px]">database</span>
                                 </div>
-                                <button
-                                    onClick={() => {
-                                        const val = !localMispEnabled;
-                                        setLocalMispEnabled(val);
-                                        updateMisp({ misp_enabled: val });
-                                    }}
-                                    className={`w-10 h-5 rounded-full relative transition-all ${localMispEnabled ? 'bg-primary shadow-[0_0_10px_rgba(37,106,244,0.4)]' : 'bg-white/10'}`}
-                                >
-                                    <span className={`absolute top-1 size-3 rounded-full transition-all ${localMispEnabled ? 'right-1 bg-white' : 'left-1 bg-slate-500'}`}></span>
-                                </button>
+                                <h3 className="text-lg font-bold text-white tracking-tight">Database</h3>
                             </div>
-                            <div className={`space-y-4 transition-all duration-500 ${!localMispEnabled ? 'opacity-40 grayscale pointer-events-none blur-[1px]' : ''}`}>
+                            <div className="space-y-4">
                                 <div>
-                                    <label className="text-[11px] font-bold text-slate-400 mb-2 block uppercase tracking-wider">Endpoint URL</label>
+                                    <label className="text-[11px] font-bold text-slate-400 mb-2 block uppercase tracking-wider">Qdrant Path</label>
                                     <input
-                                        className="w-full input-glass text-xs"
-                                        placeholder="https://..."
+                                        className="w-full input-glass text-xs font-mono"
+                                        id="qdrant-path"
                                         type="text"
-                                        value={localMispUrl}
-                                        onChange={(e) => setLocalMispUrl(e.target.value)}
-                                        onBlur={(e) => updateMisp({ misp_url: e.target.value })}
+                                        value={localQdrantPath}
+                                        onFocus={() => setIsInteracting(true)}
+                                        onChange={(e) => setLocalQdrantPath(e.target.value)}
+                                        onBlur={(e) => {
+                                            setIsInteracting(false);
+                                            updateDatabase({ qdrant_path: e.target.value });
+                                        }}
                                     />
                                 </div>
-                                <div className="flex items-center justify-between p-3 rounded-2xl bg-white/5 border border-white/10">
-                                    <label className="text-xs font-bold text-slate-400 uppercase tracking-tighter">SSL Verify</label>
-                                    <button
-                                        onClick={() => {
-                                            const val = !localMispVerify;
-                                            setLocalMispVerify(val);
-                                            updateMisp({ misp_verify_ssl: val });
+                                <div>
+                                    <label className="text-[11px] font-bold text-slate-400 mb-2 block uppercase tracking-wider">Qdrant URL (optional)</label>
+                                    <input
+                                        className="w-full input-glass text-xs font-mono"
+                                        id="qdrant-url"
+                                        placeholder="http://localhost:6333"
+                                        type="text"
+                                        value={localQdrantUrl}
+                                        onFocus={() => setIsInteracting(true)}
+                                        onChange={(e) => setLocalQdrantUrl(e.target.value)}
+                                        onBlur={(e) => {
+                                            setIsInteracting(false);
+                                            updateDatabase({ qdrant_url: e.target.value || null });
                                         }}
-                                        className={`w-10 h-5 rounded-full relative transition-all ${localMispVerify ? 'bg-primary shadow-[0_0_10px_rgba(37,106,244,0.4)]' : 'bg-white/10'}`}
-                                    >
-                                        <span className={`absolute top-1 size-3 rounded-full transition-all ${localMispVerify ? 'right-1 bg-white' : 'left-1 bg-slate-500'}`}></span>
-                                    </button>
+                                    />
+                                </div>
+                                <div>
+                                    <label className="text-[11px] font-bold text-slate-400 mb-2 block uppercase tracking-wider">Mongo URI</label>
+                                    <input
+                                        className="w-full input-glass text-xs font-mono"
+                                        id="mongo-uri"
+                                        type="text"
+                                        value={localMongoUri}
+                                        onFocus={() => setIsInteracting(true)}
+                                        onChange={(e) => setLocalMongoUri(e.target.value)}
+                                        onBlur={(e) => {
+                                            setIsInteracting(false);
+                                            updateDatabase({ mongo_uri: e.target.value });
+                                        }}
+                                    />
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Checkpointing */}
+                        <div className="glass-card rounded-[2rem] p-6 flex flex-col gap-6 neon-border-cyan relative overflow-hidden group">
+                            <div className="absolute -right-4 -top-4 size-32 bg-orange-400/20 blur-3xl rounded-full"></div>
+                            <div className="flex items-center gap-4 relative z-10">
+                                <div className="size-10 rounded-xl bg-orange-400/10 flex items-center justify-center text-orange-400 border border-orange-400/30 shadow-[0_0_15px_rgba(251,146,60,0.2)]">
+                                    <span className="material-symbols-outlined text-[22px]">save</span>
+                                </div>
+                                <h3 className="text-lg font-bold text-white tracking-tight">Checkpointing</h3>
+                            </div>
+                            <div className="space-y-6">
+                                <div className="space-y-3">
+                                    <div className="flex justify-between items-center">
+                                        <label className="text-sm text-slate-300">Auto-save frequency</label>
+                                        <span className="text-xs font-mono text-primary bg-primary/10 px-2 py-0.5 rounded border border-primary/20 shadow-[0_0_10px_rgba(37,106,244,0.2)]">
+                                            {localCheckpointInterval}s
+                                        </span>
+                                    </div>
+                                    <input
+                                        className="w-full"
+                                        max="86400"
+                                        min="60"
+                                        type="range"
+                                        value={localCheckpointInterval}
+                                        onMouseDown={() => setIsInteracting(true)}
+                                        onTouchStart={() => setIsInteracting(true)}
+                                        onChange={(e) => setLocalCheckpointInterval(e.target.value)}
+                                        onMouseUp={() => {
+                                            setIsInteracting(false);
+                                            updateCheckpoint(localCheckpointInterval);
+                                        }}
+                                        onTouchEnd={() => {
+                                            setIsInteracting(false);
+                                            updateCheckpoint(localCheckpointInterval);
+                                        }}
+                                    />
+                                </div>
+                                <div className="space-y-3">
+                                    <div className="flex justify-between items-center">
+                                        <label className="text-sm text-slate-300">History Rotation</label>
+                                        <span className="text-xs font-mono text-primary bg-primary/10 px-2 py-0.5 rounded border border-primary/20 shadow-[0_0_10px_rgba(37,106,244,0.2)]">
+                                            {localMaxCheckpoints} f
+                                        </span>
+                                    </div>
+                                    <input
+                                        className="w-full"
+                                        max="50"
+                                        min="1"
+                                        type="range"
+                                        value={localMaxCheckpoints}
+                                        onMouseDown={() => setIsInteracting(true)}
+                                        onTouchStart={() => setIsInteracting(true)}
+                                        onChange={(e) => setLocalMaxCheckpoints(e.target.value)}
+                                        onMouseUp={() => {
+                                            setIsInteracting(false);
+                                            updateCheckpointHistory(localMaxCheckpoints);
+                                        }}
+                                        onTouchEnd={() => {
+                                            setIsInteracting(false);
+                                            updateCheckpointHistory(localMaxCheckpoints);
+                                        }}
+                                    />
                                 </div>
                             </div>
                         </div>
@@ -1151,21 +1174,6 @@ export default function Configuration() {
                 </div>
             )}
 
-            {/* Footer Quick Controls */}
-            <div className="flex items-center justify-start gap-6 pt-2">
-                <div className="glass-card rounded-2xl p-6 neon-border-amber flex flex-col gap-4 min-w-[320px]">
-                    <div className="flex items-center gap-3">
-                        <span className="material-symbols-outlined text-amber-400 text-xl">key</span>
-                        <h3 className="text-sm font-semibold text-white">API Key</h3>
-                    </div>
-                    <div className="relative">
-                        <input className="w-full input-glass !py-2.5 !px-4 !text-xs" readOnly type="password" defaultValue="••••••••••••••••" />
-                        <button className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white transition-colors">
-                            <span className="material-symbols-outlined text-[18px]">visibility</span>
-                        </button>
-                    </div>
-                </div>
-            </div>
 
             {/* Mobile Bottom Bar Actions */}
             <div className="mt-12 pt-8 border-t border-white/10 flex items-center justify-between lg:hidden">

@@ -4,13 +4,37 @@ import './Configuration.css';
 
 export default function Configuration() {
     const [showAdvanced, setShowAdvanced] = useState(false);
-    const { data: configData, loading: configLoading, refresh: refreshConfig } = useKinetixData('config');
-    const config = configData?.[0] || null;
+    const [config, setConfig] = useState(null);
+    const [configLoading, setConfigLoading] = useState(true);
     const [saving, setSaving] = useState(false);
     const [isDirty, setIsDirty] = useState(false);
     const [saveStatus, setSaveStatus] = useState(null); // 'success' | 'error' | null
     const [isInteracting, setIsInteracting] = useState(false);
     const [updating, setUpdating] = useState(false);
+
+    const refreshConfig = useCallback(async () => {
+        try {
+            setConfigLoading(true);
+            const token = localStorage.getItem('token');
+            const res = await fetch('http://localhost:8000/api/v1/data/config', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+                body: JSON.stringify({ limit: 1 })
+            });
+            if (res.ok) {
+                const json = await res.json();
+                setConfig(json.data?.[0] || null);
+            }
+        } catch (err) {
+            console.error('Failed to load config:', err);
+        } finally {
+            setConfigLoading(false);
+        }
+    }, []);
+
+    useEffect(() => {
+        refreshConfig();
+    }, [refreshConfig]);
 
     // --- Local State (mirrors config, editable by user) ---
     const [localCheckpointInterval, setLocalCheckpointInterval] = useState(3600);
@@ -234,8 +258,6 @@ export default function Configuration() {
         setIsDirty(true);
         setSaveStatus(null);
     };
-
-    if (configLoading && !config) return <div className="p-8 text-slate-400">Loading configuration...</div>;
 
     return (
         <main className="flex-1 pt-28 pb-8 px-8 max-w-[1440px] mx-auto w-full">
@@ -760,11 +782,101 @@ export default function Configuration() {
                                         onChange={(e) => { setLocalRetentionInterval(e.target.value); setIsDirty(true); setSaveStatus(null); }}
                                         onBlur={() => setIsInteracting(false)} />
                                 </div>
+                                <div>
+                                    <label className="text-[11px] font-bold text-slate-400 mb-2 block uppercase tracking-wider">Retention Days</label>
+                                    <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-[10px]">
+                                        {[
+                                            { key: 'ai_safe', label: 'Safe' },
+                                            { key: 'new_anomaly', label: 'Threat' },
+                                            { key: 'known_threat', label: 'Known' },
+                                            { key: 'false_positive', label: 'FP' },
+                                            { key: 'misp_alert', label: 'MISP' },
+                                            { key: 'ddos_evidence', label: 'DDoS' }
+                                        ].map(item => (
+                                            <div key={item.key} className="flex items-center justify-between gap-2 border-b border-white/5 pb-1">
+                                                <label className="text-slate-500 font-mono">{item.label}</label>
+                                                <input
+                                                    className="w-14 bg-white/5 border border-white/10 rounded px-1.5 py-0.5 text-white font-mono text-right focus:border-primary/50 outline-none transition-colors"
+                                                    type="number"
+                                                    value={localRetentionDays[item.key] || 0}
+                                                    onChange={(e) => {
+                                                        const newVal = parseInt(e.target.value) || 0;
+                                                        setLocalRetentionDays(prev => ({ ...prev, [item.key]: newVal }));
+                                                        setIsDirty(true); setSaveStatus(null);
+                                                    }}
+                                                />
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* MISP Integration */}
+                        <div className="glass-card rounded-[2rem] p-6 neon-border-rose relative overflow-hidden group">
+                            <div className="absolute -right-4 -top-4 size-32 bg-red-400/20 blur-3xl rounded-full"></div>
+                            <div className="flex items-center justify-between mb-6">
+                                <div className="flex items-center gap-4">
+                                    <div className="size-10 rounded-xl bg-red-400/10 flex items-center justify-center text-red-400 border border-red-400/30 shadow-[0_0_15px_rgba(248,113,113,0.2)]">
+                                        <span className="material-symbols-outlined text-[22px]">share_reviews</span>
+                                    </div>
+                                    <h3 className="text-lg font-bold text-white tracking-tight">MISP Integration</h3>
+                                </div>
+                                <button
+                                    onClick={() => { setLocalMispEnabled(!localMispEnabled); setIsDirty(true); setSaveStatus(null); }}
+                                    className={`w-10 h-5 rounded-full relative transition-all ${localMispEnabled ? 'bg-primary shadow-[0_0_10px_rgba(37,106,244,0.4)]' : 'bg-white/10'}`}
+                                >
+                                    <span className={`absolute top-1 size-3 rounded-full transition-all ${localMispEnabled ? 'right-1 bg-white' : 'left-1 bg-slate-500'}`}></span>
+                                </button>
+                            </div>
+                            <div className={`space-y-4 transition-all duration-500 ${!localMispEnabled ? 'opacity-40 grayscale pointer-events-none blur-[1px]' : ''}`}>
+                                <div>
+                                    <label className="text-[11px] font-bold text-slate-400 mb-2 block uppercase tracking-wider">Endpoint URL</label>
+                                    <input className="w-full input-glass text-xs" placeholder="https://..." type="text" value={localMispUrl}
+                                        onChange={(e) => { setLocalMispUrl(e.target.value); setIsDirty(true); setSaveStatus(null); }} />
+                                </div>
+                                <div className="flex items-center justify-between p-3 rounded-2xl bg-white/5 border border-white/10">
+                                    <label className="text-xs font-bold text-slate-400 uppercase tracking-tighter">SSL Verify</label>
+                                    <button
+                                        onClick={() => { setLocalMispVerify(!localMispVerify); setIsDirty(true); setSaveStatus(null); }}
+                                        className={`w-10 h-5 rounded-full relative transition-all ${localMispVerify ? 'bg-primary shadow-[0_0_10px_rgba(37,106,244,0.4)]' : 'bg-white/10'}`}
+                                    >
+                                        <span className={`absolute top-1 size-3 rounded-full transition-all ${localMispVerify ? 'right-1 bg-white' : 'left-1 bg-slate-500'}`}></span>
+                                    </button>
+                                </div>
                             </div>
                         </div>
                     </div>
                 </div>
             )}
+
+            {/* Footer Quick Controls */}
+            <div className="flex items-center justify-start gap-6 pt-2">
+                <div className="glass-card rounded-2xl p-6 neon-border-amber flex flex-col gap-4 min-w-[320px]">
+                    <div className="flex items-center gap-3">
+                        <span className="material-symbols-outlined text-amber-400 text-xl">key</span>
+                        <h3 className="text-sm font-semibold text-white">API Key</h3>
+                    </div>
+                    <div className="relative">
+                        <input className="w-full input-glass !py-2.5 !px-4 !text-xs" readOnly type="password" defaultValue="••••••••••••••••" />
+                        <button className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white transition-colors">
+                            <span className="material-symbols-outlined text-[18px]">visibility</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            {/* Mobile Bottom Bar Actions */}
+            <div className="mt-12 pt-8 border-t border-white/10 flex items-center justify-between lg:hidden">
+                <button className="text-slate-400 text-sm font-medium" onClick={() => { setIsDirty(true); }}>Reset all to factory defaults</button>
+                <button
+                    className={`px-8 py-3 rounded-xl font-bold ${isDirty ? 'bg-primary text-white shadow-[0_0_25px_rgba(37,106,244,0.6)]' : 'bg-white/10 text-slate-500 cursor-not-allowed'}`}
+                    onClick={() => { setSaveStatus('success'); setIsDirty(false); }}
+                    disabled={!isDirty || saving}
+                >
+                    {saving ? 'Saving...' : 'Apply All'}
+                </button>
+            </div>
         </main>
     );
 }

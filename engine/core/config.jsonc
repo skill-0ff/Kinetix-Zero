@@ -22,7 +22,8 @@
     "storage_policy": {
         "save_vectors": {
             "ai_safe": true,
-            "anomaly": true
+            "anomaly": true,
+            "ddos_evidence": true
         },
         "save_logs": {
             "ai_safe": true,

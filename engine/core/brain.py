@@ -430,16 +430,16 @@ class Brain:
             # Flush Metrics (1s)
             if now >= self.last_metrics_flush + self.metrics_interval:
                 try:
-                    # Log to Mongo
-                    if self.ai and getattr(self.ai, 'mongo_metrics', None) is not None:
-                        try:
-                            self.ai.mongo_metrics.insert_one({
-                                "timestamp": now,
-                                "eps_in": self.counter_in,
-                                "eps_out": self.counter_out,
-                                "uptime": now - self.start_time
-                            })
-                        except: pass
+                    # Log to Mongo (Disabled by User)
+                    # if self.ai and getattr(self.ai, 'mongo_metrics', None) is not None:
+                    #     try:
+                    #         self.ai.mongo_metrics.insert_one({
+                    #             "timestamp": now,
+                    #             "eps_in": self.counter_in,
+                    #             "eps_out": self.counter_out,
+                    #             "uptime": now - self.start_time
+                    #         })
+                    #     except: pass
                     
                     # Reset
                     self.counter_in = 0

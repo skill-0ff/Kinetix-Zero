@@ -308,10 +308,11 @@ export default function Configuration() {
                 </div>
             </div>
 
-            {/* Upper Config Grid */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-12 items-start">
-                {/* 1. Alert Management */}
-                <div className="glass-card rounded-[2rem] p-6 flex flex-col gap-6 neon-border-cyan relative overflow-hidden group">
+            {/* Upper Config Grid — 6-col grid for optimised card sizing */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-6 mb-12 items-start">
+
+                {/* 1. Alert Management — compact, 2 cols */}
+                <div className="lg:col-span-2 glass-card rounded-[2rem] p-6 flex flex-col gap-6 neon-border-cyan relative overflow-hidden group">
                     <div className="absolute -right-4 -top-4 size-32 bg-primary/20 blur-3xl rounded-full"></div>
                     <div className="flex items-center gap-4 relative z-10 transition-all duration-500">
                         <div className="size-10 rounded-xl bg-primary/10 flex items-center justify-center text-primary border border-primary/30 shadow-[0_0_15px_rgba(37,106,244,0.2)]">
@@ -347,8 +348,8 @@ export default function Configuration() {
                     </div>
                 </div>
 
-                {/* 2. Role Management */}
-                <div className="glass-card rounded-[2rem] p-6 flex flex-col gap-4 neon-border-cyan relative overflow-hidden group">
+                {/* 2. Role Management — tall card, 2 cols, spans 2 rows */}
+                <div className="lg:col-span-2 lg:row-span-2 glass-card rounded-[2rem] p-6 flex flex-col gap-4 neon-border-cyan relative overflow-hidden group h-full">
                     <div className="absolute -right-4 -top-4 size-32 bg-accent-purple/20 blur-3xl rounded-full"></div>
                     <div className="flex items-center justify-between relative z-10 transition-all duration-500">
                         <div className="flex items-center gap-4">
@@ -365,7 +366,7 @@ export default function Configuration() {
                         <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 text-lg">search</span>
                         <input className="w-full input-glass !pl-10 !py-2" placeholder="Search roles..." type="text" />
                     </div>
-                    <div className="space-y-2 overflow-y-auto max-h-[400px] pr-2 custom-scrollbar">
+                    <div className="space-y-2 overflow-y-auto flex-1 pr-2 custom-scrollbar">
                         <div className="p-3 rounded-xl bg-white/5 border border-white/10 flex items-center justify-between group hover:bg-white/10 transition-all">
                             <div className="flex items-center gap-3">
                                 <div className="size-2 rounded-full bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.6)]"></div>
@@ -390,37 +391,8 @@ export default function Configuration() {
                     </div>
                 </div>
 
-                {/* 3. Log Storage Control */}
-                <div className="glass-card rounded-[2rem] p-6 flex flex-col gap-6 neon-border-cyan relative overflow-hidden group">
-                    <div className="absolute -right-4 -top-4 size-32 bg-primary/20 blur-3xl rounded-full"></div>
-                    <div className="flex items-center gap-4 relative z-10 transition-all duration-500">
-                        <div className="size-10 rounded-xl bg-primary/10 flex items-center justify-center text-primary border border-primary/30 shadow-[0_0_15px_rgba(37,106,244,0.2)]">
-                            <span className="material-symbols-outlined text-[22px]">database</span>
-                        </div>
-                        <h3 className="text-lg font-bold text-white tracking-tight">Log Storage</h3>
-                    </div>
-                    <div className="grid grid-cols-2 gap-4">
-                        <div className="flex items-center justify-between p-3 rounded-xl bg-white/5 border border-white/10">
-                            <span className="text-xs text-slate-400">Safe</span>
-                            <button
-                                onClick={() => markDirty(setLocalStorageSafe)(!localStorageSafe)}
-                                className={`w-8 h-4 rounded-full relative transition-all ${localStorageSafe ? 'bg-primary shadow-[0_0_8px_rgba(37,106,244,0.4)]' : 'bg-white/10'}`}>
-                                <span className={`absolute top-0.5 size-3 rounded-full transition-all ${localStorageSafe ? 'right-0.5 bg-white' : 'left-0.5 bg-slate-400'}`}></span>
-                            </button>
-                        </div>
-                        <div className="flex items-center justify-between p-3 rounded-xl bg-white/5 border border-white/10">
-                            <span className="text-xs text-slate-400">Threat</span>
-                            <button
-                                onClick={() => markDirty(setLocalStorageAnomaly)(!localStorageAnomaly)}
-                                className={`w-8 h-4 rounded-full relative transition-all ${localStorageAnomaly ? 'bg-primary shadow-[0_0_8px_rgba(37,106,244,0.4)]' : 'bg-white/10'}`}>
-                                <span className={`absolute top-0.5 size-3 rounded-full transition-all ${localStorageAnomaly ? 'right-0.5 bg-white' : 'left-0.5 bg-slate-400'}`}></span>
-                            </button>
-                        </div>
-                    </div>
-                </div>
-
-                {/* 4. Checkpointing */}
-                <div className="glass-card rounded-[2rem] p-6 flex flex-col gap-6 neon-border-cyan relative overflow-hidden group">
+                {/* 3. Checkpointing — 2 cols */}
+                <div className="lg:col-span-2 glass-card rounded-[2rem] p-6 flex flex-col gap-6 neon-border-cyan relative overflow-hidden group">
                     <div className="absolute -right-4 -top-4 size-32 bg-primary/20 blur-3xl rounded-full"></div>
                     <div className="flex items-center gap-4 relative z-10 transition-all duration-500">
                         <div className="size-10 rounded-xl bg-primary/10 flex items-center justify-center text-primary border border-primary/30 shadow-[0_0_15px_rgba(37,106,244,0.2)]">
@@ -468,8 +440,37 @@ export default function Configuration() {
                     </div>
                 </div>
 
-                {/* 5. Forensics Control */}
-                <div className="glass-card rounded-[2rem] p-6 flex flex-col gap-6 neon-border-cyan relative overflow-hidden group">
+                {/* 4. Log Storage Control — compact, 2 cols */}
+                <div className="lg:col-span-2 glass-card rounded-[2rem] p-6 flex flex-col gap-6 neon-border-cyan relative overflow-hidden group">
+                    <div className="absolute -right-4 -top-4 size-32 bg-primary/20 blur-3xl rounded-full"></div>
+                    <div className="flex items-center gap-4 relative z-10 transition-all duration-500">
+                        <div className="size-10 rounded-xl bg-primary/10 flex items-center justify-center text-primary border border-primary/30 shadow-[0_0_15px_rgba(37,106,244,0.2)]">
+                            <span className="material-symbols-outlined text-[22px]">database</span>
+                        </div>
+                        <h3 className="text-lg font-bold text-white tracking-tight">Log Storage</h3>
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                        <div className="flex items-center justify-between p-3 rounded-xl bg-white/5 border border-white/10">
+                            <span className="text-xs text-slate-400">Safe</span>
+                            <button
+                                onClick={() => markDirty(setLocalStorageSafe)(!localStorageSafe)}
+                                className={`w-8 h-4 rounded-full relative transition-all ${localStorageSafe ? 'bg-primary shadow-[0_0_8px_rgba(37,106,244,0.4)]' : 'bg-white/10'}`}>
+                                <span className={`absolute top-0.5 size-3 rounded-full transition-all ${localStorageSafe ? 'right-0.5 bg-white' : 'left-0.5 bg-slate-400'}`}></span>
+                            </button>
+                        </div>
+                        <div className="flex items-center justify-between p-3 rounded-xl bg-white/5 border border-white/10">
+                            <span className="text-xs text-slate-400">Threat</span>
+                            <button
+                                onClick={() => markDirty(setLocalStorageAnomaly)(!localStorageAnomaly)}
+                                className={`w-8 h-4 rounded-full relative transition-all ${localStorageAnomaly ? 'bg-primary shadow-[0_0_8px_rgba(37,106,244,0.4)]' : 'bg-white/10'}`}>
+                                <span className={`absolute top-0.5 size-3 rounded-full transition-all ${localStorageAnomaly ? 'right-0.5 bg-white' : 'left-0.5 bg-slate-400'}`}></span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                {/* 5. Forensics Control — 2 cols */}
+                <div className="lg:col-span-2 glass-card rounded-[2rem] p-6 flex flex-col gap-6 neon-border-cyan relative overflow-hidden group">
                     <div className="absolute -right-4 -top-4 size-32 bg-amber-400/20 blur-3xl rounded-full"></div>
                     <div className="flex items-center gap-4 relative z-10">
                         <div className="size-10 rounded-xl bg-amber-400/10 flex items-center justify-center text-amber-400 border border-amber-400/30 shadow-[0_0_15px_rgba(245,158,11,0.2)]">
@@ -514,8 +515,8 @@ export default function Configuration() {
                     </div>
                 </div>
 
-                {/* 6. AI Engine */}
-                <div className="glass-card rounded-[2rem] p-6 neon-border-cyan relative overflow-hidden group">
+                {/* 6. AI Engine — 2 cols */}
+                <div className="lg:col-span-2 glass-card rounded-[2rem] p-6 neon-border-cyan relative overflow-hidden group">
                     <div className="absolute -right-4 -top-4 size-32 bg-emerald-400/20 blur-3xl rounded-full"></div>
                     <div className="flex items-center gap-4 mb-6 relative z-10">
                         <div className="size-10 rounded-xl bg-emerald-400/10 flex items-center justify-center text-emerald-400 border border-emerald-400/30 shadow-[0_0_15px_rgba(16,185,129,0.2)]">
@@ -569,8 +570,8 @@ export default function Configuration() {
                     </div>
                 </div>
 
-                {/* 8. MISP Integration */}
-                <div className="glass-card rounded-[2rem] p-6 neon-border-cyan relative overflow-hidden group">
+                {/* 7. MISP Integration — 2 cols */}
+                <div className="lg:col-span-2 glass-card rounded-[2rem] p-6 neon-border-cyan relative overflow-hidden group">
                     <div className="absolute -right-4 -top-4 size-32 bg-red-400/20 blur-3xl rounded-full"></div>
                     <div className="flex items-center justify-between mb-6">
                         <div className="flex items-center gap-4">
@@ -811,60 +812,10 @@ export default function Configuration() {
                                 </div>
                             </div>
                         </div>
-
-                        {/* MISP Integration */}
-                        <div className="glass-card rounded-[2rem] p-6 neon-border-rose relative overflow-hidden group">
-                            <div className="absolute -right-4 -top-4 size-32 bg-red-400/20 blur-3xl rounded-full"></div>
-                            <div className="flex items-center justify-between mb-6">
-                                <div className="flex items-center gap-4">
-                                    <div className="size-10 rounded-xl bg-red-400/10 flex items-center justify-center text-red-400 border border-red-400/30 shadow-[0_0_15px_rgba(248,113,113,0.2)]">
-                                        <span className="material-symbols-outlined text-[22px]">share_reviews</span>
-                                    </div>
-                                    <h3 className="text-lg font-bold text-white tracking-tight">MISP Integration</h3>
-                                </div>
-                                <button
-                                    onClick={() => { setLocalMispEnabled(!localMispEnabled); setIsDirty(true); setSaveStatus(null); }}
-                                    className={`w-10 h-5 rounded-full relative transition-all ${localMispEnabled ? 'bg-primary shadow-[0_0_10px_rgba(37,106,244,0.4)]' : 'bg-white/10'}`}
-                                >
-                                    <span className={`absolute top-1 size-3 rounded-full transition-all ${localMispEnabled ? 'right-1 bg-white' : 'left-1 bg-slate-500'}`}></span>
-                                </button>
-                            </div>
-                            <div className={`space-y-4 transition-all duration-500 ${!localMispEnabled ? 'opacity-40 grayscale pointer-events-none blur-[1px]' : ''}`}>
-                                <div>
-                                    <label className="text-[11px] font-bold text-slate-400 mb-2 block uppercase tracking-wider">Endpoint URL</label>
-                                    <input className="w-full input-glass text-xs" placeholder="https://..." type="text" value={localMispUrl}
-                                        onChange={(e) => { setLocalMispUrl(e.target.value); setIsDirty(true); setSaveStatus(null); }} />
-                                </div>
-                                <div className="flex items-center justify-between p-3 rounded-2xl bg-white/5 border border-white/10">
-                                    <label className="text-xs font-bold text-slate-400 uppercase tracking-tighter">SSL Verify</label>
-                                    <button
-                                        onClick={() => { setLocalMispVerify(!localMispVerify); setIsDirty(true); setSaveStatus(null); }}
-                                        className={`w-10 h-5 rounded-full relative transition-all ${localMispVerify ? 'bg-primary shadow-[0_0_10px_rgba(37,106,244,0.4)]' : 'bg-white/10'}`}
-                                    >
-                                        <span className={`absolute top-1 size-3 rounded-full transition-all ${localMispVerify ? 'right-1 bg-white' : 'left-1 bg-slate-500'}`}></span>
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
                     </div>
                 </div>
             )}
 
-            {/* Footer Quick Controls */}
-            <div className="flex items-center justify-start gap-6 pt-2">
-                <div className="glass-card rounded-2xl p-6 neon-border-amber flex flex-col gap-4 min-w-[320px]">
-                    <div className="flex items-center gap-3">
-                        <span className="material-symbols-outlined text-amber-400 text-xl">key</span>
-                        <h3 className="text-sm font-semibold text-white">API Key</h3>
-                    </div>
-                    <div className="relative">
-                        <input className="w-full input-glass !py-2.5 !px-4 !text-xs" readOnly type="password" defaultValue="••••••••••••••••" />
-                        <button className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white transition-colors">
-                            <span className="material-symbols-outlined text-[18px]">visibility</span>
-                        </button>
-                    </div>
-                </div>
-            </div>
 
             {/* Mobile Bottom Bar Actions */}
             <div className="mt-12 pt-8 border-t border-white/10 flex items-center justify-between lg:hidden">

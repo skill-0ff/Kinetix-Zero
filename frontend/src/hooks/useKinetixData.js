@@ -12,10 +12,20 @@ export const useKinetixData = (collection, initialQuery = {}) => {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
 
+    const queryStr = JSON.stringify(initialQuery);
+
     // 1. Initial Data Fetch
     const fetchData = useCallback(async () => {
         const token = localStorage.getItem('token');
-        if (!token) return;
+        console.log(`[useKinetixData] Fetching ${collection}, token exists:`, !!token);
+        if (!token) {
+            console.warn(`[useKinetixData] No token found, skipping fetch for ${collection}`);
+            setLoading(false);
+            return;
+        }
+
+        const query = JSON.parse(queryStr);
+        console.log(`[useKinetixData] Query for ${collection}:`, query);
 
         try {
             setLoading(true);
@@ -26,23 +36,26 @@ export const useKinetixData = (collection, initialQuery = {}) => {
                     'Authorization': `Bearer ${token}`
                 },
                 body: JSON.stringify({
-                    filter: initialQuery.filter || {},
-                    limit: initialQuery.limit ?? 50,
-                    sort_by: initialQuery.sort_by || 'timestamp',
-                    order: initialQuery.order || -1
+                    filter: query.filter || {},
+                    limit: query.limit ?? 50,
+                    sort_by: query.sort_by || 'timestamp',
+                    order: query.order || -1
                 })
             });
 
+            console.log(`[useKinetixData] Response for ${collection}:`, response.status, response.statusText);
             if (!response.ok) throw new Error(`Fetch failed: ${response.statusText}`);
 
             const result = await response.json();
+            console.log(`[useKinetixData] Got ${result.data?.length || 0} docs for ${collection}`);
             setData(result.data);
             setLoading(false);
         } catch (err) {
+            console.error(`[useKinetixData] Error for ${collection}:`, err.message);
             setError(err.message);
             setLoading(false);
         }
-    }, [collection, initialQuery]);
+    }, [collection, queryStr]);
 
     useEffect(() => {
         fetchData();

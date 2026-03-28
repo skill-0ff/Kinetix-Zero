@@ -79,7 +79,10 @@ def start_engine_process():
     if not os.path.exists(core_path):
         return False, "brain.py not found"
         
-    engine_proc = subprocess.Popen([sys.executable, core_path])
+    project_root = os.path.dirname(script_dir)
+    env = os.environ.copy()
+    env["PYTHONPATH"] = project_root + os.pathsep + env.get("PYTHONPATH", "")
+    engine_proc = subprocess.Popen([sys.executable, core_path], cwd=project_root, env=env)
     engine_start_time = time.time()
     print(f"[Control] Core process started [PID: {engine_proc.pid}]")
     return True, "Engine started"

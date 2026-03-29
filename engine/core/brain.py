@@ -150,12 +150,7 @@ class Brain:
         self.last_config_mtime = 0
         self.last_role_mtime = 0
         
-        # Missing variable initializations
-        self.counter_in = 0
-        self.counter_out = 0
-        self.last_metrics_flush = time.time()
-        self.metrics_interval = 1.0
-        self.start_time = time.time()
+        self.last_watchdog_check = time.time()
         self.evidence_queue = queue.Queue()
         
         # Initialize MISP (Optional)
@@ -284,7 +279,6 @@ class Brain:
         while not self.packet_queue.empty():
             try:
                 buffer_batch.append(self.packet_queue.get_nowait())
-                self.counter_in += 1
                 count += 1
                 # If we exceed limit significantly, we might as well stop and drop
                 # But to measure true size we'd need to drain all. 
@@ -391,7 +385,6 @@ class Brain:
                     try:
                         # Async Push (Fire and Forget)
                         self.ai.push_batch(vectors, aligned_logs)
-                        self.counter_out += len(vectors)
                     except Exception as e:
                         print(f"[AI Error] {e}")
 
@@ -427,26 +420,9 @@ class Brain:
                 self.check_hot_reload()
                 next_flush = now + self.time_window
             
-            # Flush Metrics (1s)
-            if now >= self.last_metrics_flush + self.metrics_interval:
-                try:
-                    # Log to Mongo
-                    if self.ai and getattr(self.ai, 'mongo_metrics', None) is not None:
-                        try:
-                            self.ai.mongo_metrics.insert_one({
-                                "timestamp": now,
-                                "eps_in": self.counter_in,
-                                "eps_out": self.counter_out,
-                                "uptime": now - self.start_time
-                            })
-                        except: pass
-                    
-                    # Reset
-                    self.counter_in = 0
-                    self.counter_out = 0
-                    self.last_metrics_flush = now
-                except:
-                   pass
+            # Watchdog (1s interval)
+            if now >= self.last_watchdog_check + 1.0:
+                self.last_watchdog_check = now
                 
                 # Watchdog: Single Process Control
                 if not self.receiver.is_alive():

@@ -104,8 +104,6 @@ class UnsupervisedAI(threading.Thread):
 
         # Log Store & Memory (Init)
         self._init_databases()
-        self._init_metrics()
-
         print(f"[AI] Async Worker Initialized on {self.device} (AMP Enabled). Context={self.context_epochs}")
         
         # Initial Load
@@ -257,20 +255,6 @@ class UnsupervisedAI(threading.Thread):
             self.mongo_metrics = None
             self.mongo_ddos = None
 
-    def _init_metrics(self):
-        """Reset the per-second accumulator"""
-        self.metrics_accum = {
-            "processed_count": 0,
-            "processed_bytes": 0,
-            "verdict_safe": 0,
-            "verdict_threat": 0, 
-            "verdict_new": 0,
-            "verdict_fp": 0,
-            "mem_saved": 0,
-            "mem_dropped": 0,
-        }
-        self.last_metric_time = time.time()
-
     def _load_initial_checkpoint(self):
         target = self.config.get("ai_checkpoint_file", "auto")
         
@@ -402,10 +386,6 @@ class UnsupervisedAI(threading.Thread):
                     self.last_config_check = now
                     self._check_config_reload()
                     
-                # Metrics Flush (Every 1s)
-                if now - self.last_metric_time >= 1.0:
-                    self._flush_metrics(now)
-
 
             except Exception as e:
                 print(f"[AI Worker Error] {e}")
@@ -420,177 +400,6 @@ class UnsupervisedAI(threading.Thread):
         except:
             pass
             
-    def _flush_metrics(self, timestamp):
-        """Flushes 1s of accumulated stats to MongoDB"""
-        if not hasattr(self, "metrics_accum"): return
-        if self.mongo_metrics is None: return # Should we reset anyway?
-        
-        # Calculate rates
-        # If interval > 1.0s, counts are total over interval.
-        # eps = processed_count / interval
-        
-        # Snapshot
-        data = self.metrics_accum.copy()
-        
-        # Snapshot Qdrant Vector Statistics
-        qdrant_stats = {"total": 0, "safe": 0, "anomaly": 0, "threat": 0}
-        try:
-            if hasattr(self, "memory") and self.memory:
-                from qdrant_client.http.models import Filter, FieldCondition, MatchValue
-                try:
-                    qdrant_stats["total"] = self.memory.get_collection(self.mem_collection).points_count
-                    qdrant_stats["safe"] = self.memory.count(self.mem_collection, count_filter=Filter(must=[FieldCondition(key="type", match=MatchValue(value="ai_safe"))])).count
-                    qdrant_stats["anomaly"] = self.memory.count(self.mem_collection, count_filter=Filter(must=[FieldCondition(key="type", match=MatchValue(value="New"))])).count
-                    qdrant_stats["threat"] = self.memory.count(self.mem_collection, count_filter=Filter(must=[FieldCondition(key="type", match=MatchValue(value="Threat"))])).count
-                except:
-                    pass
-        except:
-            pass
-
-        # Build Document
-        doc = {
-            "timestamp": timestamp,
-            "datetime": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(timestamp)),
-            "uptime_seconds": int(timestamp - self.start_time),
-            
-            "qdrant_stats": qdrant_stats,
-            
-            # Traffic
-            "eps": data["processed_count"], # Assuming ~1s flush
-            "throughput_bytes": data["processed_bytes"],
-            "queue_size": self.input_queue.qsize(),
-            "batch_queue": len(self.batch_buffer),
-            
-            # Decisions
-            "verdict_safe": data["verdict_safe"],
-            "verdict_threat": data["verdict_threat"],
-            "verdict_new": data["verdict_new"],
-            "verdict_fp": data["verdict_fp"],
-            
-            # Memory Details
-            "memory_saved": data["mem_saved"],
-            "memory_dropped": data["mem_dropped"],
-            
-            # Config Snapshot
-            "config": {
-                "threshold": self.config.get("ai_anomaly_threshold", 0.5),
-                "dedup": self.dedup_dist,
-                "query": self.query_dist,
-            }
-        }
-        
-        # System Stats (psutil removed, so only AI internal)
-        # However, we can track GPU utilization if available
-        if torch.cuda.is_available():
-            try:
-               doc["gpu_mem_reserved"] = torch.cuda.memory_reserved(self.device)
-               doc["gpu_mem_allocated"] = torch.cuda.memory_allocated(self.device)
-            except: pass
-
-        # --- NEW SYSTEM METRICS ---
-        try:
-            sys_metrics = self._get_system_metrics()
-            doc.update(sys_metrics)
-        except Exception as e:
-            print(f"[AI] Metrics Error: {e}")
-            
-        # Write to Mongo
-        try:
-            self.mongo_metrics.insert_one(doc)
-        except Exception as e:
-            print(f"[AI] Metric Write Failed: {e}")
-
-        # Reset accumulator and timestamp
-        self.last_metric_time = timestamp
-        self._init_metrics()
-
-    def _get_system_metrics(self):
-        """Captures System and Process Resource Usage"""
-        stats = {}
-        
-        # 1. System Level (Host)
-        stats["system_cpu_percent"] = psutil.cpu_percent(interval=None) # Non-blocking
-        
-        mem = psutil.virtual_memory()
-        stats["system_ram_percent"] = mem.percent
-        stats["system_ram_used_gb"] = round(mem.used / (1024**3), 2)
-        stats["system_ram_total_gb"] = round(mem.total / (1024**3), 2)
-        
-        # 2. Process Level (AI Worker)
-        proc = psutil.Process(os.getpid())
-        with proc.oneshot():
-            stats["process_cpu_percent"] = proc.cpu_percent(interval=None)
-            stats["process_ram_rss_mb"] = round(proc.memory_info().rss / (1024**2), 2)
-            stats["process_ram_percent"] = round(proc.memory_percent(), 2)
-
-        # 3. GPU Stats (Nvidia/AMD)
-        # We try to use simple command-line tools to avoid heavy python bindings
-        gpu_stats = self._get_gpu_stats()
-        if gpu_stats:
-            stats.update(gpu_stats)
-            
-        return stats
-
-    def _get_gpu_stats(self):
-        """Heuristic GPU Stats fetching without heavy libraries"""
-        gpus = {}
-        
-        # Check NVIDIA
-        if shutil.which("nvidia-smi"):
-            try:
-                # Get Utilization and Memory in CSV format: utilization.gpu, utilization.memory, memory.total, memory.used
-                result = subprocess.run(
-                    ['nvidia-smi', '--query-gpu=utilization.gpu,utilization.memory,memory.total,memory.used', '--format=csv,noheader,nounits'], 
-                    capture_output=True, text=True, timeout=0.5
-                )
-                if result.returncode == 0:
-                    lines = result.stdout.strip().split('\n')
-                    # We only take the first GPU for "System Summary" or average them?
-                    # Let's take the first one or max.
-                    # User asked for "Total Used".
-                    
-                    # If multiple GPUs, we can average util, sum memory.
-                    total_mem = 0
-                    used_mem = 0
-                    avg_util = 0
-                    
-                    for line in lines:
-                        parts = [float(x.strip()) for x in line.split(',')]
-                        # parts: [gpu_util, mem_util_percent, mem_total_mb, mem_used_mb]
-                        avg_util += parts[0]
-                        total_mem += parts[2]
-                        used_mem += parts[3]
-                        
-                    if len(lines) > 0:
-                        gpus["system_gpu_percent"] = round(avg_util / len(lines), 1)
-                        gpus["system_gpu_mem_percent"] = round((used_mem / total_mem) * 100, 1) if total_mem > 0 else 0
-                        gpus["system_gpu_mem_used_mb"] = int(used_mem)
-                        gpus["gpu_vendor"] = "nvidia"
-                        
-            except Exception as e:
-                # print(f"Nvidia stats failed: {e}")
-                pass
-
-        # Check AMD (ROCm)
-        elif shutil.which("rocm-smi"):
-            try:
-                # rocm-smi --showuse --json
-                # This might be complex to parse if JSON not available or format changes.
-                # Simple CSV approach: rocm-smi --showuse --csv
-                # Output: device, GPU use (%), GFX Clock, ...
-                # Let's try JSON if supported, else skipped for stability unless user has it.
-                # Fallback to simple check?
-                pass
-            except:
-                pass
-                
-        # Fallback: PyTorch (Process specific, but accurate for this worker)
-        if torch.cuda.is_available() and "system_gpu_percent" not in gpus:
-             # We can't get SYSTEM wide load from Torch easily. 
-             # But we can report Allocated as before.
-             pass
-             
-
     def push_evidence(self, evidence):
         """
         Save DDoS/Drop evidence samples to MongoDB.
@@ -775,14 +584,6 @@ class UnsupervisedAI(threading.Thread):
         cpu_losses = enforced_losses[0].detach().cpu().numpy()
         cpu_threshold = threshold
         
-        # Metrics: Count Batch
-        if hasattr(self, "metrics_accum"):
-            self.metrics_accum["processed_count"] += len(full_logs) # Roughly
-            # Actually we only process 'new_window' items effectively? 
-            # No, 'valid_indices' are the enforceable ones.
-            # Let's count 'processed' as Input EPS.
-            # self.metrics_accum["processed_count"] += len(new_window) # Passed in arg
-            pass
 
         # Lists for Batch Query
         query_vectors = []
@@ -935,16 +736,6 @@ class UnsupervisedAI(threading.Thread):
                 print(json.dumps(ctx["log"], indent=2))
 
             # Update Metric Counters
-            if hasattr(self, "metrics_accum"):
-                if verdict == "Safe": self.metrics_accum["verdict_safe"] += 1
-                elif verdict == "NEW ANOMALY": self.metrics_accum["verdict_new"] += 1
-                elif verdict == "KNOWN THREAT": self.metrics_accum["verdict_threat"] += 1
-                elif verdict == "FALSE POSITIVE": self.metrics_accum["verdict_fp"] += 1
-                
-                # Estimate Bytes
-                try:
-                    self.metrics_accum["processed_bytes"] += len(json.dumps(ctx["log"]))
-                except: pass
             
             # --- MONGO STORE (Save Everything) ---
             if self.mongo_events is not None:
@@ -983,9 +774,6 @@ class UnsupervisedAI(threading.Thread):
                      points=points_to_upsert
                  )
                  # Update metric
-                 if hasattr(self, "metrics_accum"):
-                     self.metrics_accum["mem_saved"] += len(points_to_upsert)
-             except Exception as e:
                  print(f"[AI] Memory Save Failed: {e}")
                  
         # B. Mongo (Logs)

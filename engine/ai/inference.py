@@ -228,7 +228,6 @@ class UnsupervisedAI(threading.Thread):
             self.mongo_client = MongoClient(self.mongo_uri, **mongo_kwargs)
             self.mongo_db = self.mongo_client["kinetix_brain"]
             self.mongo_events = self.mongo_db["events"]
-            self.mongo_metrics = self.mongo_db["metrics"]
             self.mongo_ddos = self.mongo_db["ddos"]
             
             # Check Connection
@@ -242,9 +241,6 @@ class UnsupervisedAI(threading.Thread):
             self.mongo_events.create_index([("timestamp", DESCENDING)], background=True)
             self.mongo_events.create_index([("uuid", ASCENDING)], unique=True, background=True) 
             
-            # Metrics Index (auto-expire not implemented yet per user req, but helpful)
-            self.mongo_metrics.create_index([("timestamp", DESCENDING)], background=True) 
-            
             # DDoS Index (TTL?)
             self.mongo_ddos.create_index([("timestamp", DESCENDING)], background=True)
             
@@ -252,7 +248,6 @@ class UnsupervisedAI(threading.Thread):
             print(f"[AI] MongoDB Init Failed: {e}")
             self.mongo_client = None
             self.mongo_events = None
-            self.mongo_metrics = None
             self.mongo_ddos = None
 
     def _load_initial_checkpoint(self):
@@ -684,7 +679,6 @@ class UnsupervisedAI(threading.Thread):
                 # Scenario 1: False Positive
                 if mem_type == "Safe" and mem_dist < self.query_dist:
                     verdict = "FALSE POSITIVE"
-                    # Optimization: Maybe log FP occurrence in metrics?
                     
                 # Scenario 2: Known Threat
                 elif mem_type == "Threat" and mem_dist < self.query_dist:
@@ -735,8 +729,6 @@ class UnsupervisedAI(threading.Thread):
                     print(f"  >> [DETAILS] Time: {ts_val}")
                 print(json.dumps(ctx["log"], indent=2))
 
-            # Update Metric Counters
-            
             # --- MONGO STORE (Save Everything) ---
             if self.mongo_events is not None:
                 # Prepare Relational Doc
@@ -773,7 +765,7 @@ class UnsupervisedAI(threading.Thread):
                      collection_name=self.mem_collection,
                      points=points_to_upsert
                  )
-                 # Update metric
+             except Exception as e:
                  print(f"[AI] Memory Save Failed: {e}")
                  
         # B. Mongo (Logs)

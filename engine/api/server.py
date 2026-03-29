@@ -260,11 +260,12 @@ async def stream_data(user: dict = Depends(get_current_user)):
     async def event_generator():
         # Fallback to polling if not a Replica Set (Change Streams require Replica Sets)
         last_ts = time.time()
+        last_metric_ts = 0
         
         while True:
             found_new = False
             try:
-                for coll_name in ["events", "metrics", "ddos"]:
+                for coll_name in ["events", "ddos"]:
                     coll = db.get_collection(coll_name)
                     # Find docs newer than last_ts, limit to 20 per cycle to avoid blocking
                     new_docs = list(coll.find({"timestamp": {"$gt": last_ts}}).sort("timestamp", 1).limit(20))
@@ -275,6 +276,18 @@ async def stream_data(user: dict = Depends(get_current_user)):
                         yield f"data: {msg}\n\n"
                         last_ts = max(last_ts, doc.get("timestamp", 0))
                         found_new = True
+                        
+                # Read metrics from local JSON file to bypass MongoDB
+                metrics_path = os.path.join(os.path.dirname(__file__), "..", "core", "system_metrics.json")
+                if os.path.exists(metrics_path):
+                    try:
+                        with open(metrics_path, "r") as f:
+                            metrics_data = json.load(f)
+                        if metrics_data and metrics_data.get("timestamp", 0) > last_metric_ts:
+                            yield f"data: {json.dumps({'type': 'metrics', 'doc': metrics_data})}\n\n"
+                            last_metric_ts = metrics_data.get("timestamp", 0)
+                            found_new = True
+                    except: pass
                 
                 if not found_new:
                     # Heartbeat to keep connection alive

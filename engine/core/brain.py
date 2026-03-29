@@ -8,6 +8,9 @@ import datetime
 import select
 import random
 import uuid
+import psutil
+import subprocess
+import shutil
 
 # Add engine path
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
@@ -153,6 +156,19 @@ class Brain:
         self.last_watchdog_check = time.time()
         self.evidence_queue = queue.Queue()
         
+        # Local Memory Metrics
+        self.start_time = time.time()
+        self.system_metrics = {
+            "cpu": 0.0,
+            "ram": 0.0,
+            "gpu": 0.0,
+            "eps_in": 0.0,
+            "mbps": 0.0,
+            "uptime": 0
+        }
+        self._accum_count = 0
+        self._accum_bytes = 0
+        
         # Initialize MISP (Optional)
         self.misp = None
         if MispClient:
@@ -290,6 +306,11 @@ class Brain:
         
         if count == 0: return
 
+        self._accum_count += count
+        try:
+            self._accum_bytes += sum(len(x) if isinstance(x, (bytes, str)) else 0 for x in buffer_batch)
+        except: pass
+
         # DDoS Zone Check (Logic Layer)
         if count >= limit:
             print(f"[ALERT] DDoS DETECTED! Count={count} > Limit={limit}. DROPPING BATCH.")
@@ -422,7 +443,30 @@ class Brain:
             
             # Watchdog (1s interval)
             if now >= self.last_watchdog_check + 1.0:
+                elapsed = now - self.last_watchdog_check
                 self.last_watchdog_check = now
+                
+                # Update Performance Metrics Variable
+                self.system_metrics["uptime"] = int(now - self.start_time)
+                self.system_metrics["eps_in"] = round(self._accum_count / elapsed, 2)
+                self.system_metrics["mbps"] = round((self._accum_bytes / elapsed) / (1024 * 1024), 4)
+                self._accum_count = 0
+                self._accum_bytes = 0
+                
+                try:
+                    self.system_metrics["cpu"] = psutil.cpu_percent()
+                    self.system_metrics["ram"] = psutil.virtual_memory().percent
+                    if shutil.which("nvidia-smi"):
+                        out = subprocess.run(['nvidia-smi', '--query-gpu=utilization.gpu', '--format=csv,noheader,nounits'], capture_output=True, text=True, timeout=0.2).stdout
+                        vals = [float(x.strip()) for x in out.strip().split('\n') if x.strip()]
+                        self.system_metrics["gpu"] = round(sum(vals)/len(vals), 1) if vals else 0.0
+                except: pass
+                
+                metrics_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "system_metrics.json")
+                try:
+                    with open(metrics_path, "w") as f:
+                        json.dump({"timestamp": now, **self.system_metrics}, f)
+                except: pass
                 
                 # Watchdog: Single Process Control
                 if not self.receiver.is_alive():

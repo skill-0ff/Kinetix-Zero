@@ -12,13 +12,11 @@ export default function AIIntelligence() {
     // Live metrics state
     const [stats, setStats] = useState({
         anomalyScore: 7.4,         // Mock
-        modelAccuracy: 99.84,      // Mock
-        falsePositiveRate: 0.12,   // Mock
-        inferenceSpeed: 12,        // Mock
+        falsePositiveRate: 0,
         logsPerSec: 0,             // Live
-        totalProcessed: '14.2M',   // Mock
-        memoryVectors: '892K',     // Mock
-        activeThreats: 23,         // Mock
+        totalProcessed: '0',
+        memoryVectors: '0',
+        activeThreats: 0,
         gpuUsage: 0,               // Live
         cpuUsage: 0,               // Live
         ramUsage: 0                // Live
@@ -54,6 +52,21 @@ export default function AIIntelligence() {
                             logsPerSec: 0
                         }));
                     }
+                }
+
+                // Fetch real DB stats for Memory Vectors and Active Threats
+                const dbRes = await fetch('http://localhost:8000/api/v1/system/db-stats', {
+                    headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+                });
+                const dbData = await dbRes.json();
+                if (dbData.status === 'online' && isMounted) {
+                    setStats(prev => ({
+                        ...prev,
+                        memoryVectors: dbData.vector_count?.toLocaleString() || '0',
+                        activeThreats: dbData.active_threats || 0,
+                        totalProcessed: dbData.objects?.toLocaleString() || '0',
+                        falsePositiveRate: dbData.fpr || 0
+                    }));
                 }
             } catch (error) {
                 console.error('Failed to fetch AI engine status:', error);
@@ -260,65 +273,38 @@ export default function AIIntelligence() {
 
                 {/* Right Stats Column */}
                 <div className="flex flex-col gap-4">
-                    {/* Model Accuracy */}
-                    <div className="premium-glass rounded-2xl p-5 border border-white/5 flex-1">
-                        <div className="flex items-center gap-2 mb-3">
-                            <span className="material-symbols-outlined text-[16px] text-success">verified</span>
-                            <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Model Accuracy</span>
-                        </div>
-                        <div className="text-3xl font-black text-white tabular-nums">
-                            {stats.modelAccuracy}%
-                        </div>
-                        <span className="text-[10px] text-success font-bold flex items-center gap-0.5 mt-1">
-                            <span className="material-symbols-outlined text-[12px]">arrow_upward</span> 0.02%
-                        </span>
-                    </div>
-
                     {/* False Positive Rate */}
-                    <div className="premium-glass rounded-2xl p-5 border border-white/5 flex-1">
+                    <div className="premium-glass rounded-2xl p-5 border border-white/5">
                         <div className="flex items-center gap-2 mb-3">
                             <span className="material-symbols-outlined text-[16px] text-primary">shield</span>
                             <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">False Positive Rate</span>
                         </div>
-                        <div className="text-3xl font-black text-white tabular-nums">
+                        <div className="text-2xl font-black text-white tabular-nums">
                             {stats.falsePositiveRate}%
                         </div>
-                        <span className="text-[10px] text-success font-bold flex items-center gap-0.5 mt-1">
-                            <span className="material-symbols-outlined text-[12px]">arrow_downward</span> 0.05%
-                        </span>
                     </div>
 
-                    {/* Inference Speed */}
-                    <div className="premium-glass rounded-2xl p-5 border border-white/5 flex-1">
-                        <div className="flex items-center gap-2 mb-3">
-                            <span className="material-symbols-outlined text-[16px] text-warning">speed</span>
-                            <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Inference Speed</span>
-                        </div>
-                        <div className="text-3xl font-black text-white tabular-nums flex items-baseline gap-1">
-                            {stats.inferenceSpeed}<span className="text-sm text-slate-500">ms</span>
-                        </div>
-                        <span className="text-[10px] text-slate-500 mt-1">avg per event</span>
+                    {/* Vertical Live Metrics */}
+                    <div className="flex flex-col gap-4">
+                        {[
+                            { label: 'Logs/sec', value: stats.logsPerSec.toLocaleString(), icon: 'speed', color: 'primary' },
+                            { label: 'Total Processed', value: stats.totalProcessed, icon: 'database', color: 'accent-purple' },
+                            { label: 'Memory Vectors', value: stats.memoryVectors, icon: 'memory', color: 'pink-500' },
+                            { label: 'Active Threats', value: stats.activeThreats, icon: 'warning', color: 'danger' },
+                        ].map(({ label, value, icon, color }) => (
+                            <div key={label} className="premium-glass rounded-2xl p-5 border border-white/5">
+                                <div className="flex items-center gap-2 mb-3">
+                                    <span className={`material-symbols-outlined text-[16px] text-${color}`}>{icon}</span>
+                                    <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">{label}</span>
+                                </div>
+                                <div className="text-2xl font-black text-white tabular-nums">{value}</div>
+                            </div>
+                        ))}
                     </div>
                 </div>
             </div>
 
-            {/* ─── Live Metrics Row ─── */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                {[
-                    { label: 'Logs/sec', value: stats.logsPerSec.toLocaleString(), icon: 'speed', color: 'primary' },
-                    { label: 'Total Processed', value: stats.totalProcessed, icon: 'database', color: 'accent-purple' },
-                    { label: 'Memory Vectors', value: stats.memoryVectors, icon: 'memory', color: 'pink-500' },
-                    { label: 'Active Threats', value: stats.activeThreats, icon: 'warning', color: 'danger' },
-                ].map(({ label, value, icon, color }) => (
-                    <div key={label} className="premium-glass rounded-2xl p-5 border border-white/5">
-                        <div className="flex items-center gap-2 mb-3">
-                            <span className={`material-symbols-outlined text-[16px] text-${color}`}>{icon}</span>
-                            <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">{label}</span>
-                        </div>
-                        <div className="text-2xl font-black text-white tabular-nums">{value}</div>
-                    </div>
-                ))}
-            </div>
+
 
             {/* ─── System Resources & Activity Log (Side by Side) ─── */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">

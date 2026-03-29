@@ -15,6 +15,8 @@ from pymongo import MongoClient, DESCENDING
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 from dotenv import load_dotenv
+from qdrant_client import QdrantClient
+from qdrant_client.models import Distance, VectorParams
 
 load_dotenv()
 
@@ -241,6 +243,43 @@ async def get_db_stats(user: dict = Depends(get_current_user)):
         except Exception as q_err:
             print(f"DEBUG: Qdrant stats error: {q_err}")
 
+        # Calculate Real Vector Count
+        vector_count = 0
+        try:
+            q_url = os.getenv("QDRANT_URL")
+            # q_path was resolved above in existing size calculation
+            if q_url:
+                q_client = QdrantClient(url=q_url, api_key=os.getenv("QDRANT_API_KEY"))
+            else:
+                q_client = QdrantClient(path=full_q_path)
+            
+            collections = q_client.get_collections()
+            if any(c.name == "brain_memory" for c in collections.collections):
+                vector_count = q_client.count(collection_name="brain_memory").count
+        except Exception as q_err:
+            print(f"DEBUG: Qdrant count error: {q_err}")
+
+        # Calculate Active Threats
+        active_threats = 0
+        try:
+            # Count events with Anomaly or Threat verdicts
+            active_threats += db.events.count_documents({"verdict": {"$regex": "ANOMALY|THREAT", "$options": "i"}})
+            # Also count ddos events as threats
+            active_threats += db.ddos.count_documents({})
+        except Exception as m_err:
+            print(f"DEBUG: MongoDB threat count error: {m_err}")
+
+        # Calculate FPR
+        fpr = 0.0
+        try:
+            false_positives = db.events.count_documents({"verdict": {"$regex": "FALSE POSITIVE", "$options": "i"}})
+            safe_events = db.events.count_documents({"verdict": {"$regex": "SAFE PATTERN", "$options": "i"}})
+            total_benign = false_positives + safe_events
+            if total_benign > 0:
+                fpr = (false_positives / total_benign) * 100
+        except Exception as fpr_err:
+            print(f"DEBUG: MongoDB FPR count error: {fpr_err}")
+
         return {
             "status": "online",
             "db_name": stats.get("db"),
@@ -249,7 +288,10 @@ async def get_db_stats(user: dict = Depends(get_current_user)):
             "data_size_bytes": data_size,
             "index_size_bytes": index_size,
             "total_size_bytes": total_size,
-            "qdrant_size_bytes": qdrant_size_bytes
+            "qdrant_size_bytes": qdrant_size_bytes,
+            "vector_count": vector_count,
+            "active_threats": active_threats,
+            "fpr": round(fpr, 2)
         }
     except Exception as e:
         print(f"DEBUG: DB connection error: {str(e)}")

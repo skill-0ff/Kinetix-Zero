@@ -454,11 +454,14 @@ class Brain:
                 self._accum_bytes = 0
                 
                 try:
-                    self.system_metrics["cpu"] = psutil.cpu_percent()
-                    self.system_metrics["ram"] = psutil.virtual_memory().percent
+                    p = psutil.Process(os.getpid())
+                    # Because we call this every second, passing no interval returns usage since last call
+                    self.system_metrics["cpu"] = round(p.cpu_percent(), 1)
+                    self.system_metrics["ram"] = round(p.memory_percent(), 1)
                     if shutil.which("nvidia-smi"):
                         out = subprocess.run(['nvidia-smi', '--query-gpu=utilization.gpu', '--format=csv,noheader,nounits'], capture_output=True, text=True, timeout=0.2).stdout
                         vals = [float(x.strip()) for x in out.strip().split('\n') if x.strip()]
+                        # GPU utilization currently tracks all GPUs on the system.
                         self.system_metrics["gpu"] = round(sum(vals)/len(vals), 1) if vals else 0.0
                 except: pass
                 

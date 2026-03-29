@@ -1,4 +1,4 @@
-import React, { useRef } from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import { useKinetixData } from '../hooks/useKinetixData';
 
 export default function Overview() {
@@ -17,6 +17,41 @@ export default function Overview() {
     // Database polling state
     const [dbStats, setDbStats] = React.useState(null);
     const [dbOffline, setDbOffline] = React.useState(false);
+
+    // ─── Live metrics from brain SSE ───
+    const [liveMetrics, setLiveMetrics] = useState({ cpu: 0, ram: 0, gpu: 0, eps: 0 });
+    const [epsHistory, setEpsHistory] = useState([]);
+    const [liveTimestamp, setLiveTimestamp] = useState(null);
+    const isLiveConnected = liveTimestamp && (Date.now() / 1000 - liveTimestamp) < 20;
+
+    useEffect(() => {
+        const token = localStorage.getItem('token');
+        if (!token) return;
+        const es = new EventSource(`http://localhost:8000/api/v1/stream?token=${token}`);
+        es.onmessage = (event) => {
+            if (event.data === ': heartbeat') return;
+            try {
+                const update = JSON.parse(event.data);
+                if (update.type === 'metrics' && update.doc) {
+                    const m = update.doc;
+                    const now = Date.now() / 1000;
+                    setLiveTimestamp(now);
+                    setLiveMetrics({
+                        cpu: Math.round(m.cpu || 0),
+                        ram: Math.round(m.ram || 0),
+                        gpu: Math.round(m.gpu || 0),
+                        eps: m.eps_in || 0,
+                    });
+                    setEpsHistory(prev => {
+                        const next = [...prev, { eps: m.eps_in || 0, ts: now }];
+                        return next.slice(-40); // keep last 40 data points
+                    });
+                }
+            } catch { }
+        };
+        es.onerror = () => es.close();
+        return () => es.close();
+    }, []);
 
     React.useEffect(() => {
         let cancelled = false;
@@ -185,7 +220,7 @@ export default function Overview() {
                         <span className="material-symbols-outlined text-slate-400">developer_board</span>
                     </div>
                     {(() => {
-                        const hasSignal = isServerConnected;
+                        const hasSignal = isLiveConnected;
                         if (!hasSignal) {
                             return (
                                 <div className="flex-1 w-full flex flex-col items-center justify-center gap-3 py-2">
@@ -199,15 +234,7 @@ export default function Overview() {
                                 </div>
                             );
                         }
-                        // Use last known good values to prevent 0% blink
-                        if (currentMetrics.system_cpu_percent != null) {
-                            lastSystemRef.current = {
-                                cpu: Math.round(currentMetrics.system_cpu_percent),
-                                gpu: Math.round(currentMetrics.system_gpu_percent || 0),
-                                ram: Math.round(currentMetrics.system_ram_percent || 0),
-                            };
-                        }
-                        const { cpu, gpu, ram } = lastSystemRef.current;
+                        const { cpu, gpu, ram } = liveMetrics;
                         const offset = (pct) => 100 - pct;
                         const circleStyle = { transition: 'stroke-dashoffset 1s ease-in-out' };
                         return (
@@ -256,7 +283,7 @@ export default function Overview() {
                         </div>
                         <div className="flex items-center gap-4">
                             <div className="text-right">
-                                <span className="text-xl font-bold tracking-tight text-white">{currentMetrics.eps || 0}</span>
+                                <span className="text-xl font-bold tracking-tight text-white">{liveMetrics.eps.toFixed(1)}</span>
                                 <p className="text-[10px] text-slate-500">current</p>
                             </div>
                             <div className="flex gap-1">
@@ -265,9 +292,9 @@ export default function Overview() {
                         </div>
                     </div>
                     {(() => {
-                        const sliced = metrics.slice(0, 40).reverse();
+                        const sliced = epsHistory;
                         const epsData = sliced.map(m => m.eps || 0);
-                        const hasSignal = isServerConnected;
+                        const hasSignal = isLiveConnected;
 
                         if (!hasSignal) {
                             return (
@@ -293,9 +320,7 @@ export default function Overview() {
                         const linePath = `M ${points.join(' L ')}`;
                         const areaPath = `${linePath} L 400,100 L 0,100 Z`;
 
-                        const oldestTs = sliced[0]?.timestamp;
-                        const newestTs = sliced[sliced.length - 1]?.timestamp;
-                        const formatTs = (ts) => ts ? new Date(ts * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '--:--';
+                        const formatTs = (item) => item ? new Date(item.ts * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '--:--';
 
                         return (
                             <>
@@ -312,7 +337,7 @@ export default function Overview() {
                                     </svg>
                                 </div>
                                 <div className="flex justify-end mt-4 text-[9px] text-slate-500 font-medium">
-                                    <span>{formatTs(newestTs)}</span>
+                                    <span>{formatTs(sliced[sliced.length - 1])}</span>
                                 </div>
                             </>
                         );

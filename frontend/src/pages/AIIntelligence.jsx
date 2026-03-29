@@ -1,8 +1,127 @@
 import React, { useState, useEffect } from 'react';
 
 export default function AIIntelligence() {
-    const [aiRunning, setAiRunning] = useState(true);
-    const [uptimeSeconds, setUptimeSeconds] = useState(14523); // Mock: ~4 hours
+    const [aiRunning, setAiRunning] = useState(false);
+    const [uptimeSeconds, setUptimeSeconds] = useState(0);
+
+    // Engine Activity Log state — seeded with examples until real events arrive
+    const [activityLog, setActivityLog] = useState([
+        { time: '---', msg: '[System] Waiting for engine events...', type: 'info' },
+    ]);
+
+    // Live metrics state
+    const [stats, setStats] = useState({
+        anomalyScore: 7.4,         // Mock
+        modelAccuracy: 99.84,      // Mock
+        falsePositiveRate: 0.12,   // Mock
+        inferenceSpeed: 12,        // Mock
+        logsPerSec: 0,             // Live
+        totalProcessed: '14.2M',   // Mock
+        memoryVectors: '892K',     // Mock
+        activeThreats: 23,         // Mock
+        gpuUsage: 0,               // Live
+        cpuUsage: 0,               // Live
+        ramUsage: 0                // Live
+    });
+
+    // Fetch engine status & setup SSE
+    useEffect(() => {
+        let isMounted = true;
+        let eventSource = null;
+
+        const fetchStatus = async () => {
+            try {
+                const token = localStorage.getItem('token');
+                const res = await fetch('http://localhost:8000/api/v1/system/engine/ai/control', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+                    },
+                    body: JSON.stringify({ action: 'status' })
+                });
+                const data = await res.json();
+                if (data.status === 'success' && isMounted) {
+                    setAiRunning(data.running);
+                    if (data.running === false) {
+                        // Reset metrics if engine is clearly not running
+                        setUptimeSeconds(0);
+                        setStats(prev => ({
+                            ...prev,
+                            cpuUsage: 0,
+                            ramUsage: 0,
+                            gpuUsage: 0,
+                            logsPerSec: 0
+                        }));
+                    }
+                }
+            } catch (error) {
+                console.error('Failed to fetch AI engine status:', error);
+            }
+        };
+
+        const setupSSE = () => {
+            const token = localStorage.getItem('token');
+            if (!token) return;
+
+            eventSource = new EventSource(`http://localhost:8000/api/v1/stream?token=${token}`);
+
+            eventSource.onmessage = (event) => {
+                if (event.data === ': heartbeat') return;
+                try {
+                    const update = JSON.parse(event.data);
+                    if (update.type === 'metrics' && update.doc && isMounted) {
+                        const m = update.doc;
+                        setStats(prev => ({
+                            ...prev,
+                            cpuUsage: Math.round(m.cpu || 0),
+                            ramUsage: Math.round(m.ram || 0),
+                            gpuUsage: Math.round(m.gpu || 0),
+                            logsPerSec: Math.round(m.eps_in || 0)
+                        }));
+                        if (m.uptime !== undefined) {
+                            setUptimeSeconds(m.uptime);
+                        }
+                    } else if ((update.type === 'events' || update.type === 'ddos') && update.doc && isMounted) {
+                        const d = update.doc;
+                        const ts = d.timestamp ? new Date(d.timestamp * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '??:??:??';
+                        const verdict = d.verdict || d.ai_verdict || 'EVENT';
+                        const score = d.score != null ? ` score=${d.score.toFixed(4)}` : '';
+                        const host = d.host_id ? ` host=${d.host_id}` : '';
+                        let tag, type;
+                        if (update.type === 'ddos') {
+                            tag = '[DDoS]'; type = 'danger';
+                        } else if (verdict.includes('ANOMALY') || verdict.includes('THREAT')) {
+                            tag = '[AI]'; type = 'warn';
+                        } else if (verdict.includes('FALSE POSITIVE')) {
+                            tag = '[AI]'; type = 'info';
+                        } else {
+                            tag = '[AI]'; type = 'success';
+                        }
+                        const msg = `${tag} ${verdict}${score}${host}`;
+                        setActivityLog(prev => [{ time: ts, msg, type }, ...prev].slice(0, 50));
+                    }
+                } catch (err) {
+                    console.error('SSE Parse Error:', err);
+                }
+            };
+
+            eventSource.onerror = (err) => {
+                console.error('SSE Connection Error:', err);
+                eventSource?.close();
+            };
+        };
+
+        fetchStatus();
+        setupSSE();
+
+        const interval = setInterval(fetchStatus, 5000);
+        return () => {
+            isMounted = false;
+            clearInterval(interval);
+            if (eventSource) eventSource.close();
+        };
+    }, []);
 
     // Simulated uptime tick
     useEffect(() => {
@@ -11,27 +130,48 @@ export default function AIIntelligence() {
         return () => clearInterval(timer);
     }, [aiRunning]);
 
+    const toggleEngine = async () => {
+        const action = aiRunning ? 'stop' : 'start';
+        setAiRunning(!aiRunning); // Optimistic UI update
+
+        try {
+            const token = localStorage.getItem('token');
+            const res = await fetch('http://localhost:8000/api/v1/system/engine/ai/control', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    ...(token ? { 'Authorization': `Bearer ${token}` } : {})
+                },
+                body: JSON.stringify({ action })
+            });
+            const data = await res.json();
+            if (data.status === 'success') {
+                setAiRunning(data.running);
+                if (!data.running) {
+                    setUptimeSeconds(0);
+                    setStats(prev => ({
+                        ...prev,
+                        cpuUsage: 0,
+                        ramUsage: 0,
+                        gpuUsage: 0,
+                        logsPerSec: 0
+                    }));
+                }
+            } else {
+                setAiRunning(aiRunning); // revert on soft error
+            }
+        } catch (error) {
+            console.error(`Failed to ${action} engine:`, error);
+            setAiRunning(aiRunning); // revert on hard error
+        }
+    };
+
     const formatUptime = (s) => {
         const d = Math.floor(s / 86400);
         const h = Math.floor((s % 86400) / 3600);
         const m = Math.floor((s % 3600) / 60);
         const sec = s % 60;
         return `${d > 0 ? d + 'd ' : ''}${h}h ${m}m ${sec}s`;
-    };
-
-    // Mock data
-    const stats = {
-        anomalyScore: 7.4,
-        modelAccuracy: 99.84,
-        falsePositiveRate: 0.12,
-        inferenceSpeed: 12,
-        logsPerSec: 1247,
-        totalProcessed: '14.2M',
-        memoryVectors: '892K',
-        activeThreats: 23,
-        gpuUsage: 67,
-        cpuUsage: 34,
-        ramUsage: 52,
     };
 
     return (
@@ -56,7 +196,7 @@ export default function AIIntelligence() {
                     </div>
                 </div>
                 <button
-                    onClick={() => setAiRunning(!aiRunning)}
+                    onClick={toggleEngine}
                     className={`px-6 py-3 rounded-xl font-bold text-sm flex items-center gap-2.5 transition-all duration-300 ${aiRunning
                         ? 'bg-danger/10 border border-danger/20 text-danger hover:bg-danger/20 hover:shadow-[0_0_20px_rgba(239,68,68,0.2)]'
                         : 'bg-success/10 border border-success/20 text-success hover:bg-success/20 hover:shadow-[0_0_20px_rgba(34,197,94,0.2)]'
@@ -222,23 +362,16 @@ export default function AIIntelligence() {
                         </div>
                         <div className="flex items-center gap-2">
                             <span className="relative flex size-2">
-                                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-success opacity-75"></span>
-                                <span className="relative inline-flex rounded-full size-2 bg-success"></span>
+                                <span className={`${aiRunning ? 'animate-ping' : ''} absolute inline-flex h-full w-full rounded-full ${aiRunning ? 'bg-success' : 'bg-slate-600'} opacity-75`}></span>
+                                <span className={`relative inline-flex rounded-full size-2 ${aiRunning ? 'bg-success' : 'bg-slate-600'}`}></span>
                             </span>
-                            <span className="text-[10px] font-bold text-success uppercase tracking-wider">Live</span>
+                            <span className={`text-[10px] font-bold uppercase tracking-wider ${aiRunning ? 'text-success' : 'text-slate-500'}`}>
+                                {aiRunning ? 'Live' : 'Offline'}
+                            </span>
                         </div>
                     </div>
                     <div className="p-5 font-mono text-[11px] space-y-3 flex-1 overflow-y-auto bg-black/20 min-h-[240px]">
-                        {[
-                            { time: '22:04:41', msg: '[AI] Batch processed: 128 events → 2 anomalies detected', type: 'warn' },
-                            { time: '22:04:38', msg: '[AI] Memory upsert: 128 vectors saved to Qdrant', type: 'info' },
-                            { time: '22:04:35', msg: '[AI] Inference batch: avg_score=0.0312, max=0.742', type: 'info' },
-                            { time: '22:04:30', msg: '[MISP] Correlation check: 1 known threat matched (IoC: SHA256)', type: 'danger' },
-                            { time: '22:04:28', msg: '[AI] Window queue: 4 batches, 512 total events buffered', type: 'info' },
-                            { time: '22:04:22', msg: '[DDoS] Sentinel clear: no param variations in last 60s', type: 'success' },
-                            { time: '22:04:15', msg: '[AI] Model checkpoint saved: epoch 48, loss=0.0021', type: 'success' },
-                            { time: '22:04:10', msg: '[AI] Batch processed: 128 events → 0 anomalies detected', type: 'info' },
-                        ].map((log, i) => (
+                        {activityLog.map((log, i) => (
                             <div key={i} className="flex items-start gap-3">
                                 <span className="text-slate-600 shrink-0">{log.time}</span>
                                 <span className={`${log.type === 'danger' ? 'text-danger' : log.type === 'warn' ? 'text-warning' : log.type === 'success' ? 'text-success' : 'text-slate-400'}`}>

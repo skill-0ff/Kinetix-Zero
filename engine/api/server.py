@@ -2,6 +2,9 @@ import os
 import json
 import time
 import asyncio
+import sys
+import subprocess
+import psutil
 from datetime import datetime
 from typing import Optional, List, Any, Dict
 from fastapi import FastAPI, HTTPException, Request, Depends, Query, Body
@@ -300,6 +303,95 @@ async def stream_data(user: dict = Depends(get_current_user)):
                 await asyncio.sleep(5.0)
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+# --- ENGINE CONTROL ---
+brain_process: Optional[subprocess.Popen] = None
+
+@app.post("/api/v1/system/engine/ai/control")
+async def control_ai_engine(
+    payload: Dict[str, Any] = Body(...),
+    user: dict = Depends(get_current_user)
+):
+    """
+    Control the brain.py engine (start/stop/status)
+    payload format: {"action": "start" | "stop" | "status"}
+    """
+    global brain_process
+    action = payload.get("action")
+    
+    if action == "status":
+        running = brain_process is not None and brain_process.poll() is None
+        if brain_process and brain_process.poll() is not None:
+            brain_process = None
+            running = False
+        return {"status": "success", "running": running}
+        
+    elif action == "start":
+        if brain_process and brain_process.poll() is None:
+            return {"status": "success", "message": "Engine is already running", "running": True}
+        
+        script_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "core", "brain.py"))
+        if not os.path.exists(script_path):
+            raise HTTPException(status_code=404, detail="brain.py not found")
+            
+        try:
+            env = os.environ.copy()
+            # Explicitly add root to PYTHONPATH so "engine" can be found
+            project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+            env["PYTHONPATH"] = project_root + (";" + env["PYTHONPATH"] if "PYTHONPATH" in env else "")
+            
+            brain_process = subprocess.Popen(
+                [sys.executable, "-m", "engine.core.brain"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                cwd=project_root,
+                env=env
+            )
+            return {"status": "success", "message": "Engine started", "running": True}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to start engine: {str(e)}")
+            
+    elif action == "stop":
+        if not brain_process or brain_process.poll() is not None:
+            brain_process = None
+            return {"status": "success", "message": "Engine is already stopped", "running": False}
+            
+        try:
+            parent = psutil.Process(brain_process.pid)
+            children = parent.children(recursive=True)
+            for child in children:
+                child.terminate()
+            parent.terminate()
+            
+            gone, still_alive = psutil.wait_procs(children + [parent], timeout=3)
+            for p in still_alive:
+                p.kill()
+                
+            brain_process = None
+            
+            # Reset metrics file on stop
+            metrics_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "core", "system_metrics.json"))
+            if os.path.exists(metrics_path):
+                try:
+                    os.remove(metrics_path)
+                except:
+                    pass
+                    
+            return {"status": "success", "message": "Engine stopped", "running": False}
+        except psutil.NoSuchProcess:
+            brain_process = None
+            # Also try to clean up if process is already gone
+            metrics_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "core", "system_metrics.json"))
+            if os.path.exists(metrics_path):
+                try: os.remove(metrics_path)
+                except: pass
+            return {"status": "success", "message": "Engine stopped", "running": False}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to stop engine: {str(e)}")
+            
+    else:
+        raise HTTPException(status_code=400, detail="Invalid action. Use 'start', 'stop', or 'status'")
+
 
 if __name__ == "__main__":
     import uvicorn

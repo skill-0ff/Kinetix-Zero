@@ -1,50 +1,15 @@
 import React, { useState, useEffect } from 'react';
 
 export default function AIIntelligence() {
-    const [aiRunning, setAiRunning] = useState(false);
-    const [uptimeSeconds, setUptimeSeconds] = useState(0);
-    const [systemMetrics, setSystemMetrics] = useState({ cpu: 0, ram: 0, gpu: 0 });
-    const [isLoading, setIsLoading] = useState(false);
+    const [aiRunning, setAiRunning] = useState(true);
+    const [uptimeSeconds, setUptimeSeconds] = useState(14523); // Mock: ~4 hours
 
-    // Poll live metrics from Control Manager
+    // Simulated uptime tick
     useEffect(() => {
-        const fetchMetrics = async () => {
-            try {
-                const res = await fetch('http://localhost:5002/api/control/metrics');
-                if (res.ok) {
-                    const data = await res.json();
-                    setAiRunning(data.status === 'Online');
-                    setUptimeSeconds(data.uptime_seconds);
-                    setSystemMetrics({
-                        cpu: data.cpu_percent,
-                        ram: data.ram_percent,
-                        gpu: data.gpu_percent
-                    });
-                }
-            } catch (err) {
-                // Control API might be down or not started yet
-                setAiRunning(false);
-                setSystemMetrics({ cpu: 0, ram: 0, gpu: 0 });
-            }
-        };
-
-        fetchMetrics();
-        const timer = setInterval(fetchMetrics, 1000);
+        if (!aiRunning) return;
+        const timer = setInterval(() => setUptimeSeconds(s => s + 1), 1000);
         return () => clearInterval(timer);
-    }, []);
-
-    const toggleEngine = async () => {
-        setIsLoading(true);
-        try {
-            const endpoint = aiRunning ? 'stop' : 'start';
-            await fetch(`http://localhost:5002/api/control/${endpoint}`, { method: 'POST' });
-            // Let the next poll pick up the status change
-        } catch (err) {
-            console.error('Failed to toggle engine:', err);
-        } finally {
-            setIsLoading(false);
-        }
-    };
+    }, [aiRunning]);
 
     const formatUptime = (s) => {
         const d = Math.floor(s / 86400);
@@ -54,19 +19,19 @@ export default function AIIntelligence() {
         return `${d > 0 ? d + 'd ' : ''}${h}h ${m}m ${sec}s`;
     };
 
-    // AI Mock Data (Metrics not tracked by Control Manager yet)
+    // Mock data
     const stats = {
         anomalyScore: 7.4,
         modelAccuracy: 99.84,
         falsePositiveRate: 0.12,
         inferenceSpeed: 12,
-        logsPerSec: aiRunning ? 1247 : 0,
+        logsPerSec: 1247,
         totalProcessed: '14.2M',
         memoryVectors: '892K',
-        activeThreats: aiRunning ? 23 : 0,
-        gpuUsage: systemMetrics.gpu,
-        cpuUsage: systemMetrics.cpu,
-        ramUsage: systemMetrics.ram,
+        activeThreats: 23,
+        gpuUsage: 67,
+        cpuUsage: 34,
+        ramUsage: 52,
     };
 
     return (
@@ -91,9 +56,8 @@ export default function AIIntelligence() {
                     </div>
                 </div>
                 <button
-                    onClick={toggleEngine}
-                    disabled={isLoading}
-                    className={`px-6 py-3 rounded-xl font-bold text-sm flex items-center gap-2.5 transition-all duration-300 ${isLoading ? 'opacity-50 cursor-not-allowed' : ''} ${aiRunning
+                    onClick={() => setAiRunning(!aiRunning)}
+                    className={`px-6 py-3 rounded-xl font-bold text-sm flex items-center gap-2.5 transition-all duration-300 ${aiRunning
                         ? 'bg-danger/10 border border-danger/20 text-danger hover:bg-danger/20 hover:shadow-[0_0_20px_rgba(239,68,68,0.2)]'
                         : 'bg-success/10 border border-success/20 text-success hover:bg-success/20 hover:shadow-[0_0_20px_rgba(34,197,94,0.2)]'
                         }`}

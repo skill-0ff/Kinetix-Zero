@@ -29,6 +29,7 @@ class HostIdentity(BaseModel):
 # --- Event Sub-Types ---
 
 class BaseEvent(BaseModel):
+    timestamp: str 
     class Config:
         extra = Extra.forbid
 

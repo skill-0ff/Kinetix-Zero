@@ -1,4 +1,4 @@
-# Kinetix-Zero: Event Structure Documentation (v2.1)
+# Kinetix-Zero: Event Structure Documentation (v2.2)
 
 This document describes the current event structure expected by the **Brain** (specifically the `LogNormalizer` in `engine/core/vectorizer.py`). 
 
@@ -11,86 +11,78 @@ This document describes the current event structure expected by the **Brain** (s
 
 Every event payload sent to the Brain must contain these base fields:
 
-- **role**: (`string`) Required. The role of the source device (e.g., `POST_SERV`, `EDGE_FW`, `POST_SWITCH`).
-- **timestamp_ref**: (`string`) Required. Reference timestamp for the packet (e.g., `hh:mm:ss.ms` or ISO format).
-    - > [!NOTE]
-    - > This is the **primary timestamp** used by the AI Model for cyclic time encoding (determining the time of day for anomaly detection).
+- **role**: (`string`) Required. The role of the source device (e.g., `POST_SERV`, `EDGE_FW`).
+- **timestamp_ref**: (`string`) Required. Reference timestamp for the packet.
 - **host**: (`object`) Required. Identity of the source host.
     - **id**: (`string`) Required. Unique identifier for the host (HEX or UUID).
-    - **os**: (`string`) Optional. Operating system type (e.g., `Windows`, `Linux`).
+    - **os**: (`string`) Optional. Operating system type.
     - **ip**: (`string`) Optional. Host IP address.
     - **mac**: (`string`) Optional. Host MAC address.
-- **status**: (`object`) Optional. System performance metrics.
-    - **cpu**: (`string`) CPU utilization.
-    - **ram**: (`string`) RAM utilization.
-    - **disk**: (`string`) Disk utilization.
-- **event**: (`object`) Required. The actual activity payload. (See [Event Types](#2-event-types--specific-fields))
+- **status**: (`object`) Optional. System performance metrics (`cpu`, `ram`, `disk`).
+- **event**: (`object`) Required. The actual activity payload. Must contain its own `type` and `timestamp`.
 
 ---
 
 ## 2. Event Types & Specific Fields
 
-The `event` object must contain a `type` discriminator . Below are the supported types and their specific fields from the Brain's validation model.
+The `event` object must contain a `type` discriminator. Below are the supported types and their specific fields.
 
-
-### 2.1. Endpoint Activity
-- **process_start**: `process`, `path`, `sha256`, `cmdline`, `parent`, `parent_path`, `parent_sha_256`, `user`, `cpu`, `gpu`, `ram`, `disk`.
-- **process_kill**: `process`, `path`, `sha256`, `term_type`, `exit_code`.
-- **file_create** / **file_modified** / **file_delete**: `path`, `file_type`, `hash`, `size`, `process`, `user`, `owner`.
-- **module_load**: `process`, `image_path`, `sha256`, `signed`.
-
-### 2.2. Network Activity
-- **network_connection**: `process`, `protocol`, `ip_local` (bool), `dst_ip`, `src_port`, `dst_port`, `sent`, `recv`.
-- **dns_query**: `q_name`, `q_type`, `q_res`, `q_port`, `q_proto`.
-- **traffic** (Infrastructure): `src_ip`, `dst_ip`, `src_iface`, `dst_iface`, `src_port`, `dst_port`, `proto`, `action`, `src_mac`, `dst_mac`, `vlan_src`, `vlan_dst`, `sent`.
-
-### 2.3. Identity & Access
-- **console_login**: `user`, `action`, `method`, `terminal`, `result`.
-- **session**: `session_id`, `user`, `status`, `logon_type`, `source_network_address`.
-- **auth_login**: `user`, `domain`, `src_ip`, `logon_type`, `auth_package`, `result`, `failure_reason`.
-
-### 2.4. System & Advanced Activity
-- **registry**: `op_type`, `reg_path`, `reg_val`, `reg_type`, `reg_user`, `reg_owner`, `reg_perm`.
-- **service_create** / **service_delete** / **service_modified**: `name`, `path`, `start_type`, `account`, `creator`, `deleter`.
-- **scheduled_task**: `task_name`, `action`, `path`, `user`.
-- **account_management** / **group_management**: `action`, `target_user`, `subject_user`, `domain`, `group_name`, `member_user`.
-- **pipe_event**: `pipe_name`, `op_type`, `process`, `handle_id`.
-- **wmi_event**: `query`, `user`, `namespace`.
-- **logging**: `level`, `source`, `event_id`, `message`, `task_category`.
+- **Endpoint**: `process_start`, `process_kill`, `file_create`, `file_modified`, `file_delete`, `module_load`.
+- **Network**: `network_connection`, `dns_query`, `traffic`.
+- **Identity**: `console_login`, `session`, `auth_login`.
+- **System**: `registry`, `service_create`, `scheduled_task`, `account_management`, `pipe_event`, `wmi_event`, `logging`.
 
 ---
 
-## 3. Brain-Enriched Fields (Post-Processing)
+## 3. Post-Processing Enrichment (Brain vs AI)
 
-Before saving to the Database, the **Brain** enriches the event with the following internal metadata:
+Before an event is saved to the Database, it is enriched by two different components.
 
-- **`_server_ts`**: Added at reception. Server authority float timestamp. 
-    - > [!NOTE]
-    - > Used for "Delta Detection" (comparing packet time vs arrival time) for anomaly detection.
-- **`uuid`**: Unique HEX identifier for the database document.
-- **`verdict`**: Final classification (e.g., `NEW ANOMALY`, `Safe`, `KNOWN THREAT`).
-- **`score`**: Raw anomaly score from the AI model (0.0 to 1.0).
-- **Indexing Fields**: `host_id`, `role`, and `event_type` are promoted to top-level for query speed.
+### 3.1. Added by the "Brain" (Reception Layer)
+*Logic located in `engine/core/brain.py`*
+
+- **`_server_ts`**: (Float) The exact Unix timestamp when the Brain first received the packet. This is the **Server Authority Time**.
+
+### 3.2. Added by the "AI" (Processing Layer)
+*Logic located in `engine/ai/inference.py`*
+
+The AI worker adds the following fields during inference and database insertion:
+
+| Field | Source | Description |
+| :--- | :--- | :--- |
+| **`uuid`** / **`ai_uuid`** | **AI** | A unique HEX identifier generated for the event. |
+| **`verdict`** / **`ai_verdict`** | **AI** | Classification result (e.g., `NEW ANOMALY`, `Safe`). |
+| **`score`** / **`ai_score`** | **AI** | The raw anomaly score (0.0 to 1.0) from the VAE model. |
+| **`timestamp`** | **AI** | The Unix timestamp when the entry was **saved** to the database. |
+| **`host_id`** | **AI** | Promoted copy of `host.id` for fast database indexing. |
+| **`event_type`** | **AI** | Promoted copy of `event.type` for fast database indexing. |
 
 ---
 
-## 4. JSON Example
+## 4. JSON Example: Data Evolution
 
-### Original Ingress Event
+### Step 1: Original Event (What you send)
 ```json
 {
     "role": "POST_SERV",
-    "timestamp_ref": "14:20:05.123",
-    "host": { "id": "WKS-01", "os": "Windows" },
-    "event": {
-        "type": "process_start",
-        "process": "powershell.exe",
-        "user": "Administrator"
-    }
+    "timestamp_ref": "14:20:00",
+    "host": { "id": "WKS-01" },
+    "event": { "type": "process_start", "timestamp": "14:20:00", ... }
 }
 ```
 
-### Resulting Enriched Database Document (Simplified)
+### Step 2: After Brain Reception
+```json
+{
+    "role": "POST_SERV",
+    "timestamp_ref": "14:20:00",
+    "host": { "id": "WKS-01" },
+    "event": { "type": "process_start", ... },
+    "_server_ts": 1711817999.5
+}
+```
+
+### Step 3: Final Database Entry (After AI Processing)
 ```json
 {
     "uuid": "a1b2c3d4e5f6...",
@@ -98,18 +90,19 @@ Before saving to the Database, the **Brain** enriches the event with the followi
     "verdict": "NEW ANOMALY",
     "score": 0.8521,
     "host_id": "WKS-01",
-    "role": "POST_SERV",
     "full_log": {
         "role": "POST_SERV",
-        "timestamp_ref": "14:20:05.123",
-        "host": { "id": "WKS-01", ... },
-        "event": { "type": "process_start", ... },
-        "_server_ts": 1711817999.0
+        "timestamp_ref": "14:20:00",
+        "_server_ts": 1711817999.5,
+        "ai_verdict": "NEW ANOMALY",
+        "ai_score": 0.8521,
+        "ai_uuid": "a1b2c3d4e5f6...",
+        "host": { "id": "WKS-01" },
+        "event": { "type": "process_start", ... }
     }
 }
 ```
 
 ---
-
-> [!IMPORTANT]
-> The Brain automatically injects the `_server_ts` field upon reception. Collectors should **not** include this in their outbound packets.
+> [!NOTE]
+> All fields with the `ai_` prefix are nested inside `full_log`, while the top-level versions are used for quick indexing and dashboard displays.

@@ -707,7 +707,7 @@ class UnsupervisedAI(threading.Thread):
                 
                 # REPORT & ALERT
                 evt = ctx["log"].get("event", {})
-                ts_val = ctx["log"].get("timestamp_ref") or ctx["log"].get("_server_ts") or "?"
+                ts_val = ctx["log"].get("timestamp_ref") or evt.get("timestamp") or ctx["log"].get("_server_ts") or "?"
                 
                 # Map Verdict to Config Key
                 alert_key = "new_anomaly"
@@ -732,6 +732,12 @@ class UnsupervisedAI(threading.Thread):
             # --- MONGO STORE (Save Everything) ---
             if self.mongo_events is not None:
                 # Prepare Relational Doc
+                # Enrich Log
+                enriched_log = ctx["log"].copy()
+                enriched_log["ai_verdict"] = verdict
+                enriched_log["ai_score"] = float(ctx["score"])
+                enriched_log["ai_uuid"] = event_uuid
+                
                 doc = {
                     "_id": event_uuid,
                     "uuid": event_uuid,
@@ -743,7 +749,7 @@ class UnsupervisedAI(threading.Thread):
                     "group_id": ctx["log"].get("role"), # Assuming role is group-like
                     "event_type": ctx["log"].get("event", {}).get("type"),
                     
-                    "full_log": ctx["log"]
+                    "full_log": enriched_log
                 }
                 
                 if ctx["is_anomaly"]:

@@ -52,7 +52,7 @@ def normalize_payload(raw_json):
         "role": data.get("role", "POST_SERV"),
         "timestamp_ref": data.get("timestamp", now),
         "host": {"id": data.get("host_id", data.get("id", "unknown-host"))},
-        "event": {"type": "logging"}
+        "event": {"type": "logging", "timestamp": data.get("timestamp", now)}
     }
     
     # Inject all keys

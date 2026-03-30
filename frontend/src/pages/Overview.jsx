@@ -484,36 +484,7 @@ export default function Overview() {
                     })()}
                 </div>
 
-                <div className="lg:col-span-12 glass-card rounded-2xl p-6 flex flex-col md:flex-row items-center gap-8 border-l-4 border-l-accent-purple">
-                    <div className="flex items-center gap-4 min-w-[200px]">
-                        <div className="size-12 bg-accent-purple/20 rounded-full flex items-center justify-center">
-                            <span className="material-symbols-outlined text-accent-purple text-2xl animate-spin-slow">smart_toy</span>
-                        </div>
-                        <div>
-                            <h4 className="text-sm font-bold text-white">Neural Engine V3</h4>
-                            <p className="text-xs text-slate-500">Model Training Active</p>
-                        </div>
-                    </div>
-                    <div className="flex-1 w-full">
-                        <div className="flex justify-between items-end mb-2">
-                            <span className="text-[11px] font-bold text-slate-400 uppercase tracking-widest">Progress: Epoch 48/100</span>
-                            <span className="text-lg font-bold text-accent-purple">74.2%</span>
-                        </div>
-                        <div className="h-3 w-full bg-white/5 rounded-full overflow-hidden p-[2px]">
-                            <div className="h-full w-[74.2%] bg-gradient-to-r from-primary via-accent-purple to-pink-500 rounded-full shadow-[0_0_10px_rgba(168,85,247,0.5)]"></div>
-                        </div>
-                    </div>
-                    <div className="flex gap-6">
-                        <div className="text-center">
-                            <p className="text-xs text-slate-500">Accuracy</p>
-                            <p className="text-sm font-bold text-white">99.8%</p>
-                        </div>
-                        <div className="text-center">
-                            <p className="text-xs text-slate-500">Loss</p>
-                            <p className="text-sm font-bold text-white">0.004</p>
-                        </div>
-                    </div>
-                </div>
+                {/* Removal: Neural Engine V3 Card */}
             </div>
         </main>
     );

@@ -73,6 +73,18 @@ export default function Configuration() {
     const [localStorageSafe, setLocalStorageSafe] = useState(true);
     const [localStorageAnomaly, setLocalStorageAnomaly] = useState(true);
 
+    // --- Add Role Modal State ---
+    const [showAddRole, setShowAddRole] = useState(false);
+    const [newRoleName, setNewRoleName] = useState('');
+    const [newRoleIP, setNewRoleIP] = useState('');
+    const [newRoleMask, setNewRoleMask] = useState('24');
+    const [newRoleServers, setNewRoleServers] = useState(0);
+    const [newRoleRouters, setNewRoleRouters] = useState(0);
+    const [newRoleSwitches, setNewRoleSwitches] = useState(0);
+    const [newRoleFirewalls, setNewRoleFirewalls] = useState(0);
+    const [newRolePCs, setNewRolePCs] = useState(0);
+    const [newRoleFactor, setNewRoleFactor] = useState(0.5);
+
     // --- Sync from server config into local state (only when not dirty/interacting) ---
     useEffect(() => {
         if (updating || isInteracting || !config || isDirty) return;
@@ -261,11 +273,7 @@ export default function Configuration() {
 
     return (
         <main className="flex-1 pt-28 pb-8 px-8 max-w-[1440px] mx-auto w-full">
-            <div className="flex items-end justify-between mb-8">
-                <div>
-                    <h2 className="text-2xl font-bold text-white mb-1">System Configuration</h2>
-                    <p className="text-slate-400 text-sm">Fine-tune the security engine and network protocols.</p>
-                </div>
+            <div className="flex items-end justify-end mb-8">
                 <div className="flex gap-4 items-center">
                     {isDirty && (
                         <span className="text-xs text-amber-400 flex items-center gap-1 animate-pulse">
@@ -309,7 +317,7 @@ export default function Configuration() {
             </div>
 
             {/* Upper Config Grid — 6-col grid for optimised card sizing */}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-6 mb-12 items-start">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-8 mb-12">
 
                 {/* 1. Alert Management — compact, 2 cols */}
                 <div className="lg:col-span-2 glass-card rounded-[2rem] p-6 flex flex-col gap-6 neon-border-cyan relative overflow-hidden group">
@@ -358,12 +366,15 @@ export default function Configuration() {
                             </div>
                             <h3 className="text-lg font-bold text-white tracking-tight">Role Management</h3>
                         </div>
-                        <button className="size-8 rounded-lg bg-white/5 flex items-center justify-center hover:bg-white/10 transition-colors border border-white/10">
+                        <button
+                            onClick={() => setShowAddRole(true)}
+                            className="size-8 rounded-lg bg-white/5 flex items-center justify-center hover:bg-white/10 transition-colors border border-white/10"
+                        >
                             <span className="material-symbols-outlined text-xl text-white">add</span>
                         </button>
                     </div>
                     <div className="relative">
-                        <span className="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 text-lg">search</span>
+                        <span className="material-symbols-outlined absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 text-lg">search</span>
                         <input className="w-full input-glass !pl-10 !py-2" placeholder="Search roles..." type="text" />
                     </div>
                     <div className="space-y-2 overflow-y-auto flex-1 pr-2 custom-scrollbar">
@@ -391,7 +402,36 @@ export default function Configuration() {
                     </div>
                 </div>
 
-                {/* 3. Checkpointing — 2 cols */}
+                {/* 4. Log Storage Control — compact, 2 cols (Moved up) */}
+                <div className="lg:col-span-2 glass-card rounded-[2rem] p-6 flex flex-col gap-6 neon-border-cyan relative overflow-hidden group">
+                    <div className="absolute -right-4 -top-4 size-32 bg-primary/20 blur-3xl rounded-full"></div>
+                    <div className="flex items-center gap-4 relative z-10 transition-all duration-500">
+                        <div className="size-10 rounded-xl bg-primary/10 flex items-center justify-center text-primary border border-primary/30 shadow-[0_0_15px_rgba(37,106,244,0.2)]">
+                            <span className="material-symbols-outlined text-[22px]">database</span>
+                        </div>
+                        <h3 className="text-lg font-bold text-white tracking-tight">Log Storage</h3>
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                        <div className="flex items-center justify-between p-3 rounded-xl bg-white/5 border border-white/10">
+                            <span className="text-xs text-slate-400">Safe</span>
+                            <button
+                                onClick={() => markDirty(setLocalStorageSafe)(!localStorageSafe)}
+                                className={`w-8 h-4 rounded-full relative transition-all ${localStorageSafe ? 'bg-primary shadow-[0_0_8px_rgba(37,106,244,0.4)]' : 'bg-white/10'}`}>
+                                <span className={`absolute top-0.5 size-3 rounded-full transition-all ${localStorageSafe ? 'right-0.5 bg-white' : 'left-0.5 bg-slate-400'}`}></span>
+                            </button>
+                        </div>
+                        <div className="flex items-center justify-between p-3 rounded-xl bg-white/5 border border-white/10">
+                            <span className="text-xs text-slate-400">Threat</span>
+                            <button
+                                onClick={() => markDirty(setLocalStorageAnomaly)(!localStorageAnomaly)}
+                                className={`w-8 h-4 rounded-full relative transition-all ${localStorageAnomaly ? 'bg-primary shadow-[0_0_8px_rgba(37,106,244,0.4)]' : 'bg-white/10'}`}>
+                                <span className={`absolute top-0.5 size-3 rounded-full transition-all ${localStorageAnomaly ? 'right-0.5 bg-white' : 'left-0.5 bg-slate-400'}`}></span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                {/* 3. Checkpointing — 2 cols (Moved down) */}
                 <div className="lg:col-span-2 glass-card rounded-[2rem] p-6 flex flex-col gap-6 neon-border-cyan relative overflow-hidden group">
                     <div className="absolute -right-4 -top-4 size-32 bg-primary/20 blur-3xl rounded-full"></div>
                     <div className="flex items-center gap-4 relative z-10 transition-all duration-500">
@@ -436,35 +476,6 @@ export default function Configuration() {
                                 onChange={(e) => { setLocalMaxCheckpoints(e.target.value); setIsDirty(true); setSaveStatus(null); }}
                                 onMouseUp={() => setIsInteracting(false)}
                             />
-                        </div>
-                    </div>
-                </div>
-
-                {/* 4. Log Storage Control — compact, 2 cols */}
-                <div className="lg:col-span-2 glass-card rounded-[2rem] p-6 flex flex-col gap-6 neon-border-cyan relative overflow-hidden group">
-                    <div className="absolute -right-4 -top-4 size-32 bg-primary/20 blur-3xl rounded-full"></div>
-                    <div className="flex items-center gap-4 relative z-10 transition-all duration-500">
-                        <div className="size-10 rounded-xl bg-primary/10 flex items-center justify-center text-primary border border-primary/30 shadow-[0_0_15px_rgba(37,106,244,0.2)]">
-                            <span className="material-symbols-outlined text-[22px]">database</span>
-                        </div>
-                        <h3 className="text-lg font-bold text-white tracking-tight">Log Storage</h3>
-                    </div>
-                    <div className="grid grid-cols-2 gap-4">
-                        <div className="flex items-center justify-between p-3 rounded-xl bg-white/5 border border-white/10">
-                            <span className="text-xs text-slate-400">Safe</span>
-                            <button
-                                onClick={() => markDirty(setLocalStorageSafe)(!localStorageSafe)}
-                                className={`w-8 h-4 rounded-full relative transition-all ${localStorageSafe ? 'bg-primary shadow-[0_0_8px_rgba(37,106,244,0.4)]' : 'bg-white/10'}`}>
-                                <span className={`absolute top-0.5 size-3 rounded-full transition-all ${localStorageSafe ? 'right-0.5 bg-white' : 'left-0.5 bg-slate-400'}`}></span>
-                            </button>
-                        </div>
-                        <div className="flex items-center justify-between p-3 rounded-xl bg-white/5 border border-white/10">
-                            <span className="text-xs text-slate-400">Threat</span>
-                            <button
-                                onClick={() => markDirty(setLocalStorageAnomaly)(!localStorageAnomaly)}
-                                className={`w-8 h-4 rounded-full relative transition-all ${localStorageAnomaly ? 'bg-primary shadow-[0_0_8px_rgba(37,106,244,0.4)]' : 'bg-white/10'}`}>
-                                <span className={`absolute top-0.5 size-3 rounded-full transition-all ${localStorageAnomaly ? 'right-0.5 bg-white' : 'left-0.5 bg-slate-400'}`}></span>
-                            </button>
                         </div>
                     </div>
                 </div>
@@ -625,6 +636,39 @@ export default function Configuration() {
                         </div>
                     </div>
                 </div>
+                {/* 8. Database — 2 cols (Moved from Advanced) */}
+                <div className="lg:col-span-2 glass-card rounded-[2rem] p-6 neon-border-cyan relative overflow-hidden group">
+                    <div className="absolute -right-4 -top-4 size-32 bg-cyan-400/20 blur-3xl rounded-full"></div>
+                    <div className="flex items-center gap-4 mb-6">
+                        <div className="size-10 rounded-xl bg-cyan-400/10 flex items-center justify-center text-cyan-400 border border-cyan-400/30 shadow-[0_0_15px_rgba(34,211,238,0.2)]">
+                            <span className="material-symbols-outlined text-[22px]">database</span>
+                        </div>
+                        <h3 className="text-lg font-bold text-white tracking-tight">Database</h3>
+                    </div>
+                    <div className="space-y-4">
+                        <div>
+                            <label className="text-[11px] font-bold text-slate-400 mb-2 block uppercase tracking-wider">Qdrant Path</label>
+                            <input className="w-full input-glass text-xs font-mono" type="text" value={localQdrantPath}
+                                onFocus={() => setIsInteracting(true)}
+                                onChange={(e) => { setLocalQdrantPath(e.target.value); setIsDirty(true); setSaveStatus(null); }}
+                                onBlur={() => setIsInteracting(false)} />
+                        </div>
+                        <div>
+                            <label className="text-[11px] font-bold text-slate-400 mb-2 block uppercase tracking-wider">Qdrant URL (optional)</label>
+                            <input className="w-full input-glass text-xs font-mono" placeholder="null" type="text" value={localQdrantUrl}
+                                onFocus={() => setIsInteracting(true)}
+                                onChange={(e) => { setLocalQdrantUrl(e.target.value); setIsDirty(true); setSaveStatus(null); }}
+                                onBlur={() => setIsInteracting(false)} />
+                        </div>
+                        <div>
+                            <label className="text-[11px] font-bold text-slate-400 mb-2 block uppercase tracking-wider">Mongo URI</label>
+                            <input className="w-full input-glass text-xs font-mono" type="text" value={localMongoUri}
+                                onFocus={() => setIsInteracting(true)}
+                                onChange={(e) => { setLocalMongoUri(e.target.value); setIsDirty(true); setSaveStatus(null); }}
+                                onBlur={() => setIsInteracting(false)} />
+                        </div>
+                    </div>
+                </div>
             </div>
 
             {/* Detailed Advanced Configuration Panels */}
@@ -638,40 +682,8 @@ export default function Configuration() {
                         <div className="h-px flex-1 bg-gradient-to-r from-transparent via-primary/30 to-transparent"></div>
                     </div>
 
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8 items-start">
-                        {/* Database */}
-                        <div className="glass-card rounded-[2rem] p-6 neon-border-cyan relative overflow-hidden group">
-                            <div className="absolute -right-4 -top-4 size-32 bg-cyan-400/20 blur-3xl rounded-full"></div>
-                            <div className="flex items-center gap-4 mb-6">
-                                <div className="size-10 rounded-xl bg-cyan-400/10 flex items-center justify-center text-cyan-400 border border-cyan-400/30 shadow-[0_0_15px_rgba(34,211,238,0.2)]">
-                                    <span className="material-symbols-outlined text-[22px]">database</span>
-                                </div>
-                                <h3 className="text-lg font-bold text-white tracking-tight">Database</h3>
-                            </div>
-                            <div className="space-y-4">
-                                <div>
-                                    <label className="text-[11px] font-bold text-slate-400 mb-2 block uppercase tracking-wider">Qdrant Path</label>
-                                    <input className="w-full input-glass text-xs font-mono" type="text" value={localQdrantPath}
-                                        onFocus={() => setIsInteracting(true)}
-                                        onChange={(e) => { setLocalQdrantPath(e.target.value); setIsDirty(true); setSaveStatus(null); }}
-                                        onBlur={() => setIsInteracting(false)} />
-                                </div>
-                                <div>
-                                    <label className="text-[11px] font-bold text-slate-400 mb-2 block uppercase tracking-wider">Qdrant URL (optional)</label>
-                                    <input className="w-full input-glass text-xs font-mono" placeholder="null" type="text" value={localQdrantUrl}
-                                        onFocus={() => setIsInteracting(true)}
-                                        onChange={(e) => { setLocalQdrantUrl(e.target.value); setIsDirty(true); setSaveStatus(null); }}
-                                        onBlur={() => setIsInteracting(false)} />
-                                </div>
-                                <div>
-                                    <label className="text-[11px] font-bold text-slate-400 mb-2 block uppercase tracking-wider">Mongo URI</label>
-                                    <input className="w-full input-glass text-xs font-mono" type="text" value={localMongoUri}
-                                        onFocus={() => setIsInteracting(true)}
-                                        onChange={(e) => { setLocalMongoUri(e.target.value); setIsDirty(true); setSaveStatus(null); }}
-                                        onBlur={() => setIsInteracting(false)} />
-                                </div>
-                            </div>
-                        </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+
 
                         {/* Network */}
                         <div className="glass-card rounded-[2rem] p-6 neon-border-cyan relative overflow-hidden group">
@@ -775,7 +787,7 @@ export default function Configuration() {
                                     <span className={`absolute top-1 size-3 rounded-full transition-all ${localRetentionEnabled ? 'right-1 bg-white' : 'left-1 bg-slate-500'}`}></span>
                                 </button>
                             </div>
-                            <div className={`space-y-4 ${!localRetentionEnabled ? 'opacity-40 grayscale pointer-events-none' : ''}`}>
+                            <div className={`space-y-4 transition-all duration-500 ${!localRetentionEnabled ? 'opacity-40 grayscale pointer-events-none blur-[1px]' : ''}`}>
                                 <div>
                                     <label className="text-[11px] font-bold text-slate-400 mb-2 block uppercase tracking-wider">Run Interval (hours)</label>
                                     <input className="w-full input-glass text-xs font-mono" type="number" value={localRetentionInterval}
@@ -828,6 +840,193 @@ export default function Configuration() {
                     {saving ? 'Saving...' : 'Apply All'}
                 </button>
             </div>
+            {/* Add Role Modal */}
+            <AddRoleModal
+                isOpen={showAddRole}
+                onClose={() => setShowAddRole(false)}
+                state={{
+                    name: newRoleName,
+                    ip: newRoleIP,
+                    mask: newRoleMask,
+                    servers: newRoleServers,
+                    routers: newRoleRouters,
+                    switches: newRoleSwitches,
+                    firewalls: newRoleFirewalls,
+                    pcs: newRolePCs,
+                    factor: newRoleFactor
+                }}
+                setters={{
+                    setName: setNewRoleName,
+                    setIp: setNewRoleIP,
+                    setMask: setNewRoleMask,
+                    setServers: setNewRoleServers,
+                    setRouters: setNewRoleRouters,
+                    setSwitches: setNewRoleSwitches,
+                    setFirewalls: setNewRoleFirewalls,
+                    setPcs: setNewRolePCs,
+                    setFactor: setNewRoleFactor
+                }}
+            />
         </main>
+    );
+}
+
+// Sub-component for the Add Role Modal
+function AddRoleModal({ isOpen, onClose, state, setters }) {
+    if (!isOpen) return null;
+
+    return (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+            {/* Overlay */}
+            <div
+                className="absolute inset-0 bg-slate-950/40 backdrop-blur-md"
+                onClick={onClose}
+            ></div>
+
+            {/* Modal Card */}
+            <div className="relative w-full max-w-2xl glass-card rounded-[2.5rem] border border-white/10 shadow-[0_0_50px_rgba(0,0,0,0.3)] overflow-hidden animate-in fade-in zoom-in duration-300">
+                <div className="absolute -right-20 -top-20 size-80 bg-primary/10 blur-[100px] rounded-full"></div>
+
+                <div className="p-8 relative z-10">
+                    <div className="flex items-center justify-between mb-8">
+                        <div className="flex items-center gap-4">
+                            <div className="size-12 rounded-2xl bg-primary/10 flex items-center justify-center text-primary border border-primary/20 shadow-[0_0_20px_rgba(37,106,244,0.2)]">
+                                <span className="material-symbols-outlined text-2xl">shield_person</span>
+                            </div>
+                            <div>
+                                <h2 className="text-xl font-bold text-white tracking-tight">Create New System Role</h2>
+                                <p className="text-slate-400 text-sm">Define operational parameters and hardware constraints.</p>
+                            </div>
+                        </div>
+                        <button
+                            onClick={onClose}
+                            className="size-10 rounded-xl bg-white/5 flex items-center justify-center hover:bg-white/10 transition-all text-slate-400 hover:text-white border border-white/10"
+                        >
+                            <span className="material-symbols-outlined">close</span>
+                        </button>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                        {/* Identity & Network */}
+                        <div className="space-y-5">
+                            <h3 className="text-xs font-bold text-primary uppercase tracking-[0.2em] mb-2 px-1">Identity & Network</h3>
+                            <div className="space-y-4">
+                                <div>
+                                    <label className="text-[11px] font-bold text-slate-400 mb-2 block uppercase tracking-wider">Role Name</label>
+                                    <input
+                                        className="w-full input-glass"
+                                        placeholder="e.g. Threat Hunter"
+                                        type="text"
+                                        value={state.name}
+                                        onChange={(e) => setters.setName(e.target.value)}
+                                    />
+                                </div>
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div>
+                                        <label className="text-[11px] font-bold text-slate-400 mb-2 block uppercase tracking-wider">IP Address</label>
+                                        <input
+                                            className="w-full input-glass font-mono text-xs"
+                                            placeholder="10.0.0.0"
+                                            type="text"
+                                            value={state.ip}
+                                            onChange={(e) => setters.setIp(e.target.value)}
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="text-[11px] font-bold text-slate-400 mb-2 block uppercase tracking-wider">Subnet Mask</label>
+                                        <input
+                                            className="w-full input-glass font-mono text-xs"
+                                            placeholder="24"
+                                            type="text"
+                                            value={state.mask}
+                                            onChange={(e) => setters.setMask(e.target.value)}
+                                        />
+                                    </div>
+                                </div>
+                                <div>
+                                    <label className="text-[11px] font-bold text-slate-400 mb-2 block uppercase tracking-wider">Strategic Factor (0-1)</label>
+                                    <div className="flex items-center gap-4">
+                                        <input
+                                            className="flex-1 accent-primary"
+                                            max="1"
+                                            min="0"
+                                            step="0.0001"
+                                            type="range"
+                                            value={state.factor}
+                                            onChange={(e) => setters.setFactor(e.target.value)}
+                                        />
+                                        <input
+                                            className="w-24 text-sm font-mono text-primary bg-primary/10 px-2 py-1 rounded border border-primary/20 text-center focus:outline-none focus:border-primary/50 transition-all [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                                            max="1"
+                                            min="0"
+                                            step="0.0001"
+                                            type="number"
+                                            value={state.factor}
+                                            onChange={(e) => setters.setFactor(e.target.value)}
+                                        />
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Hardware Constraints */}
+                        <div className="space-y-5">
+                            <h3 className="text-xs font-bold text-primary uppercase tracking-[0.2em] mb-2 px-1">Hardware Constraints</h3>
+                            <div className="grid grid-cols-2 gap-4">
+                                {[
+                                    { label: 'Servers', key: 'servers', icon: 'dns' },
+                                    { label: 'Routers', key: 'routers', icon: 'router' },
+                                    { label: 'Switches', key: 'switches', icon: 'settings_input_component' },
+                                    { label: 'Firewalls', key: 'firewalls', icon: 'security' },
+                                    { label: 'PCs', key: 'pcs', icon: 'desktop_windows' },
+                                ].map(item => (
+                                    <div key={item.key} className="flex flex-col items-center p-3 rounded-2xl bg-white/5 border border-white/10 group/hw hover:bg-white/[0.07] transition-all">
+                                        <div className="flex items-center gap-2 mb-3">
+                                            <span className="material-symbols-outlined text-[18px] text-primary/70">{item.icon}</span>
+                                            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{item.label}</span>
+                                        </div>
+                                        <div className="flex items-center gap-3">
+                                            <button
+                                                onClick={() => setters[`set${item.key.charAt(0).toUpperCase() + item.key.slice(1)}`](Math.max(0, parseInt(state[item.key]) - 1))}
+                                                className="size-7 rounded-lg bg-white/5 flex items-center justify-center hover:bg-red-500/20 hover:text-red-400 transition-all border border-white/5 active:scale-90"
+                                            >
+                                                <span className="material-symbols-outlined text-sm font-bold">remove</span>
+                                            </button>
+                                            <input
+                                                className="w-12 bg-white/5 rounded-lg border border-white/10 text-sm font-mono font-bold text-white text-center focus:outline-none hover:border-primary/30 focus:border-primary/50 transition-all [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none py-1"
+                                                type="number"
+                                                value={state[item.key]}
+                                                onChange={(e) => setters[`set${item.key.charAt(0).toUpperCase() + item.key.slice(1)}`](parseInt(e.target.value) || 0)}
+                                            />
+                                            <button
+                                                onClick={() => setters[`set${item.key.charAt(0).toUpperCase() + item.key.slice(1)}`](parseInt(state[item.key]) + 1)}
+                                                className="size-7 rounded-lg bg-white/5 flex items-center justify-center hover:bg-green-500/20 hover:text-green-400 transition-all border border-white/5 active:scale-90"
+                                            >
+                                                <span className="material-symbols-outlined text-sm font-bold">add</span>
+                                            </button>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="mt-10 flex items-center justify-end gap-4">
+                        <button
+                            onClick={onClose}
+                            className="px-6 py-2.5 rounded-xl border border-white/10 text-slate-400 hover:bg-white/5 transition-all text-sm font-medium"
+                        >
+                            Cancel
+                        </button>
+                        <button
+                            onClick={onClose}
+                            className="px-8 py-2.5 rounded-xl bg-primary text-white font-bold shadow-[0_0_20px_rgba(37,106,244,0.4)] hover:brightness-110 transition-all text-sm"
+                        >
+                            Create Role
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
     );
 }

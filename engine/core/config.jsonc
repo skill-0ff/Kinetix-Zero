@@ -1,6 +1,6 @@
 {
     "port": 5001,
-    "time_window": 5.2,
+    "time_window": 5,
     "max_sequence": 100,
     "ddos_threshold": 50,
     "max_queue_size": 10000,

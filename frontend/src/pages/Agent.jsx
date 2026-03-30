@@ -3,11 +3,7 @@ import React from 'react';
 export default function Agent() {
     return (
         <main className="flex-1 mt-24 px-8 pb-12 max-w-[1440px] mx-auto w-full relative">
-            <div className="flex items-center justify-between mb-8">
-                <div>
-                    <h2 className="text-2xl font-bold text-white tracking-tight">Agent Swarm Management</h2>
-                    <p className="text-sm text-slate-400 mt-1">Configure and deploy autonomous threat-hunting nodes.</p>
-                </div>
+            <div className="flex items-center justify-end mb-8">
                 <button className="px-5 py-2.5 rounded-xl bg-primary hover:bg-primary/90 text-white font-bold text-sm shadow-[0_0_15px_rgba(37,106,244,0.4)] transition-all flex items-center gap-2">
                     <span className="material-symbols-outlined text-[18px]">rocket_launch</span>
                     Deploy New Swarm

@@ -909,7 +909,15 @@ function AddRoleModal({ isOpen, onClose, state, setters }) {
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                         {/* Identity & Network */}
                         <div className="space-y-5">
-                            <h3 className="text-xs font-bold text-primary uppercase tracking-[0.2em] mb-2 px-1">Identity & Network</h3>
+                            <div className="flex items-center gap-1.5 mb-2 px-1">
+                                <h3 className="text-xs font-bold text-primary uppercase tracking-[0.2em]">Identity & Network</h3>
+                                <div className="group/id-tip relative flex items-center">
+                                    <span className="material-symbols-outlined text-[14px] text-slate-500 cursor-help hover:text-primary transition-colors">info</span>
+                                    <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-64 p-3 rounded-xl bg-slate-900/95 backdrop-blur-md border border-white/10 text-[10px] text-slate-300 leading-relaxed opacity-0 group-hover/id-tip:opacity-100 pointer-events-none transition-all z-50 shadow-2xl scale-95 group-hover/id-tip:scale-100 origin-bottom">
+                                        Each role must have a unique identifier and its own network range. Multiple roles can share the same Strategic Factor if they perform identical operational functions.
+                                    </div>
+                                </div>
+                            </div>
                             <div className="space-y-4">
                                 <div>
                                     <label className="text-[11px] font-bold text-slate-400 mb-2 block uppercase tracking-wider">Role Name</label>
@@ -943,27 +951,37 @@ function AddRoleModal({ isOpen, onClose, state, setters }) {
                                         />
                                     </div>
                                 </div>
-                                <div>
-                                    <label className="text-[11px] font-bold text-slate-400 mb-2 block uppercase tracking-wider">Strategic Factor (0-1)</label>
-                                    <div className="flex items-center gap-4">
-                                        <input
-                                            className="flex-1 accent-primary"
-                                            max="1"
-                                            min="0"
-                                            step="0.0001"
-                                            type="range"
-                                            value={state.factor}
-                                            onChange={(e) => setters.setFactor(e.target.value)}
-                                        />
-                                        <input
-                                            className="w-24 text-sm font-mono text-primary bg-primary/10 px-2 py-1 rounded border border-primary/20 text-center focus:outline-none focus:border-primary/50 transition-all [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                                            max="1"
-                                            min="0"
-                                            step="0.0001"
-                                            type="number"
-                                            value={state.factor}
-                                            onChange={(e) => setters.setFactor(e.target.value)}
-                                        />
+                                <div className="space-y-4">
+                                    <div>
+                                        <div className="flex items-center gap-1.5 mb-2">
+                                            <label className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Strategic Factor (0-1)</label>
+                                            <div className="group/tip relative flex items-center">
+                                                <span className="material-symbols-outlined text-[14px] text-slate-500 cursor-help hover:text-primary transition-colors">info</span>
+                                                <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-56 p-3 rounded-xl bg-slate-900/95 backdrop-blur-md border border-white/10 text-[10px] text-slate-300 leading-relaxed opacity-0 group-hover/tip:opacity-100 pointer-events-none transition-all z-50 shadow-2xl scale-95 group-hover/tip:scale-100 origin-bottom">
+                                                    Assign a unique value based on the role's specific function. The more distinct or unique a role's behavior, the further its Strategic Factor should be from other roles.
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div className="flex items-center gap-4">
+                                            <input
+                                                className="flex-1 accent-primary"
+                                                max="1"
+                                                min="0"
+                                                step="0.0001"
+                                                type="range"
+                                                value={state.factor}
+                                                onChange={(e) => setters.setFactor(e.target.value)}
+                                            />
+                                            <input
+                                                className="w-24 text-sm font-mono text-primary bg-primary/10 px-2 py-1 rounded border border-primary/20 text-center focus:outline-none focus:border-primary/50 transition-all [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                                                max="1"
+                                                min="0"
+                                                step="0.0001"
+                                                type="number"
+                                                value={state.factor}
+                                                onChange={(e) => setters.setFactor(e.target.value)}
+                                            />
+                                        </div>
                                     </div>
                                 </div>
                             </div>
@@ -971,7 +989,15 @@ function AddRoleModal({ isOpen, onClose, state, setters }) {
 
                         {/* Hardware Constraints */}
                         <div className="space-y-5">
-                            <h3 className="text-xs font-bold text-primary uppercase tracking-[0.2em] mb-2 px-1">Hardware Constraints</h3>
+                            <div className="flex items-center gap-1.5 mb-2 px-1">
+                                <h3 className="text-xs font-bold text-primary uppercase tracking-[0.2em]">Hardware Constraints</h3>
+                                <div className="group/hw-tip relative flex items-center">
+                                    <span className="material-symbols-outlined text-[14px] text-slate-500 cursor-help hover:text-primary transition-colors">info</span>
+                                    <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-56 p-3 rounded-xl bg-slate-900/95 backdrop-blur-md border border-white/10 text-[10px] text-slate-300 leading-relaxed opacity-0 group-hover/hw-tip:opacity-100 pointer-events-none transition-all z-50 shadow-2xl scale-95 group-hover/hw-tip:scale-100 origin-bottom">
+                                        Define the maximum capacity for each hardware type. You will receive an alert if the deployed infrastructure exceeds these limits.
+                                    </div>
+                                </div>
+                            </div>
                             <div className="grid grid-cols-2 gap-4">
                                 {[
                                     { label: 'Servers', key: 'servers', icon: 'dns' },

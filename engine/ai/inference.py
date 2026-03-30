@@ -732,12 +732,7 @@ class UnsupervisedAI(threading.Thread):
             # --- MONGO STORE (Save Everything) ---
             if self.mongo_events is not None:
                 # Prepare Relational Doc
-                # Enrich Log
-                enriched_log = ctx["log"].copy()
-                enriched_log["ai_verdict"] = verdict
-                enriched_log["ai_score"] = float(ctx["score"])
-                enriched_log["ai_uuid"] = event_uuid
-                
+                # Enrich Log (REMOVED: ai_verdict, ai_score, ai_uuid as per user request)
                 doc = {
                     "_id": event_uuid,
                     "uuid": event_uuid,
@@ -749,7 +744,7 @@ class UnsupervisedAI(threading.Thread):
                     "group_id": ctx["log"].get("role"), # Assuming role is group-like
                     "event_type": ctx["log"].get("event", {}).get("type"),
                     
-                    "full_log": enriched_log
+                    "full_log": ctx["log"]
                 }
                 
                 if ctx["is_anomaly"]:

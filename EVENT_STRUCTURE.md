@@ -100,14 +100,10 @@ Before saving to the Database, the **Brain** enriches the event with the followi
         "timestamp_ref": "14:20:05.123",
         "host": { "id": "WKS-01", ... },
         "event": { "type": "process_start", ... },
-        "_server_ts": 1711817999.0,
-        "ai_verdict": "NEW ANOMALY",
-        "ai_score": 0.8521,
-        "ai_uuid": "a1b2c3d4e5f6..."
+        "_server_ts": 1711817999.0
     }
 }
 ```
-
 ---
 
 > [!IMPORTANT]

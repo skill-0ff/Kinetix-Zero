@@ -81,20 +81,25 @@ class VAETransformer(nn.Module):
         return recon_x, mu, logvar
 
 class VAELoss(nn.Module):
-    def __init__(self, beta=0.1):
+    def __init__(self, beta=0.1, feature_weights=None):
         super().__init__()
         self.beta = beta
-        self.mse = nn.MSELoss(reduction='none') # Keep element-wise initially
+        self.mse = nn.MSELoss(reduction='none') 
+        self.register_buffer("weights", feature_weights)
 
     def forward(self, recon_x, x, mu, logvar, mask=None):
         # 1. Reconstruction Loss (MSE)
-        # x, recon_x: [Batch, Seq, 32]
-        loss_pixel = self.mse(recon_x, x) # [Batch, Seq, 32]
+        # x, recon_x: [Batch, Seq, 34]
+        loss_pixel = self.mse(recon_x, x) # [Batch, Seq, 34]
+        
+        # Apply Feature Weights (e.g. ignore Host ID/IP/MAC for anomaly score)
+        if self.weights is not None:
+             # loss_pixel: [B, S, 34], weights: [34] -> Multiplies last dim
+             loss_pixel = loss_pixel * self.weights
+        
         loss_recon = loss_pixel.mean(dim=2) # [Batch, Seq] - Average over features
         
         # 2. KL Divergence
-        # 0.5 * sum(1 + log(sigma^2) - mu^2 - sigma^2)
-        # We calculate per token to match recon shape
         loss_kl = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp(), dim=2) # [Batch, Seq]
         
         # Combined Unmasked Loss
@@ -102,12 +107,8 @@ class VAELoss(nn.Module):
         
         # 3. Apply Mask (Maturity Logic)
         if mask is not None:
-            # mask: [Batch, Seq] (True = Train/Learn, False = Ignore/Enforce)
-            # We only backpropagate where mask is True
-            # For Alerting, we look at where mask is False (Enforce) separately in inference
-            
             masked_loss = total_loss_raw * mask.float()
-            final_loss = masked_loss.sum() / (mask.sum() + 1e-6) # Normalize by active elements
+            final_loss = masked_loss.sum() / (mask.sum() + 1e-6)
             return final_loss, total_loss_raw
         else:
             return total_loss_raw.mean(), total_loss_raw

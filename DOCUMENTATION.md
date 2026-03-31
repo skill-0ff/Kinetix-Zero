@@ -453,20 +453,22 @@ FastAPI-based REST API for frontend communication.
 
 ---
 
-## Authentication
+### Authentication
 
-**File**: `engine/api/auth.py`
+**File**: `engine/api/server.py`
 
 ### Features:
 - JWT-based authentication
-- SQLite user database
-- Bcrypt password hashing
-- Role-based access control (admin/user)
+- Hardcoded Operator credentials (for initial deployment)
+- Role-based Access Control logic (token payload 'sub')
 
 ### Default Credentials:
+> [!WARNING]
+> These credentials are hardcoded in `server.py` and must be changed for production.
+
 ```
 Username: admin
-Password: admin
+Password: password
 ```
 
 ### Token:

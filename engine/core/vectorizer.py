@@ -29,7 +29,6 @@ class HostIdentity(BaseModel):
 # --- Event Sub-Types ---
 
 class BaseEvent(BaseModel):
-    timestamp: str 
     class Config:
         extra = Extra.forbid
 
@@ -43,10 +42,6 @@ class ProcessStartEvent(BaseEvent):
     parent_path: Optional[str] = None
     parent_sha_256: Optional[str] = None
     user: Optional[str] = None
-    cpu: Optional[str] = None
-    gpu: Optional[str] = None
-    ram: Optional[str] = None
-    disk: Optional[str] = None
 
 class ProcessKillEvent(BaseEvent):
     type: Literal["process_kill"]
@@ -392,6 +387,27 @@ class VectorLibrary:
         except:
             return 0.0
 
+    @staticmethod
+    def normalize_percent(s):
+        """
+        Normlizes a percentage string (e.g., "85%") or a raw float string (e.g. "0.85")
+        to a 0.0 to 1.0 range.
+        """
+        if not s: return 0.0
+        try:
+            s_str = str(s).strip()
+            if "%" in s_str:
+                # Extract digits and decimals before the %
+                match = VectorLibrary.SIZE_REGEX.search(s_str)
+                if not match: return 0.0
+                return min(float(match.group()) / 100.0, 1.0)
+            
+            # Fallback: Assume it's already a float or a raw number
+            val = float(s_str)
+            return min(val if val <= 1.0 else val / 100.0, 1.0)
+        except:
+            return 0.0
+
 # ==========================================
 # 3. Log Normalizer (32-Dim Sparse Map)
 # ==========================================
@@ -466,24 +482,25 @@ class LogNormalizer:
             vector[7] = t_vec[1]
 
             # [New 08-09] Server Authority Time (For Delta Detection)
-            # Uses injected _server_ts from Brain
-            server_ts = raw_json.get("_server_ts") 
-            # If missing (test script), float(time.time())
-            if not server_ts: server_ts = time.time()
-            # Convert float timestamp to cyclic
-            # HACK: Re-use encode_time_cyclic by converting float -> HH:MM:SS string? 
-            # Better: Make encode_time_cyclic accept float. But for now, let's just do math directly to save str alloc
-            # 86400 seconds in day
-            s_day = server_ts % 86400
-            s_angle = s_day * 0.000072722
-            vector[8] = math.sin(s_angle)
-            vector[9] = math.cos(s_angle)
+            # Uses injected server_ts from Brain
+            server_ts_str = raw_json.get("server_ts")
+            if server_ts_str:
+                # Use encode_time_cyclic for string-to-float math
+                s_vec = VectorLibrary.encode_time_cyclic(server_ts_str)
+                vector[8] = s_vec[0]
+                vector[9] = s_vec[1]
+            else:
+                # Fallback if missing (test scripts)
+                s_day = time.time() % 86400
+                s_angle = s_day * 0.000072722
+                vector[8] = math.sin(s_angle)
+                vector[9] = math.cos(s_angle)
 
             # [10-12] Status (Shifted +2)
             if status:
-                vector[10] = VectorLibrary.normalize_size(status.get("cpu", 0))
-                vector[11] = VectorLibrary.normalize_size(status.get("ram", 0))
-                vector[12] = VectorLibrary.normalize_size(status.get("disk", 0))
+                vector[10] = VectorLibrary.normalize_percent(status.get("cpu", 0))
+                vector[11] = VectorLibrary.normalize_percent(status.get("ram", 0))
+                vector[12] = VectorLibrary.normalize_percent(status.get("disk", 0))
 
             # [11-15] Meta
             # [13-17] Meta (Shifted +2)

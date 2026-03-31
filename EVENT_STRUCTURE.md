@@ -31,7 +31,7 @@ Every event payload sent to the Brain must contain these base fields:
 The `event` object must contain a `type` discriminator and a `timestamp`. Below are the supported types and their specific fields from the Brain's validation model.
 
 ### 2.1. Endpoint Activity
-- **process_start**: `process`, `path`, `sha256`, `cmdline`, `parent`, `parent_path`, `parent_sha_256`, `user`, `cpu`, `gpu`, `ram`, `disk`.
+- **process_start**: `process`, `path`, `sha256`, `cmdline`, `parent`, `parent_path`, `parent_sha_256`, `user`.
 - **process_kill**: `process`, `path`, `sha256`, `term_type`, `exit_code`.
 - **file_create** / **file_modified** / **file_delete**: `path`, `file_type`, `hash`, `size`, `process`, `user`, `owner`.
 - **module_load**: `process`, `image_path`, `sha256`, `signed`.
@@ -61,7 +61,7 @@ The `event` object must contain a `type` discriminator and a `timestamp`. Below 
 
 Before saving to the Database, the **Brain** enriches the event with the following internal metadata:
 
-- **`_server_ts`**: Added at reception. Server authority float timestamp.
+- **`server_ts`**: Added at reception. Server authority float timestamp string.
 - **`uuid`**: Unique HEX identifier for the database document.
 - **`verdict`**: Final classification (e.g., `NEW ANOMALY`, `Safe`, `KNOWN THREAT`).
 - **`score`**: Raw anomaly score from the AI model (0.0 to 1.0).
@@ -100,11 +100,11 @@ Before saving to the Database, the **Brain** enriches the event with the followi
         "timestamp_ref": "14:20:05.123",
         "host": { "id": "WKS-01", ... },
         "event": { "type": "process_start", ... },
-        "_server_ts": 1711817999.0
+        "server_ts": "2024-03-30T22:38:05.456789"
     }
 }
 ```
 ---
 
 > [!IMPORTANT]
-> The Brain automatically injects the `_server_ts` field upon reception. Collectors should **not** include this in their outbound packets.
+> The Brain automatically injects the `server_ts` field upon reception. Collectors should **not** include this in their outbound packets.

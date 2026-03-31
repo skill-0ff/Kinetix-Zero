@@ -1,0 +1,466 @@
+[
+  {
+    "uuid": "8e3c4a21-9d10-4f51-b873-67c00e12d345",
+    "timestamp": 1711833001.123,
+    "verdict": "NEW ANOMALY",
+    "score": 0.9654,
+    "host_id": "SRV-WEB-PROD",
+    "role": "POST_SERV",
+    "event_type": "process_kill",
+    "full_log": {
+      "role": "POST_SERV",
+      "timestamp_ref": "00:15:00.000",
+      "host": { "id": "SRV-WEB-PROD", "os": "Linux", "ip": "10.0.0.10", "mac": "00:50:56:FF:AA:11" },
+      "status": { "cpu": "12%", "ram": "85%", "disk": "30%" },
+      "event": {
+        "type": "process_kill",
+        "process": "fail2ban-server",
+        "path": "/usr/bin/fail2ban-server",
+        "sha256": "df7a8b9c0d1e2f3a4b5c6d7e8f9a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a",
+        "term_type": "SIGKILL",
+        "exit_code": "137"
+      },
+      "server_ts": "2024-03-31T00:15:01.456789"
+    }
+  },
+  {
+    "uuid": "3a1c5b8e-6d2f-4a9b-b1e4-8f9d0c2e3a1b",
+    "timestamp": 1711833100.456,
+    "verdict": "KNOWN THREAT",
+    "score": 0.9981,
+    "host_id": "SRV-WEB-PROD",
+    "role": "POST_SERV",
+    "event_type": "file_create",
+    "full_log": {
+      "role": "POST_SERV",
+      "timestamp_ref": "00:16:30.000",
+      "host": { "id": "SRV-WEB-PROD", "os": "Linux", "ip": "10.0.0.10", "mac": "00:50:56:FF:AA:11" },
+      "status": { "cpu": "15%", "ram": "88%", "disk": "31%" },
+      "event": {
+        "type": "file_create",
+        "path": "/tmp/.system_update.sh",
+        "file_type": "shell_script",
+        "hash": "8a9f0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a",
+        "size": "2.4KB",
+        "process": "python3",
+        "user": "www-data",
+        "owner": "www-data"
+      },
+      "server_ts": "2024-03-31T00:16:32.123456"
+    }
+  },
+  {
+    "uuid": "f4d2a1c9-e8b7-4d6a-8f5c-3a2e1b0d9f8e",
+    "timestamp": 1711833150.789,
+    "verdict": "NEW ANOMALY",
+    "score": 0.9412,
+    "host_id": "SRV-WEB-PROD",
+    "role": "POST_SERV",
+    "event_type": "file_modified",
+    "full_log": {
+      "role": "POST_SERV",
+      "timestamp_ref": "00:17:45.000",
+      "host": { "id": "SRV-WEB-PROD", "os": "Linux", "ip": "10.0.0.10", "mac": "00:50:56:FF:AA:11" },
+      "status": { "cpu": "18%", "ram": "90%", "disk": "31%" },
+      "event": {
+        "type": "file_modified",
+        "path": "/etc/shadow",
+        "process": "vim.basic",
+        "user": "maintenance_user",
+        "size_change": "+140 bytes",
+        "perm_change": "640 -> 666",
+        "owner": "root"
+      },
+      "server_ts": "2024-03-31T00:17:47.333444"
+    }
+  },
+  {
+    "uuid": "7c1e5d9a-3f2b-40c2-9e1a-8b0d4f1e2c3a",
+    "timestamp": 1711833210.111,
+    "verdict": "NEW ANOMALY",
+    "score": 0.9855,
+    "host_id": "SRV-WEB-PROD",
+    "role": "POST_SERV",
+    "event_type": "file_delete",
+    "full_log": {
+      "role": "POST_SERV",
+      "timestamp_ref": "00:18:55.000",
+      "host": { "id": "SRV-WEB-PROD", "os": "Linux", "ip": "10.0.0.10", "mac": "00:50:56:FF:AA:11" },
+      "status": { "cpu": "25%", "ram": "92%", "disk": "28%" },
+      "event": {
+        "type": "file_delete",
+        "path": "/var/log/syslog",
+        "process": "rm",
+        "user": "www-data",
+        "size": "5.2MB",
+        "perm": "644",
+        "owner": "root"
+      },
+      "server_ts": "2024-03-31T00:18:57.999888"
+    }
+  },
+  {
+    "uuid": "d4a5b6c7-e8f9-4a0b-9c1d-2e3f4a5b6c7d",
+    "timestamp": 1711833300.999,
+    "verdict": "KNOWN THREAT",
+    "score": 0.9999,
+    "host_id": "SRV-WEB-PROD",
+    "role": "POST_SERV",
+    "event_type": "service_create",
+    "full_log": {
+      "role": "POST_SERV",
+      "timestamp_ref": "00:20:10.000",
+      "host": { "id": "SRV-WEB-PROD", "os": "Linux", "ip": "10.0.0.10", "mac": "00:50:56:FF:AA:11" },
+      "status": { "cpu": "10%", "ram": "80%", "disk": "31%" },
+      "event": {
+        "type": "service_create",
+        "name": "KinetixZero_Bypass",
+        "path": "/usr/local/bin/backdoor.sh",
+        "start_type": "auto",
+        "account": "root",
+        "creator": "hacker_account"
+      },
+      "server_ts": "2024-03-31T00:20:15.001002"
+    }
+  },
+  {
+    "uuid": "s9e8d7c6-b5a4-3f2e-1d0c-9b8a7f6e5d4c",
+    "timestamp": 1711834500.789,
+    "verdict": "NEW ANOMALY",
+    "score": 0.9782,
+    "host_id": "0xABC123",
+    "role": "POST_SWITCH",
+    "event_type": "traffic",
+    "full_log": {
+      "role": "POST_SWITCH",
+      "timestamp_ref": "00:35:10.123",
+      "host": {
+        "id": "HEX"
+      },
+      "status": {
+        "cpu": "100%",
+        "ram": "100%"
+      },
+      "event": {
+        "type": "traffic",
+        "timestamp": "00:35:10.123",
+        "src_mac": "00:11:22:33:44:55",
+        "dst_mac": "FF:FF:FF:FF:FF:FF",
+        "src_iface": "GigabitEthernet0/1",
+        "dst_iface": "GigabitEthernet0/24",
+        "proto": "ARP_FLOOD",
+        "vlan_src": "10",
+        "vlan_dst": "999"
+      },
+      "server_ts": "2024-03-31T00:35:15.555666"
+    }
+  },
+  {
+    "uuid": "f1a2b3c4-d5e6-4f7a-8b9c-0d1e2f3a4b5c",
+    "timestamp": 1711835000.123,
+    "verdict": "NEW ANOMALY",
+    "score": 0.9821,
+    "host_id": "0xDEADBEEF",
+    "role": "EDGE_FW",
+    "event_type": "traffic",
+    "full_log": {
+      "role": "EDGE_FW",
+      "timestamp_ref": "12:00:00.800",
+      "host": {
+        "id": "HEX"
+      },
+      "status": {
+        "cpu": "100%",
+        "ram": "100%"
+      },
+      "event": {
+        "type": "traffic",
+        "timestamp": "12:00:01.000",
+        "src_ip": "1.2.3.4",
+        "dst_ip": "10.0.0.100",
+        "src_port": "443",
+        "dst_port": "22",
+        "proto": "TCP/SSH",
+        "action": "DENY",
+        "src_iface": "WAN",
+        "dst_iface": "LAN"
+      },
+      "server_ts": "2024-03-31T00:41:00.123456"
+    }
+  },
+  {
+    "uuid": "c0ffee12-3456-7890-abcd-ef1234567890",
+    "timestamp": 1711835500.555,
+    "verdict": "NEW ANOMALY",
+    "score": 0.9912,
+    "host_id": "0xABCDEF",
+    "role": "POST_ROUTER",
+    "event_type": "traffic",
+    "full_log": {
+      "role": "POST_ROUTER",
+      "timestamp_ref": "00:42:00.123",
+      "host": {
+        "id": "HEX"
+      },
+      "status": {
+        "cpu": "100%",
+        "ram": "100%"
+      },
+      "event": {
+        "type": "traffic",
+        "timestamp": "00:42:00.123",
+        "src_ip": "10.0.0.50",
+        "dst_ip": "45.33.1.22",
+        "src_iface": "Internal_VLAN",
+        "dst_iface": "External_WAN",
+        "src_port": "56789",
+        "dst_port": "443",
+        "proto": "TCP/DATA_EXFIL"
+      },
+      "server_ts": "2024-03-31T00:42:30.999000"
+    }
+  },
+  {
+    "uuid": "e1f2a3b4-c5d6-4e5f-a6b7-c8d9e0f1a2b3",
+    "timestamp": 1711836000.123,
+    "verdict": "NEW ANOMALY",
+    "score": 0.9542,
+    "host_id": "SRV-APPS-02",
+    "role": "POST_SERV",
+    "event_type": "service_delete",
+    "full_log": {
+      "role": "POST_SERV",
+      "timestamp_ref": "01:00:00.111",
+      "host": { "id": "SRV-APPS-02", "os": "Windows", "ip": "10.0.1.20" },
+      "status": { "cpu": "5%", "ram": "40%", "disk": "15%" },
+      "event": {
+        "type": "service_delete",
+        "name": "WinDefend",
+        "path": "C:\\Windows\\System32\\MsMpEng.exe",
+        "account": "LocalSystem",
+        "deleter": "UnknownUser_SID_500"
+      },
+      "server_ts": "2024-03-31T01:00:02.111"
+    }
+  },
+  {
+    "uuid": "f2a3b4c5-d6e7-4f8a-9b0c-1d2e3f4a5b6c",
+    "timestamp": 1711836060.456,
+    "verdict": "NEW ANOMALY",
+    "score": 0.9321,
+    "host_id": "SRV-APPS-02",
+    "role": "POST_SERV",
+    "event_type": "service_modified",
+    "full_log": {
+      "role": "POST_SERV",
+      "timestamp_ref": "01:01:00.222",
+      "host": { "id": "SRV-APPS-02", "os": "Windows" },
+      "status": { "cpu": "8%", "ram": "42%", "disk": "15%" },
+      "event": {
+        "type": "service_modified",
+        "name": "AppReadiness",
+        "path": "C:\\temp\\backdoor.exe",
+        "account": "LocalSystem",
+        "user": "Compromised_Admin"
+      },
+      "server_ts": "2024-03-31T01:01:03.222"
+    }
+  },
+  {
+    "uuid": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+    "timestamp": 1711836120.789,
+    "verdict": "KNOWN THREAT",
+    "score": 0.9876,
+    "host_id": "SRV-APPS-02",
+    "role": "POST_SERV",
+    "event_type": "registry",
+    "full_log": {
+      "role": "POST_SERV",
+      "timestamp_ref": "01:02:00.333",
+      "host": { "id": "SRV-APPS-02", "os": "Windows" },
+      "status": { "cpu": "12%", "ram": "45%", "disk": "15%" },
+      "event": {
+        "type": "registry",
+        "op_type": "SetValue",
+        "reg_path": "HKLM\\Software\\Microsoft\\Windows\\CurrentVersion\\Run",
+        "reg_val": "Updater",
+        "reg_type": "REG_SZ",
+        "reg_user": "LOCAL_SYSTEM",
+        "reg_owner": "Administrators"
+      },
+      "server_ts": "2024-03-31T01:02:05.333"
+    }
+  },
+  {
+    "uuid": "b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6e",
+    "timestamp": 1711836180.111,
+    "verdict": "NEW ANOMALY",
+    "score": 0.9412,
+    "host_id": "SRV-APPS-02",
+    "role": "POST_SERV",
+    "event_type": "network_connection",
+    "full_log": {
+      "role": "POST_SERV",
+      "timestamp_ref": "01:03:00.444",
+      "host": { "id": "SRV-APPS-02", "os": "Windows", "ip": "10.0.1.20" },
+      "status": { "cpu": "15%", "ram": "48%", "disk": "15%" },
+      "event": {
+        "type": "network_connection",
+        "process": "notepad.exe",
+        "protocol": "TCP",
+        "ip_local": false,
+        "dst_ip": "185.199.110.153",
+        "src_port": "54321",
+        "dst_port": "443",
+        "sent": "500KB",
+        "recv": "2MB"
+      },
+      "server_ts": "2024-03-31T01:03:04.444"
+    }
+  },
+  {
+    "uuid": "c3d4e5f6-a7b8-4c9d-0e1f-2a3b4c5d6e7f",
+    "timestamp": 1711836240.444,
+    "verdict": "NEW ANOMALY",
+    "score": 0.9123,
+    "host_id": "SRV-APPS-02",
+    "role": "POST_SERV",
+    "event_type": "dns_query",
+    "full_log": {
+      "role": "POST_SERV",
+      "timestamp_ref": "01:04:00.555",
+      "host": { "id": "SRV-APPS-02" },
+      "status": { "cpu": "10%", "ram": "44%", "disk": "15%" },
+      "event": {
+        "type": "dns_query",
+        "q_name": "attacker-c2-domain.com",
+        "q_type": "TXT",
+        "q_res": "v=spf1 include:_spf.google.com ~all",
+        "q_port": "53",
+        "q_proto": "UDP"
+      },
+      "server_ts": "2024-03-31T01:04:06.555"
+    }
+  },
+  {
+    "uuid": "d4e5f6a7-b8c9-4d0e-1f2a-3b4c5d6e7f8a",
+    "timestamp": 1711836300.777,
+    "verdict": "KNOWN THREAT",
+    "score": 0.9991,
+    "host_id": "SRV-APPS-02",
+    "role": "POST_SERV",
+    "event_type": "auth_login",
+    "full_log": {
+      "role": "POST_SERV",
+      "timestamp_ref": "01:05:00.666",
+      "host": { "id": "SRV-APPS-02" },
+      "status": { "cpu": "5%", "ram": "40%", "disk": "15%" },
+      "event": {
+        "type": "auth_login",
+        "user": "root",
+        "domain": "SRV-APPS-02",
+        "src_ip": "192.168.100.50",
+        "logon_type": "Network",
+        "auth_package": "Kerberos",
+        "result": "Failure",
+        "failure_reason": "BadPasswordCount_Burst"
+      },
+      "server_ts": "2024-03-31T01:05:08.666"
+    }
+  },
+  {
+    "uuid": "e5f6a7b8-c9d0-4e1f-2a3b-4c5d6e7f8a9b",
+    "timestamp": 1711836360.111,
+    "verdict": "NEW ANOMALY",
+    "score": 0.8876,
+    "host_id": "SRV-APPS-02",
+    "role": "POST_SERV",
+    "event_type": "console_login",
+    "full_log": {
+      "role": "POST_SERV",
+      "timestamp_ref": "01:06:00.777",
+      "host": { "id": "SRV-APPS-02" },
+      "status": { "cpu": "20%", "ram": "50%", "disk": "15%" },
+      "event": {
+        "type": "console_login",
+        "user": "EmergencyUser",
+        "action": "Login",
+        "method": "SSH",
+        "terminal": "pts/0",
+        "result": "Success"
+      },
+      "server_ts": "2024-03-31T01:06:10.777"
+    }
+  },
+  {
+    "uuid": "f6a7b8c9-d0e1-4f2a-3b4c-5d6e7f8a9b0c",
+    "timestamp": 1711836420.444,
+    "verdict": "NEW ANOMALY",
+    "score": 0.9254,
+    "host_id": "SRV-APPS-02",
+    "role": "POST_SERV",
+    "event_type": "scheduled_task",
+    "full_log": {
+      "role": "POST_SERV",
+      "timestamp_ref": "01:07:00.888",
+      "host": { "id": "SRV-APPS-02" },
+      "status": { "cpu": "10%", "ram": "42%", "disk": "15%" },
+      "event": {
+        "type": "scheduled_task",
+        "task_name": "SystemMaintenance_Task",
+        "action": "Create",
+        "path": "C:\\temp\\miner.exe",
+        "user": "SYSTEM"
+      },
+      "server_ts": "2024-03-31T01:07:12.888"
+    }
+  },
+  {
+    "uuid": "0a1b2c3d-4e5f-6a7b-8c9d-0e1f2a3b4c5d",
+    "timestamp": 1711836480.777,
+    "verdict": "NEW ANOMALY",
+    "score": 0.9121,
+    "host_id": "SRV-APPS-02",
+    "role": "POST_SERV",
+    "event_type": "logging",
+    "full_log": {
+      "role": "POST_SERV",
+      "timestamp_ref": "01:08:00.999",
+      "host": { "id": "SRV-APPS-02" },
+      "status": { "cpu": "15%", "ram": "45%", "disk": "15%" },
+      "event": {
+        "type": "logging",
+        "level": "Warning",
+        "source": "Security-Auditing",
+        "event_id": "1102",
+        "message": "The audit log was cleared.",
+        "task_category": "Log Clear"
+      },
+      "server_ts": "2024-03-31T01:08:15.999"
+    }
+  },
+  {
+    "uuid": "1b2c3d4e-5f6a-7b8c-9d0e-1f2a3b4c5d6e",
+    "timestamp": 1711836540.111,
+    "verdict": "NEW ANOMALY",
+    "score": 0.9432,
+    "host_id": "SRV-APPS-02",
+    "role": "POST_SERV",
+    "event_type": "session",
+    "full_log": {
+      "role": "POST_SERV",
+      "timestamp_ref": "01:09:00.000",
+      "host": { "id": "SRV-APPS-02" },
+      "status": { "cpu": "10%", "ram": "44%", "disk": "15%" },
+      "event": {
+        "type": "session",
+        "session_id": "9999",
+        "user": "root",
+        "status": "Active",
+        "logon_type": "Service",
+        "source_network_address": "85.22.11.44"
+      },
+      "server_ts": "2024-03-31T01:09:20.111"
+    }
+  }
+]

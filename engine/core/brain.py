@@ -363,7 +363,7 @@ class Brain:
         for data in buffer_batch:
             try:
                 obj = json_loads(data)
-                obj['_server_ts'] = time.time() # Server Authority Timestamp
+                obj['server_ts'] = datetime.datetime.now().isoformat() # Server Authority Timestamp string
                 _append(obj)
             except:
                 continue

@@ -90,7 +90,13 @@ class UnsupervisedAI(threading.Thread):
             except Exception as e:
                 print(f"[AI] Compile failed (safe fallback): {e}")
 
-        self.loss_fn = VAELoss(beta=self.beta)
+        # Optimization: Feature Weights for Anomaly Detection (Role-Based Judgment)
+        # We ignore indices 1, 2, 3, 4 (Host ID, OS, IP, MAC) for Reconstruction Loss
+        # but keep [0] (Role), [5] (Maturity), and [6-33] (Behavioral data)
+        weights = torch.ones(self.input_dim, device=self.device)
+        weights[1:5] = 0.0 # Indices 1, 2, 3, 4
+        
+        self.loss_fn = VAELoss(beta=self.beta, feature_weights=weights)
         self.optimizer = optim.Adam(self.model.parameters(), lr=0.001)
         
         # Optimization: Mixed Precision
@@ -707,7 +713,7 @@ class UnsupervisedAI(threading.Thread):
                 
                 # REPORT & ALERT
                 evt = ctx["log"].get("event", {})
-                ts_val = ctx["log"].get("timestamp_ref") or evt.get("timestamp") or ctx["log"].get("_server_ts") or "?"
+                ts_val = ctx["log"].get("timestamp_ref") or ctx["log"].get("_server_ts") or "?"
                 
                 # Map Verdict to Config Key
                 alert_key = "new_anomaly"

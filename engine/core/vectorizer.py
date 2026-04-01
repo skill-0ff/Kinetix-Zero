@@ -262,28 +262,41 @@ class VectorLibrary:
     SIZE_REGEX = re.compile(r"[\d\.]+")
 
     @staticmethod
-    def reload_role_mapping(mapping=None):
-        if mapping:
-            VectorLibrary.ROLE_MAPPING = mapping
-            VectorLibrary.get_role_score.cache_clear()
+    def reload_role_mapping(roles_data=None):
+        """
+        Reloads the role-to-strategic-factor mapping.
+        Accepts: 
+        - dict: A direct mapping to use.
+        - list: A list of MongoDB role documents with 'name' and 'strategic_factor'.
+        """
+        if roles_data is None:
+            # Legacy/Fallback: Try to find the file but don't crash if missing
+            try:
+                base_path = os.path.dirname(os.path.abspath(__file__))
+                map_path = os.path.join(base_path, "role_mapping.json")
+                if os.path.exists(map_path):
+                    with open(map_path, 'r') as f:
+                        VectorLibrary.ROLE_MAPPING = json.load(f)
+                        VectorLibrary.get_role_score.cache_clear()
+                        return
+            except: pass
+            VectorLibrary.ROLE_MAPPING = {}
             return
 
-        try:
-            # Look in current directory (core/) first
-            base_path = os.path.dirname(os.path.abspath(__file__))
-            map_path = os.path.join(base_path, "role_mapping.json")
-            
-            if not os.path.exists(map_path):
-                 # Fallback to parent (engine/)
-                 map_path = os.path.join(os.path.dirname(base_path), "role_mapping.json")
-
-            with open(map_path, 'r') as f:
-                VectorLibrary.ROLE_MAPPING = json.load(f)
-                print(f"[Info] Role Mapping loaded: {len(VectorLibrary.ROLE_MAPPING)} roles")
-                VectorLibrary.get_role_score.cache_clear()
-        except Exception as e:
-            print(f"[Warning] Failed to load role_mapping.json: {e}")
-            VectorLibrary.ROLE_MAPPING = {}
+        if isinstance(roles_data, dict):
+            VectorLibrary.ROLE_MAPPING = roles_data
+        elif isinstance(roles_data, list):
+            # Process MongoDB documents
+            new_map = {}
+            for doc in roles_data:
+                name = doc.get("name")
+                factor = doc.get("strategic_factor", 0.5)
+                if name:
+                    new_map[name.upper()] = float(factor)
+            VectorLibrary.ROLE_MAPPING = new_map
+        
+        VectorLibrary.get_role_score.cache_clear()
+        # print(f"[VectorLibrary] Roles synced: {len(VectorLibrary.ROLE_MAPPING if VectorLibrary.ROLE_MAPPING else [])} roles")
 
     @staticmethod
     @lru_cache(maxsize=128)

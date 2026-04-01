@@ -12,6 +12,7 @@ import psutil
 import subprocess
 import shutil
 import queue
+from pymongo import MongoClient
 
 # Add engine path
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
@@ -49,13 +50,17 @@ except ImportError:
 # PacketReceiver has been moved to standalone collector.py
 
 class Brain:
-    def __init__(self, config_path="engine/core/config.jsonc", role_map_path="engine/core/role_mapping.json"):
+    def __init__(self, config_path="engine/core/config.jsonc"):
         self.config_path = config_path
-        self.role_map_path = role_map_path
         self.config = {}
         self.running = True
         
         self.load_config()
+        
+        # DB Initialization
+        self.client = MongoClient(self.config.get("mongo_uri", "mongodb://localhost:27017/"))
+        self.db = self.client["kinetix_brain"]
+        
         self.load_roles()
         
         q_size = int(self.config.get("max_queue_size", 10000))
@@ -72,7 +77,7 @@ class Brain:
                 print(f"[Error] AI Init Failed: {e}")
         
         self.last_config_mtime = 0
-        self.last_role_mtime = 0
+        self.last_role_sync = 0
         self.last_watchdog_check = time.time()
         
         self.start_time = time.time()
@@ -124,9 +129,10 @@ class Brain:
 
     def load_roles(self):
         try:
-            VectorLibrary.reload_role_mapping()
+            roles_data = list(self.db.roles.find({}, {"_id": 0}))
+            VectorLibrary.reload_role_mapping(roles_data)
         except Exception as e:
-            print(f"[Error] Role Load Failed: {e}")
+            print(f"[Error] Role Sync Failed: {e}")
     
     def check_hot_reload(self):
         try:
@@ -194,7 +200,6 @@ class Brain:
             
         try:
             self.last_config_mtime = os.path.getmtime(self.config_path)
-            self.last_role_mtime = os.path.getmtime(self.role_map_path)
         except: pass
         
         next_flush = time.time() + self.time_window
@@ -207,6 +212,12 @@ class Brain:
             if now >= next_flush:
                 self.process_queue()
                 self.check_hot_reload()
+                
+                # DB Role Sync (10s)
+                if now >= self.last_role_sync + 10.0:
+                    self.load_roles()
+                    self.last_role_sync = now
+                    
                 next_flush = now + self.time_window
             
             if now >= self.last_watchdog_check + 1.0:

@@ -9,6 +9,9 @@ import select
 import random
 import uuid
 import psutil
+import re
+import ipaddress
+import secrets
 from pymongo import MongoClient
 
 # --- CONFIG LOADING ---
@@ -74,6 +77,16 @@ class PacketReceiver(threading.Thread):
         self.needs_rebind = False
         self.needs_db_reconnect = False
         
+        # Authentication & Verification
+        self.known_devices = {} # { "ip": { "host_id": "key" } }
+        self.known_roles = {}   # { "role_name": IPv4Network }
+        self.unauthorized_count = 0
+        self.last_sync = 0
+        # High-performance regex for extracting auth without full JSON parse
+        self.auth_regex = re.compile(br'"auth"\s*:\s*{\s*"host_id"\s*:\s*"([^"]+)"\s*,\s*"key"\s*:\s*"([^"]+)"\s*}')
+        # Registration trigger regex
+        self.reg_regex = re.compile(br'"type"\s*:\s*"registration_request"')
+        
         self._init_db()
         self.setup_socket()
 
@@ -91,6 +104,42 @@ class PacketReceiver(threading.Thread):
             self.needs_db_reconnect = False
         except Exception as e:
             print(f"[Collector Error] MongoDB Connection Failed: {e}")
+
+    def sync_known_devices(self):
+        """Syncs authorized agents and role-networks from DB to in-memory cache every 10s."""
+        if not self.mongo_client: return
+        try:
+            db = self.mongo_client["kinetix_brain"]
+            
+            # 1. Sync Agents
+            agents = list(db.agents.find({}, {"host_id": 1, "ip": 1, "key": 1}))
+            new_cache = {}
+            for agent in agents:
+                ip = agent.get("ip")
+                host_id = agent.get("host_id")
+                key = agent.get("key")
+                if ip and host_id and key:
+                    if ip not in new_cache: new_cache[ip] = {}
+                    new_cache[ip][host_id] = key
+            self.known_devices = new_cache
+            
+            # 2. Sync Roles (Subnets)
+            roles = list(db.roles.find({}, {"name": 1, "ip": 1, "mask": 1}))
+            new_roles = {}
+            for role in roles:
+                name = role.get("name")
+                net = role.get("ip")
+                mask = role.get("mask")
+                if name and net and mask:
+                    try:
+                        new_roles[name] = ipaddress.ip_network(f"{net}/{mask}", strict=False)
+                    except: pass
+            self.known_roles = new_roles
+            
+            self.last_sync = time.time()
+            # print(f"[Collector] Sync complete: {len(self.known_devices)} IPs, {len(self.known_roles)} Roles")
+        except Exception as e:
+            print(f"[Collector Error] Device Sync Failed: {e}")
 
     def setup_socket(self):
         with self.rebind_lock:
@@ -158,11 +207,14 @@ class PacketReceiver(threading.Thread):
         last_pps_check = time.time()
         
         while self.running:
-            # CHECK HOT-SWAP FLAGS
+            # CHECK HOT-SWAP & SYNC FLAGS
+            now = time.time()
             if self.needs_rebind:
                 self.setup_socket()
             if self.needs_db_reconnect:
                 self._init_db()
+            if now - self.last_sync > 10.0:
+                self.sync_known_devices()
                 
             try:
                 # Per-second packet count check
@@ -188,10 +240,42 @@ class PacketReceiver(threading.Thread):
                     batch_to_process = []
                     for _ in range(100):
                         try:
-                            data, _ = _sock.recvfrom(65535)
+                            data, addr = _sock.recvfrom(65535)
+                            source_ip = addr[0]
                             pps_count += 1
                             
-                            # Check limit again for immediate drop
+                            # 1. PROVISIONING HANDLER (Registration Flow)
+                            if self.reg_regex.search(data):
+                                try:
+                                    reg_obj = json.loads(data)
+                                    self._handle_registration(reg_obj, addr)
+                                except: pass
+                                continue
+
+                            # 2. KNOWN DEVICE VERIFICATION (High Speed)
+                            # Check IP first
+                            valid_hosts = self.known_devices.get(source_ip)
+                            if not valid_hosts:
+                                self.metrics.dropped_packets += 1
+                                self.unauthorized_count += 1
+                                continue
+                                
+                            # Extract host_id & key via regex (No full JSON parse)
+                            auth_match = self.auth_regex.search(data)
+                            if not auth_match:
+                                self.metrics.dropped_packets += 1
+                                self.unauthorized_count += 1
+                                continue
+                                
+                            h_id = auth_match.group(1).decode()
+                            h_key = auth_match.group(2).decode()
+                            
+                            if h_id not in valid_hosts or valid_hosts[h_id] != h_key:
+                                self.metrics.dropped_packets += 1
+                                self.unauthorized_count += 1
+                                continue
+
+                            # 2. DDoS Capacity Check
                             max_seq = int(self.config.get("max_sequence", 100))
                             ddos_thresh = int(self.config.get("ddos_threshold", 50))
                             if pps_count > (max_seq + ddos_thresh):
@@ -211,6 +295,65 @@ class PacketReceiver(threading.Thread):
                         except BlockingIOError: break
                         except: break
             except Exception: pass
+
+    def _handle_registration(self, reg_obj, addr):
+        """Handles automatic enrollment of new agents based on their subnet."""
+        host_id = reg_obj.get("host_id")
+        ip_addr = reg_obj.get("ip", addr[0])
+        
+        if not host_id: return
+
+        # 1. Find a matching Role Network
+        assigned_role = None
+        try:
+            target_ip = ipaddress.ip_address(ip_addr)
+            for role_name, network in self.known_roles.items():
+                if target_ip in network:
+                    assigned_role = role_name
+                    break
+        except: return
+
+        if not assigned_role:
+            # print(f"[Provisioning] Rejected {host_id} at {ip_addr}: No matching role network.")
+            return
+
+        # 2. Check if host already exists (re-issuing key or rejecting depends on policy)
+        db = self.mongo_client["kinetix_brain"]
+        existing = db.agents.find_one({"host_id": host_id})
+        
+        # 3. Generate SHA-256 equivalent random HEX key (256-bit entropy)
+        new_key = f"kx-{secrets.token_hex(32)}"
+        
+        # 4. Save to Database
+        now_ts = datetime.datetime.now().isoformat()
+        agent_doc = {
+            "host_id": host_id,
+            "ip": ip_addr,
+            "role": assigned_role,
+            "key": new_key,
+            "created_at": now_ts,
+            "status": "active"
+        }
+        
+        if existing:
+            db.agents.update_one({"host_id": host_id}, {"$set": agent_doc})
+        else:
+            db.agents.insert_one(agent_doc)
+            
+        # 5. Immediate Cache Refresh (Optional: wait for 10s sync is fine, but for registration we sync now)
+        self.sync_known_devices()
+        
+        # 6. Success Response (Back to agent)
+        response = {
+            "type": "registration_success",
+            "host_id": host_id,
+            "key": new_key,
+            "role": assigned_role
+        }
+        try:
+            self.sock.sendto(json.dumps(response).encode(), addr)
+            print(f"[Provisioning] Registered '{host_id}' as {assigned_role} ({ip_addr}). Index updated.")
+        except: pass
 
     def forward_to_brain(self, raw_data):
         """Placeholder for Inter-Process Communication (IPC) to Brain."""
@@ -266,7 +409,8 @@ if __name__ == "__main__":
                     "mbps": metrics.mbps,
                     "cpu": metrics.cpu,
                     "ram": metrics.ram,
-                    "dropped": metrics.dropped_packets
+                    "dropped": metrics.dropped_packets,
+                    "unauthorized": receiver.unauthorized_count
                 }
                 # For now, write to a temp file that the Brain can read
                 try:

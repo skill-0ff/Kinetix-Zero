@@ -235,7 +235,6 @@ class UnsupervisedAI(threading.Thread):
             self.mongo_db = self.mongo_client["kinetix_brain"]
             self.mongo_events = self.mongo_db["events"]
             self.mongo_ddos = self.mongo_db["ddos"]
-            
             # Check Connection
             self.mongo_client.server_info()
             print(f"[AI] MongoDB Connected: {self.mongo_uri}")
@@ -733,7 +732,6 @@ class UnsupervisedAI(threading.Thread):
                     print(f"[AI ALERT] Score: {ctx['score']:.4f}")
                     print(f"  >> [VERDICT] {verdict} (Type: {mem_type or 'None'}, Dist: {mem_dist:.4f})")
                     print(f"  >> [DETAILS] Time: {ts_val}")
-                print(json.dumps(ctx["log"], indent=2))
 
             # --- MONGO STORE (Save Everything) ---
             if self.mongo_events is not None:

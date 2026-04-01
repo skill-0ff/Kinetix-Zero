@@ -12,7 +12,7 @@ import psutil
 import re
 import ipaddress
 import secrets
-from pymongo import MongoClient
+from pymongo import MongoClient, UpdateMany, ASCENDING
 
 # --- CONFIG LOADING ---
 CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.jsonc")
@@ -87,6 +87,10 @@ class PacketReceiver(threading.Thread):
         # Registration trigger regex
         self.reg_regex = re.compile(br'"type"\s*:\s*"registration_request"')
         
+        # Status Tracking (RAM-cache)
+        self.active_ids = set()
+        self.active_lock = threading.Lock()
+        
         self._init_db()
         self.setup_socket()
 
@@ -100,6 +104,11 @@ class PacketReceiver(threading.Thread):
             uri = self.config.get("mongo_uri", "mongodb://localhost:27017/")
             self.mongo_client = MongoClient(uri, serverSelectionTimeoutMS=2000)
             self.mongo_ddos = self.mongo_client["kinetix_brain"]["ddos"]
+            
+            # Ensure Database Optimization
+            db = self.mongo_client["kinetix_brain"]
+            db.agents.create_index([("last_seen", ASCENDING)])
+            
             print(f"[Collector] MongoDB connected: {uri.split('@')[-1] if '@' in uri else uri}")
             self.needs_db_reconnect = False
         except Exception as e:
@@ -198,7 +207,47 @@ class PacketReceiver(threading.Thread):
         except Exception as e:
             print(f"[Collector Error] Forensic Sampling Failed: {e}")
 
+    def _sync_agent_status_task(self):
+        """Background loop to flush in-memory activity to DB once a minute."""
+        while self.running:
+            time.sleep(60)
+            if not self.mongo_client: continue
+            
+            # 1. Snapshot and Clear RAM
+            with self.active_lock:
+                to_sync = list(self.active_ids)
+                self.active_ids.clear()
+            
+            try:
+                db = self.mongo_client["kinetix_brain"]
+                now_ts = time.time()
+                
+                # ATOMIC-LIKE BULK UPDATE
+                ops = [
+                    # Reset: Everyone currently online becomes offline
+                    UpdateMany({"status": "online"}, {"$set": {"status": "offline"}}),
+                ]
+                
+                # Restore: Only the IDs that spoke in the last 60s
+                if to_sync:
+                    ops.append(
+                        UpdateMany(
+                            {"host_id": {"$in": to_sync}}, 
+                            {"$set": {"status": "online", "last_seen": now_ts}}
+                        )
+                    )
+                
+                db.agents.bulk_write(ops, ordered=True)
+                # print(f"[StatusManager] Sync'd {len(to_sync)} active agents.")
+                
+            except Exception as e:
+                print(f"[Collector Error] Status Sync Failed: {e}")
+
     def run(self):
+        # Start Background Status Manager
+        status_thread = threading.Thread(target=self._sync_agent_status_task, daemon=True)
+        status_thread.start()
+
         _sock = self.sock
         _select = select.select
         
@@ -275,7 +324,11 @@ class PacketReceiver(threading.Thread):
                                 self.unauthorized_count += 1
                                 continue
 
-                            # 2. DDoS Capacity Check
+                            # 2. TRACK STATUS (Only clean, validated packets)
+                            with self.active_lock:
+                                self.active_ids.add(h_id)
+
+                            # 3. DDoS Capacity Check
                             max_seq = int(self.config.get("max_sequence", 100))
                             ddos_thresh = int(self.config.get("ddos_threshold", 50))
                             if pps_count > (max_seq + ddos_thresh):

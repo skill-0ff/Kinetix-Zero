@@ -1,1 +1,9 @@
-{"timestamp": 1775091286.9031575, "eps": 0.0, "mbps": 0.0, "cpu": 0.0, "ram": 0.5, "dropped": 0, "unauthorized": 0}
+{
+    "timestamp": 1775091313.1467025,
+    "eps": 0.0,
+    "mbps": 0.0,
+    "cpu": 0.0,
+    "ram": 0.5,
+    "dropped": 0,
+    "unauthorized": 0
+}

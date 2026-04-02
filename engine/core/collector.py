@@ -14,6 +14,10 @@ import ipaddress
 import secrets
 from pymongo import MongoClient, UpdateMany, ASCENDING
 
+# --- PROTOBUF BINARY CORE ---
+import kinetix_pb2
+from google.protobuf.json_format import MessageToDict
+
 # --- CONFIG LOADING ---
 CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.jsonc")
 
@@ -82,10 +86,8 @@ class PacketReceiver(threading.Thread):
         self.known_roles = {}   # { "role_name": IPv4Network }
         self.unauthorized_count = 0
         self.last_sync = 0
-        # High-performance regex for extracting auth without full JSON parse
-        self.auth_regex = re.compile(br'"auth"\s*:\s*{\s*"host_id"\s*:\s*"([^"]+)"\s*,\s*"key"\s*:\s*"([^"]+)"\s*}')
-        # Registration trigger regex
-        self.reg_regex = re.compile(br'"type"\s*:\s*"registration_request"')
+        
+        # Binary Verification: No regex needed for Protobuf
         
         # Status Tracking (RAM-cache)
         self.active_ids = set()
@@ -267,7 +269,6 @@ class PacketReceiver(threading.Thread):
                 
             try:
                 # Per-second packet count check
-                now = time.time()
                 if now - last_pps_check >= 1.0:
                     max_seq = int(self.config.get("max_sequence", 100))
                     ddos_thresh = int(self.config.get("ddos_threshold", 50))
@@ -275,84 +276,83 @@ class PacketReceiver(threading.Thread):
                     
                     if pps_count > limit:
                         print(f"[Collector ALERT] DDoS DETECTED! PPS={pps_count} > Limit={limit}")
-                        # If we were collecting a burst, we would sample here.
-                        # However, PacketReceiver usually forwards immediately.
-                        # In Collector mode, we might want to batch briefly OR 
-                        # just flag the "DDoS State" to drop everything for the next second.
-                        pass
                     
                     pps_count = 0
                     last_pps_check = now
 
                 ready = _select([_sock], [], [], 0.02)
                 if ready[0]:
-                    batch_to_process = []
                     for _ in range(100):
                         try:
+                            # 1. RECEIVE BINARY BYTES
                             data, addr = _sock.recvfrom(65535)
                             source_ip = addr[0]
                             pps_count += 1
                             
-                            # 1. PROVISIONING HANDLER (Registration Flow)
-                            if self.reg_regex.search(data):
-                                try:
-                                    reg_obj = json.loads(data)
-                                    self._handle_registration(reg_obj, addr)
-                                except: pass
+                            # 2. DECODE PROTOBUF PACKET
+                            pkt = kinetix_pb2.KinetixPacket()
+                            try:
+                                pkt.ParseFromString(data)
+                            except:
+                                self.metrics.dropped_packets += 1
                                 continue
 
-                            # 2. KNOWN DEVICE VERIFICATION (High Speed)
-                            # Check IP first
+                            # 3. MANAGEMENT HANDLER (Registration Flow)
+                            if pkt.HasField("reg_req"):
+                                self._handle_registration(pkt.reg_req, addr)
+                                continue
+
+                            # 4. KNOWN DEVICE VERIFICATION
                             valid_hosts = self.known_devices.get(source_ip)
-                            if not valid_hosts:
+                            if not valid_hosts or not pkt.auth.host_id or not pkt.auth.key:
                                 self.metrics.dropped_packets += 1
                                 self.unauthorized_count += 1
                                 continue
                                 
-                            # Extract host_id & key via regex (No full JSON parse)
-                            auth_match = self.auth_regex.search(data)
-                            if not auth_match:
-                                self.metrics.dropped_packets += 1
-                                self.unauthorized_count += 1
-                                continue
-                                
-                            h_id = auth_match.group(1).decode()
-                            h_key = auth_match.group(2).decode()
+                            h_id = pkt.auth.host_id
+                            h_key = pkt.auth.key
                             
                             if h_id not in valid_hosts or valid_hosts[h_id] != h_key:
                                 self.metrics.dropped_packets += 1
                                 self.unauthorized_count += 1
                                 continue
 
-                            # 2. TRACK STATUS (Only clean, validated packets)
+                            # 5. TRACK STATUS
                             with self.active_lock:
                                 self.active_ids.add(h_id)
 
-                            # 3. DDoS Capacity Check
+                            # 6. DDoS Capacity Check
                             max_seq = int(self.config.get("max_sequence", 100))
                             ddos_thresh = int(self.config.get("ddos_threshold", 50))
                             if pps_count > (max_seq + ddos_thresh):
                                 self.metrics.dropped_packets += 1
-                                batch_to_process.append(data)
-                                if len(batch_to_process) >= 10: # Batch forensics
-                                    self.forensic_sampling(batch_to_process)
-                                    batch_to_process = []
                                 continue
                             
                             self.metrics._accum_count += 1
                             self.metrics._accum_bytes += len(data)
                             
-                            # HOOK: Data Forwarding to Brain
-                            self.forward_to_brain(data)
+                            # 7. HOOK: NORMALIZATION & DATA FORWARDING
+                            try:
+                                normalized_dict = MessageToDict(
+                                    pkt, 
+                                    preserving_proto_field_name=True,
+                                    always_print_fields_with_no_presence=True
+                                )
+                                self.forward_to_brain(normalized_dict)
+                            except Exception as e:
+                                print(f"[Collector Error] Normalization Failed: {e}")
                             
-                        except BlockingIOError: break
-                        except: break
-            except Exception: pass
+                        except BlockingIOError:
+                            break
+                        except Exception:
+                            break
+            except Exception:
+                pass
 
-    def _handle_registration(self, reg_obj, addr):
-        """Handles automatic enrollment of new agents based on their subnet."""
-        host_id = reg_obj.get("host_id")
-        ip_addr = reg_obj.get("ip", addr[0])
+    def _handle_registration(self, reg_req, addr):
+        """Handles automatic enrollment of new agents using Protobuf messages."""
+        host_id = reg_req.host_id
+        ip_addr = reg_req.ip if reg_req.ip else addr[0]
         
         if not host_id: return
 
@@ -367,24 +367,22 @@ class PacketReceiver(threading.Thread):
         except: return
 
         if not assigned_role:
-            # print(f"[Provisioning] Rejected {host_id} at {ip_addr}: No matching role network.")
             return
 
-        # 2. Check if host already exists (re-issuing key or rejecting depends on policy)
+        # 2. Check Database
         db = self.mongo_client["kinetix_brain"]
         existing = db.agents.find_one({"host_id": host_id})
         
-        # 3. Generate SHA-256 equivalent random HEX key (256-bit entropy)
+        # 3. Generate Key
         new_key = f"kx-{secrets.token_hex(32)}"
         
-        # 4. Save to Database
-        now_ts = datetime.datetime.now().isoformat()
+        # 4. Save
         agent_doc = {
             "host_id": host_id,
             "ip": ip_addr,
             "role": assigned_role,
             "key": new_key,
-            "created_at": now_ts,
+            "created_at": datetime.datetime.now().isoformat(),
             "status": "active"
         }
         
@@ -393,24 +391,21 @@ class PacketReceiver(threading.Thread):
         else:
             db.agents.insert_one(agent_doc)
             
-        # 5. Immediate Cache Refresh (Optional: wait for 10s sync is fine, but for registration we sync now)
         self.sync_known_devices()
         
-        # 6. Success Response (Back to agent)
-        response = {
-            "type": "registration_success",
-            "host_id": host_id,
-            "key": new_key,
-            "role": assigned_role
-        }
+        # 5. Success Response (Binary Protobuf)
         try:
-            self.sock.sendto(json.dumps(response).encode(), addr)
-            print(f"[Provisioning] Registered '{host_id}' as {assigned_role} ({ip_addr}). Index updated.")
+            resp = kinetix_pb2.KinetixPacket()
+            resp.reg_res.host_id = host_id
+            resp.reg_res.key = new_key
+            resp.reg_res.role = assigned_role
+            
+            self.sock.sendto(resp.SerializeToString(), addr)
+            print(f"[Provisioning] Registered '{host_id}' as {assigned_role} ({ip_addr}).")
         except: pass
 
-    def forward_to_brain(self, raw_data):
-        """Placeholder for Inter-Process Communication (IPC) to Brain."""
-        # For now, this is where ZeroMQ / Redis / Shared Queue would go.
+    def forward_to_brain(self, data_dict):
+        """Push decoded dictionary to the Brain layer."""
         pass
 
 # --- MAIN COLLECTOR PROCESS ---

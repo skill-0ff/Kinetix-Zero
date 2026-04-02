@@ -1,0 +1,247 @@
+##########################
+#  HOST_EVENTS_STRUCTURE #
+##########################
+
+# ATOMIC STRUCTURE (One Event Per JSON Object)
+   {"time_of_packet":"hh:mm:ss:ms"},
+# Example 1: Server Event
+{
+    
+    
+    "host": {
+        "timestamp_ref": "hh:mm:ss.ms",
+        "id": "HEX",
+        "role": "POST_SERV",
+        "os": "Linux/Windows",
+        "ip": "...",
+        "mac": "..."
+    },
+    "event": {
+        "type": "event_type",
+        "details": "..."
+    }
+}
+
+#######################
+# EVENTS_TYPE/DETAILS #
+#######################
+
+# Note: In the atomic structure, these details appear inside the "event" object.
+
+- event_type:
+    - process_start:
+        - process:
+        - path:
+        - sha256:
+        - cmdline:
+        - parent:
+        - parent_path:
+        - parent_sha_256:
+        - user "administrator ,user ,guest":
+
+    - process_kill:
+        - process:
+        - path:
+        - sha256:
+        - term_type:
+        - exit_code:
+
+    - file_create:
+        - file_type: (eg: ".exe, .txt")
+        - path:
+        - size:
+        - process:
+        - user:
+        - owner:
+
+    - file_modified:
+        - path:
+        - process:
+        - size_change:
+        - perm_change: (eg: "+w", "-r", "+x")
+        - user:
+        - owner:
+
+    - file_delete:
+        - path:
+        - process:
+        - size:
+        - user:
+        - perm:
+        - owner:
+
+    - service_create:
+        - name:
+        - path:
+        - start_type:
+        - account:
+        - creator:
+
+    - service_delete:
+        - name:
+        - path:
+        - account:
+        - deleter:
+
+    - service_modified:
+        - name:
+        - path:
+        - account:
+        - user:
+
+    - registry:
+        - op_type:
+        - reg_path:
+        - reg_val:
+        - reg_type:
+        - reg_user:
+        - reg_owner:
+        - reg_perm:
+
+    - network_connection:
+        - process:
+        - protocol:
+        - ip_local: true/false
+        - dst_ip:
+        - src_port:
+        - dst_port:
+        - sent:
+        - recv:
+
+    - dns_query:
+        - q_name: (eg: "google.com")
+        - q_type: (eg: ".com, .org")
+        - q_res: (eg: "ip")
+        - q_port:
+        - q_proto:
+
+    - session:
+        - session_id:
+        - user:
+        - status: (Start/End)
+        - logon_type:
+        - source_network_address:
+
+    - console_login:
+        - user:
+        - action: (Login, Logout, Unlock)
+        - method: (Password, Biometric, Pin)
+        - terminal: (Console, TTY)
+        - result: (Success, Failure)
+
+    - auth_login:
+        - user:
+        - domain:
+        - src_ip:
+        - logon_type:
+        - auth_package:
+        - result: (Success/Failure)*
+        - failure_reason:
+
+    - scheduled_task:
+        - task_name:
+        - action:
+        - path:
+        - user:
+
+    - account_management:
+        - action: (Created, Deleted, Locked, Changed)
+        - target_user:
+        - subject_user:
+        - domain:
+
+    - group_management:
+        - action: (MemberAdded, MemberRemoved)
+        - group_name:
+        - member_user:
+        - subject_user:
+
+    - module_load:
+        - process:
+        - image_path:
+        - sha256:
+        - signed: (True/False)
+
+    - pipe_event:
+        - pipe_name:
+        - op_type: (Create, Connect)
+        - process:
+        - handle_id:
+
+    - wmi_event:
+        - query:
+        - user:
+        - namespace:
+
+#########################
+#  ROUTER/SWITCH EVENTS #
+#########################
+
+# Example Router
+{
+    "role": "POST_ROUTER",
+    "timestamp_ref": "0s-60s",
+    "host": {
+        "id": "HEX"
+    },
+    "status": {
+        "cpu": "100%",
+        "ram": "100%"
+    },
+    "event": {
+        "type": "traffic",
+        "src_ip": "...",
+        "dst_ip": "...",
+        "src_iface": "...",
+        "dst_iface": "...",
+        "src_port": "...",
+        "dst_port": "...",
+        "proto": "..."*
+    }
+}
+
+# Example Switch
+{
+    "role": "POST_SWITCH",
+    "timestamp_ref": "0s-60s",
+    "host": {
+        "id": "HEX"
+    },
+    "status": {
+        "cpu": "100%",
+        "ram": "100%"
+    },
+    "event": {
+        "type": "traffic",
+        "src_mac": "...",
+        "dst_mac": "...",
+        "src_iface": "...",
+        "dst_iface": "...",
+        "proto": "...",
+        "vlan_src": "...",
+        "vlan_dst": "..."
+    }
+},
+# Example firewall
+{
+        "role": "EDGE_FW",
+        "timestamp_ref": "12:00:00.800",
+        "host": {
+            "id": "HEX"
+        },
+        "status": {
+            "cpu": "100%",
+            "ram": "100%"
+        },
+        "event": {
+            "type": "traffic",
+            "src_ip": "...",
+            "dst_ip": "...",
+            "src_port": "...",
+            "dst_port": "...",
+            "proto": "...",*
+            "action": "...",
+            "src_iface": "...",
+            "dst_iface": "..."
+        }
+}

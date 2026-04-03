@@ -211,21 +211,28 @@ message TrafficEvent {
 // ==========================================
 
 message KinetixPacket {
-  // 1. TOP GLOBAL FIELDS (Matches your Line 6)
-  string time_of_packet = 1; 
+  // 1. AUTHENTICATION (Field 1 for Maximum Collector Performance)
+  Auth auth = 1;           
 
-  // 2. AUTHENTICATION (Required for all Log Events)
-  Auth auth = 2;           
+  // 2. UNIFIED CORRELATION ID
+  string uuid = 2;
 
-  // 3. PACKET CONTEXT (At root for maximum Lite performance)
-  string role = 3;         
-  string timestamp_ref = 4;
+  // 3. AI OUTCOMES
+  string ai_verdict = 3;
+  float ai_anomaly_score = 4;
 
-  // 4. TELEMETRY
-  HostInfo host = 5;       
-  SystemStatus status = 6; 
+  // 4. TIMESTAMPS
+  string server_ts = 5;      // Injected by the Brain (ISO-8601 Format)
+  string timestamp_ref = 6;  // Injected by the Agent (ISO-8601 Format)
+
+  // 5. CONTEXT
+  string role = 7;         
   
-  // 5. THE LOG EVENT WRAPPER
+  // 6. TELEMETRY
+  HostInfo host = 8;       
+  SystemStatus status = 9; 
+
+  // 7. THE LOG EVENT WRAPPER
   message Event {
     string type = 1;       // e.g. "process_start"
     oneof details {
@@ -249,10 +256,10 @@ message KinetixPacket {
     }
   }
 
-  // 6. THE ATOMIC PAYLOAD (Log OR Registration Management)
+  // 8. THE ATOMIC PAYLOAD (Log OR Registration Management)
   oneof payload {
-    Event event = 7;
-    RegistrationRequest reg_req = 8;
-    RegistrationResponse reg_res = 9;
+    Event event = 10;
+    RegistrationRequest reg_req = 11;
+    RegistrationResponse reg_res = 12;
   }
 }

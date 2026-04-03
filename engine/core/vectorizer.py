@@ -11,242 +11,9 @@ from datetime import datetime
 from collections import Counter
 from functools import lru_cache
 from typing import Optional, Dict, Any, List, Union, Literal
-from pydantic import BaseModel, Field, ValidationError, Extra, ConfigDict
-
+ 
 # ==========================================
-# 1. Pydantic Models (Strict Input Validation)
-# ==========================================
-
-class HostIdentity(BaseModel):
-    id: str
-    os: Optional[str] = None
-    ip: Optional[str] = None
-    mac: Optional[str] = None
-
-    class Config:
-        extra = Extra.forbid
-
-# --- Event Sub-Types ---
-
-class BaseEvent(BaseModel):
-    class Config:
-        extra = Extra.forbid
-
-class ProcessStartEvent(BaseEvent):
-    type: Literal["process_start"]
-    process: Optional[str] = None
-    path: Optional[str] = None
-    sha256: Optional[str] = None
-    cmdline: Optional[str] = None
-    parent: Optional[str] = None
-    parent_path: Optional[str] = None
-    parent_sha_256: Optional[str] = None
-    user: Optional[str] = None
-
-class ProcessKillEvent(BaseEvent):
-    type: Literal["process_kill"]
-    process: Optional[str] = None
-    path: Optional[str] = None
-    sha256: Optional[str] = None
-    term_type: Optional[str] = None
-    exit_code: Optional[str] = None
-
-class FileCreateEvent(BaseEvent):
-    type: Literal["file_create"]
-    file_type: Optional[str] = None
-    path: Optional[str] = None
-    hash: Optional[str] = None
-    size: Optional[str] = None
-    process: Optional[str] = None
-    user: Optional[str] = None
-    owner: Optional[str] = None
-
-class FileModifiedEvent(BaseEvent):
-    type: Literal["file_modified"]
-    path: Optional[str] = None
-    hash: Optional[str] = None
-    process: Optional[str] = None
-    size_change: Optional[str] = None
-    perm_change: Optional[str] = None
-    user: Optional[str] = None
-    owner: Optional[str] = None
-
-class FileDeleteEvent(BaseEvent):
-    type: Literal["file_delete"]
-    path: Optional[str] = None
-    process: Optional[str] = None
-    size: Optional[str] = None
-    user: Optional[str] = None
-    perm: Optional[str] = None
-    owner: Optional[str] = None
-
-class ServiceCreateEvent(BaseEvent):
-    type: Literal["service_create"]
-    name: Optional[str] = None
-    path: Optional[str] = None
-    start_type: Optional[str] = None
-    account: Optional[str] = None
-    creator: Optional[str] = None
-
-class ServiceDeleteEvent(BaseEvent):
-    type: Literal["service_delete"]
-    name: Optional[str] = None
-    path: Optional[str] = None
-    account: Optional[str] = None
-    deleter: Optional[str] = None
-
-class ServiceModifiedEvent(BaseEvent):
-    type: Literal["service_modified"]
-    name: Optional[str] = None
-    path: Optional[str] = None
-    account: Optional[str] = None
-    user: Optional[str] = None
-
-class RegistryEvent(BaseEvent):
-    type: Literal["registry"]
-    op_type: Optional[str] = None
-    reg_path: Optional[str] = None
-    reg_val: Optional[str] = None
-    reg_type: Optional[str] = None
-    reg_user: Optional[str] = None
-    reg_owner: Optional[str] = None
-    reg_perm: Optional[str] = None
-
-class NetworkConnectionEvent(BaseEvent):
-    type: Literal["network_connection"]
-    process: Optional[str] = None
-    protocol: Optional[str] = None
-    ip_local: Optional[Union[bool, str]] = None
-    dst_ip: Optional[str] = None
-    src_port: Optional[str] = None
-    dst_port: Optional[str] = None
-    sent: Optional[str] = None
-    recv: Optional[str] = None
-
-class DnsQueryEvent(BaseEvent):
-    type: Literal["dns_query"]
-    q_name: Optional[str] = None
-    q_type: Optional[str] = None
-    q_res: Optional[str] = None
-    q_port: Optional[str] = None
-    q_proto: Optional[str] = None
-
-class TrafficEvent(BaseEvent):
-    type: Literal["traffic"]
-    # Router/Switch/Firewall fields
-    src_ip: Optional[str] = None
-    dst_ip: Optional[str] = None
-    src_iface: Optional[str] = None
-    dst_iface: Optional[str] = None
-    src_port: Optional[str] = None
-    dst_port: Optional[str] = None
-    proto: Optional[str] = None
-    action: Optional[str] = None
-    src_mac: Optional[str] = None
-    dst_mac: Optional[str] = None
-    vlan_src: Optional[str] = None
-    vlan_dst: Optional[str] = None
-    sent: Optional[str] = None # Added based on example usage
-
-# Polymorphic Event Union
-class ConsoleLoginEvent(BaseEvent):
-    type: Literal["console_login"]
-    user: Optional[str] = None
-    action: Optional[str] = None
-    method: Optional[str] = None
-    terminal: Optional[str] = None
-    result: Optional[str] = None
-
-class SessionEvent(BaseEvent):
-    type: Literal["session"]
-    session_id: Optional[str] = None
-    user: Optional[str] = None
-    status: Optional[str] = None
-    logon_type: Optional[str] = None
-    source_network_address: Optional[str] = None
-
-class AuthLoginEvent(BaseEvent):
-    type: Literal["auth_login"]
-    user: Optional[str] = None
-    domain: Optional[str] = None
-    src_ip: Optional[str] = None
-    logon_type: Optional[str] = None
-    auth_package: Optional[str] = None
-    result: Optional[str] = None
-    failure_reason: Optional[str] = None
-
-class LoggingEvent(BaseEvent):
-    type: Literal["logging"]
-    level: Optional[str] = None
-    source: Optional[str] = None
-    event_id: Optional[str] = None
-    message: Optional[str] = None
-    task_category: Optional[str] = None
-
-class ScheduledTaskEvent(BaseEvent):
-    type: Literal["scheduled_task"]
-    task_name: Optional[str] = None
-    action: Optional[str] = None
-    path: Optional[str] = None
-    user: Optional[str] = None
-
-class AccountManagementEvent(BaseEvent):
-    type: Literal["account_management"]
-    action: Optional[str] = None
-    target_user: Optional[str] = None
-    subject_user: Optional[str] = None
-    domain: Optional[str] = None
-
-class GroupManagementEvent(BaseEvent):
-    type: Literal["group_management"]
-    action: Optional[str] = None
-    group_name: Optional[str] = None
-    member_user: Optional[str] = None
-    subject_user: Optional[str] = None
-
-class ModuleLoadEvent(BaseEvent):
-    type: Literal["module_load"]
-    process: Optional[str] = None
-    image_path: Optional[str] = None
-    sha256: Optional[str] = None
-    signed: Optional[str] = None
-
-class PipeEvent(BaseEvent):
-    type: Literal["pipe_event"]
-    pipe_name: Optional[str] = None
-    op_type: Optional[str] = None
-    process: Optional[str] = None
-    handle_id: Optional[str] = None
-
-class WmiEvent(BaseEvent):
-    type: Literal["wmi_event"]
-    query: Optional[str] = None
-    user: Optional[str] = None
-    namespace: Optional[str] = None
-
-EventUnion = Union[
-    ProcessStartEvent, ProcessKillEvent, 
-    FileCreateEvent, FileModifiedEvent, FileDeleteEvent,
-    ServiceCreateEvent, ServiceDeleteEvent, ServiceModifiedEvent,
-    RegistryEvent, NetworkConnectionEvent, DnsQueryEvent,
-    TrafficEvent,
-    ConsoleLoginEvent, SessionEvent, AuthLoginEvent, LoggingEvent,
-    ScheduledTaskEvent, AccountManagementEvent, GroupManagementEvent,
-    ModuleLoadEvent, PipeEvent, WmiEvent
-]
-
-class LogEntry(BaseModel):
-    role: str
-    timestamp_ref: str
-    host: HostIdentity
-    status: Optional[Dict[str, str]] = None
-    event: EventUnion = Field(..., discriminator='type')
-
-    class Config:
-        extra = Extra.ignore
-
-# ==========================================
-# 2. Vector Library (Advanced Feature Eng.)
+# 1. Vector Library (Advanced Feature Eng.)
 # ==========================================
 
 class VectorLibrary:
@@ -270,16 +37,7 @@ class VectorLibrary:
         - list: A list of MongoDB role documents with 'name' and 'strategic_factor'.
         """
         if roles_data is None:
-            # Legacy/Fallback: Try to find the file but don't crash if missing
-            try:
-                base_path = os.path.dirname(os.path.abspath(__file__))
-                map_path = os.path.join(base_path, "role_mapping.json")
-                if os.path.exists(map_path):
-                    with open(map_path, 'r') as f:
-                        VectorLibrary.ROLE_MAPPING = json.load(f)
-                        VectorLibrary.get_role_score.cache_clear()
-                        return
-            except: pass
+            # STRICT MODE: No file fallback. Roles must come from MongoDB.
             VectorLibrary.ROLE_MAPPING = {}
             return
 
@@ -290,8 +48,9 @@ class VectorLibrary:
             new_map = {}
             for doc in roles_data:
                 name = doc.get("name")
-                factor = doc.get("strategic_factor", 0.5)
-                if name:
+                # STRICT: Must have a strategic_factor defined in DB.
+                factor = doc.get("strategic_factor")
+                if name and factor is not None:
                     new_map[name.upper()] = float(factor)
             VectorLibrary.ROLE_MAPPING = new_map
         
@@ -314,8 +73,8 @@ class VectorLibrary:
             if key in role_upper:
                 return float(val)
 
-        # 2. Fallback to Dynamic Hashing (Auto-Learning for Unknown Roles)
-        return VectorLibrary.hash_string(role)
+        # 2. STRICT: If no match is found, return None (Blocks entry)
+        return None
 
     @staticmethod
     def encode_time_cyclic(t_str):
@@ -447,141 +206,149 @@ class LogNormalizer:
             print(f"[Warning] Config load error: {e}")
             return {}
 
-    def vectorize_batch(self, raw_log_list):
+    def vectorize_batch(self, packet_list):
         """
-        Batch process a list of raw log dictionaries.
-        Returns a list of 32-dim vectors (lists).
+        Batch process a list of KinetixPacket objects.
+        Returns a list of 34-dim vectors (lists).
         """
         vectors = []
-        valid_logs = []
+        valid_packets = []
         # Localize for speed
         _to_vec = self.input_to_vector
         _append_v = vectors.append
-        _append_l = valid_logs.append
+        _append_p = valid_packets.append
         
-        for log in raw_log_list:
-            v = _to_vec(log)
+        for pkt in packet_list:
+            v = _to_vec(pkt)
             if v:
                 _append_v(v)
-                _append_l(log)
-        return vectors, valid_logs
+                _append_p(pkt)
+        return vectors, valid_packets
 
-    def input_to_vector(self, raw_json):
-        # Optimization: Pure Python List (Faster than single-row Numpy allocation)
+    def input_to_vector(self, pkt):
+        """
+        Processes a KinetixPacket Protobuf object into a 34-dim numeric vector.
+        0% JSON, 100% Binary.
+        """
         try:
             # 1. Initialize
-            # 1. Initialize
-            # [0.0]*34 (2 new dims for Server Time)
             vector = [0.0] * 34
             
-            # Helper to get nested safely
-            host = raw_json.get("host", {})
-            event = raw_json.get("event", {})
-            status = raw_json.get("status", {})
-            
-            role = raw_json.get("role", "")
-            
             # [00-05] Identity
-            vector[0] = VectorLibrary.get_role_score(role)
-            vector[1] = VectorLibrary.hash_string(host.get("id"))
-            vector[2] = VectorLibrary.hash_string(host.get("os"))
-            vector[3] = VectorLibrary.normalize_ip(host.get("ip"))
-            vector[4] = VectorLibrary.hash_string(host.get("mac"))
+            role_score = VectorLibrary.get_role_score(pkt.role)
+            if role_score is None:
+                # STOPOVER: Unknown role detected. Stop processing and return None.
+                return None
+                
+            vector[0] = role_score
+            vector[1] = VectorLibrary.hash_string(pkt.host.id)
+            vector[2] = VectorLibrary.hash_string(pkt.host.os)
+            vector[3] = VectorLibrary.normalize_ip(pkt.host.ip)
+            vector[4] = VectorLibrary.hash_string(pkt.host.mac)
             vector[5] = 0.5 # Default Maturity
 
-            # [06-07] Time
-            t_vec = VectorLibrary.encode_time_cyclic(raw_json.get("timestamp_ref"))
+            # [06-07] Agent Time
+            t_vec = VectorLibrary.encode_time_cyclic(pkt.timestamp_ref)
             vector[6] = t_vec[0]
             vector[7] = t_vec[1]
 
-            # [New 08-09] Server Authority Time (For Delta Detection)
-            # Uses injected server_ts from Brain
-            server_ts_str = raw_json.get("server_ts")
-            if server_ts_str:
-                # Use encode_time_cyclic for string-to-float math
-                s_vec = VectorLibrary.encode_time_cyclic(server_ts_str)
+            # [08-09] Server Authority Time (For Delta Detection)
+            s_ts = pkt.server_ts
+            if s_ts:
+                s_vec = VectorLibrary.encode_time_cyclic(s_ts)
                 vector[8] = s_vec[0]
                 vector[9] = s_vec[1]
             else:
-                # Fallback if missing (test scripts)
+                # Fallback if missing
                 s_day = time.time() % 86400
                 s_angle = s_day * 0.000072722
                 vector[8] = math.sin(s_angle)
                 vector[9] = math.cos(s_angle)
 
-            # [10-12] Status (Shifted +2)
-            if status:
-                vector[10] = VectorLibrary.normalize_percent(status.get("cpu", 0))
-                vector[11] = VectorLibrary.normalize_percent(status.get("ram", 0))
-                vector[12] = VectorLibrary.normalize_percent(status.get("disk", 0))
+            # [10-12] Status 
+            vector[10] = VectorLibrary.normalize_percent(pkt.status.cpu)
+            vector[11] = VectorLibrary.normalize_percent(pkt.status.ram)
+            vector[12] = VectorLibrary.normalize_percent(pkt.status.disk)
 
-            # [11-15] Meta
-            # [13-17] Meta (Shifted +2)
-            vector[13] = VectorLibrary.hash_string(event.get("type"))
+            # --- EVENT EXTRACTION (Fields 13-33) ---
+            if not pkt.HasField("event"):
+                return vector
+
+            event = pkt.event
+            vector[13] = VectorLibrary.hash_string(event.type)
             
+            # Fast-path extraction of 'oneof' details
+            detail_type = event.WhichOneof("details")
+            if not detail_type:
+                return vector
+                
+            details = getattr(event, detail_type)
+            
+            # Helper to get field safely (Protobuf attributes always exist if defined, 
+            # but we use getattr to handle dynamic field names across different event types)
+            def _get(obj, *fields):
+                for f in fields:
+                    val = getattr(obj, f, None)
+                    if val is not None and val != "": return val
+                return None
+
             # Slot 14: Actor Identity
-            actor = event.get("user") or event.get("subject_user") or event.get("reg_user") or event.get("creator") or event.get("account")
+            actor = _get(details, "user", "subject_user", "reg_user", "creator", "account")
             vector[14] = VectorLibrary.hash_string(actor)
 
             # Slot 15: Action
-            act = event.get("action") or event.get("op_type") or event.get("result") or event.get("start_type")
+            act = _get(details, "action", "op_type", "result", "start_type")
             vector[15] = VectorLibrary.hash_string(act)
 
             # Slot 16: Auth/Rarity
-            auth = event.get("logon_type") or event.get("auth_package") or event.get("signed")
+            auth = _get(details, "logon_type", "auth_package", "signed")
             vector[16] = VectorLibrary.hash_string(auth)
 
-            # Slot 17: Direction
-            vector[17] = 0.0
-
-            # [16-19] Actor Context
-            # [18-21] Actor Context (Shifted +2)
             # Slot 18: Actor Process
-            proc = event.get("process")
+            proc = getattr(details, "process", None)
             vector[18] = VectorLibrary.get_top_k_score(proc)
 
             # Slot 19: Actor Path
-            path = event.get("path") or event.get("image_path") or event.get("pipe_name")
+            path = _get(details, "path", "image_path", "pipe_name")
             vector[19] = VectorLibrary.calculate_entropy(path)
 
             # Slot 20: Parent/Handle
-            parent = event.get("parent") or event.get("handle_id")
+            parent = _get(details, "parent", "handle_id")
             vector[20] = VectorLibrary.hash_string(parent)
 
             # Slot 21: Payload/Cmd
-            cmd = event.get("cmdline") or event.get("query") or event.get("message")
+            cmd = _get(details, "cmdline", "query", "message")
             vector[21] = VectorLibrary.calculate_entropy(cmd)
 
-            # [22] Target Identity (Shifted +2)
-            target = event.get("target_user") or event.get("member_user")
+            # [22] Target Identity
+            target = _get(details, "target_user", "member_user")
             vector[22] = VectorLibrary.hash_string(target)
 
-            # [23-27] Network (Shifted +2)
-            vector[23] = VectorLibrary.hash_string(event.get("protocol") or event.get("proto"))
-            vector[24] = VectorLibrary.hash_string(event.get("src_ip") or event.get("source_network_address"))
-            vector[25] = VectorLibrary.hash_string(event.get("dst_ip"))
-            vector[26] = float(event.get("src_port") or 0)
-            vector[27] = float(event.get("dst_port") or 0)
+            # [23-27] Network
+            vector[23] = VectorLibrary.hash_string(_get(details, "protocol", "proto"))
+            vector[24] = VectorLibrary.hash_string(_get(details, "src_ip", "source_network_address"))
+            vector[25] = VectorLibrary.hash_string(getattr(details, "dst_ip", None))
+            vector[26] = float(getattr(details, "src_port", 0) or 0)
+            vector[27] = float(getattr(details, "dst_port", 0) or 0)
 
-            # [26-31] Resource
-            # [28-33] Resource (Shifted +2)
-            # Slot 28: Resource ID
-            res_id = event.get("reg_path") or event.get("task_name") or event.get("group_name") 
+            # [28-33] Resource
+            res_id = _get(details, "reg_path", "task_name", "group_name") 
             vector[28] = VectorLibrary.hash_string(res_id)
-
-            # Slot 29: Resource Detail
-            res_det = event.get("reg_val") or event.get("q_name")
+            
+            res_det = _get(details, "reg_val", "q_name")
             vector[29] = VectorLibrary.hash_string(res_det)
 
-            # Slot 30: Target Service
-            vector[30] = VectorLibrary.hash_string(event.get("name") or event.get("service_name"))
+            vector[30] = VectorLibrary.hash_string(_get(details, "name", "service_name"))
 
             # Size/Data
-            vector[31] = VectorLibrary.normalize_size(event.get("size") or event.get("file_size"))
-            vector[32] = VectorLibrary.normalize_size(event.get("sent"))
-            vector[33] = VectorLibrary.normalize_size(event.get("recv"))
+            vector[31] = VectorLibrary.normalize_size(_get(details, "size", "file_size"))
+            vector[32] = VectorLibrary.normalize_size(getattr(details, "sent", None))
+            vector[33] = VectorLibrary.normalize_size(getattr(details, "recv", None))
 
             return vector
+
+        except Exception:
+            return None
 
         except Exception as e:
             # print(f"Normalization Error: {e}") # Reduce print spam

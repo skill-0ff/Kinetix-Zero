@@ -12,10 +12,15 @@ import psutil
 import subprocess
 import shutil
 import queue
+import redis
 from pymongo import MongoClient
 
-# Add engine path
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+# --- PROTOBUF BINARY CORE ---
+import kinetix_pb2
+from google.protobuf.json_format import MessageToDict
+
+# Add project root to path
+sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 from engine.core.vectorizer import LogNormalizer, VectorLibrary
 
 try:
@@ -104,11 +109,12 @@ class Brain:
         self.janitor = None
         if Janitor:
             try:
-                self.janitor = Janitor(self.config)
+                self.janitor = Janitor(self.config_path)
             except Exception as e:
                 print(f"[Error] Janitor Init Failed: {e}")
         
-        # Receiver is now standalone in collector.py
+        # Start Ingestion Layer
+        self._init_redis()
         self._update_local_config()
 
     def _update_local_config(self):
@@ -116,6 +122,58 @@ class Brain:
         self.max_sequence = int(self.config.get("max_sequence", 100))
         self.ddos_threshold = int(self.config.get("ddos_threshold", 50))
         self.limit = self.max_sequence + self.ddos_threshold
+
+    def _init_redis(self):
+        """Initialize Redis connection for decoupled ingestion."""
+        r_cfg = self.config.get("redis", {})
+        if not r_cfg.get("enabled", False):
+            self.redis = None
+            return
+
+        try:
+            self.redis = redis.Redis(
+                host=r_cfg.get("host", "localhost"),
+                port=r_cfg.get("port", 6379),
+                decode_responses=False
+            )
+            self.redis.ping()
+            print(f"[Brain] Redis Consumer Connected: {r_cfg.get('host')}:{r_cfg.get('port')}")
+            
+            # Start Consumer Thread
+            t = threading.Thread(target=self._redis_consumer_loop, daemon=True)
+            t.start()
+        except Exception as e:
+            print(f"[Brain Error] Redis Connection Failed: {e}")
+            self.redis = None
+
+    def _redis_consumer_loop(self):
+        """Background thread to pull binary logs from Redis and feed the pipeline."""
+        r_cfg = self.config.get("redis", {})
+        q_name = r_cfg.get("queue", "kinetix_ingest")
+        
+        while self.running:
+            try:
+                # Blocking POP (wait 1s)
+                res = self.redis.brpop(q_name, timeout=1)
+                if not res: continue
+                
+                # res is (queue_name, data)
+                _, binary_data = res
+                
+                # 1. DECODE PROTOBUF
+                pkt = kinetix_pb2.KinetixPacket()
+                try:
+                    pkt.ParseFromString(binary_data)
+                except: continue
+
+                # PRIVACY HOOK: Wipe Auth Keys before Processing
+                pkt.auth.Clear()
+
+                # 2. FEED THE QUEUE DIRECTLY (Binary First)
+                self.packet_queue.put(pkt)
+                
+            except Exception as e:
+                time.sleep(1)
 
     def load_config(self):
         try:
@@ -173,13 +231,11 @@ class Brain:
             buffer_batch.clear()
             return
 
-        json_loads = json.loads
-        decoded_logs = []
-        for data in buffer_batch:
+        for pkt in buffer_batch:
             try:
-                obj = json_loads(data)
-                obj['server_ts'] = datetime.datetime.now().isoformat()
-                decoded_logs.append(obj)
+                # Injected by the Brain (ISO-8601 Format)
+                pkt.server_ts = datetime.datetime.now().isoformat()
+                decoded_logs.append(pkt)
             except: continue
         
         if self.misp and self.misp.enabled and decoded_logs:
@@ -187,10 +243,26 @@ class Brain:
              except Exception as e: print(f"[Error] MISP Check Failed: {e}")
 
         if decoded_logs:
-            vectors, aligned_logs = self.vectorizer.vectorize_batch(decoded_logs)
+            vectors = []
+            aligned_logs = []
+            
+            for pkt in decoded_logs:
+                v = self.vectorizer.input_to_vector(pkt)
+                if v is not None:
+                    vectors.append(v)
+                    aligned_logs.append(pkt)
+                else:
+                    # ALERT: Unknown Role Filtered Out
+                    host_id = pkt.host.id
+                    ip = pkt.host.ip
+                    role = pkt.role
+                    print(f"[ALERT] unknown role {role} {host_id} {ip}")
+
             if vectors and self.ai:
-                try: self.ai.push_batch(vectors, aligned_logs)
-                except Exception as e: print(f"[AI Error] {e}")
+                try: 
+                    self.ai.push_batch(vectors, aligned_logs)
+                except Exception as e: 
+                    print(f"[AI Error] {e}")
 
     def run(self):
         print("[Brain] Processor Started.")

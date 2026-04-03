@@ -16,11 +16,16 @@ import psutil
 import shutil
 import subprocess
 from torch.cuda.amp import GradScaler
+import redis
 from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, VectorParams, PointStruct, SearchRequest
-import pymongo
-from pymongo import MongoClient, ASCENDING, DESCENDING
 from dotenv import load_dotenv
+
+# Import Protobuf definitions
+try:
+    from . import kinetix_pb2
+except ImportError:
+    import kinetix_pb2
 
 # Load Environment Variables from .env (if present)
 load_dotenv()
@@ -39,11 +44,10 @@ class UnsupervisedAI(threading.Thread):
         self.load_config()
         
         # Async IO
-        self.input_queue = queue.Queue() # Receives List[Vectors]
+        self.input_queue = queue.Queue() # Receives Tuple[np.ndarray, kinetix_pb2.KinetixPacket]
         self.running = True
         self.daemon = True
         
-        # Persistence Settings
         # Persistence Settings
         self.checkpoint_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "checkpoints")
         if not os.path.exists(self.checkpoint_dir):
@@ -69,9 +73,8 @@ class UnsupervisedAI(threading.Thread):
         
         # Context Management
         self.context_epochs = self.config.get("ai_context_epochs", 5)
-        self.context_epochs = self.config.get("ai_context_epochs", 5)
         self.window_queue = [] # List of Tensors
-        self.log_queue = [] # List of Raw Log Dicts (Parallel to window_queue)
+        self.log_batch_queue = [] # List of KinetixPacket objects
         
         # AI Components
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -82,7 +85,6 @@ class UnsupervisedAI(threading.Thread):
         ).to(self.device)
         
         # Optimization: PyTorch 2.0 Compilation (Graph Optimization)
-        # "reduce-overhead" mode is best for small batches/sequences like ours
         if hasattr(torch, "compile"):
             try:
                 print("[AI] Compiling model... (This may take a minute on first run)")
@@ -91,8 +93,6 @@ class UnsupervisedAI(threading.Thread):
                 print(f"[AI] Compile failed (safe fallback): {e}")
 
         # Optimization: Feature Weights for Anomaly Detection (Role-Based Judgment)
-        # We ignore indices 1, 2, 3, 4 (Host ID, OS, IP, MAC) for Reconstruction Loss
-        # but keep [0] (Role), [5] (Maturity), and [6-33] (Behavioral data)
         weights = torch.ones(self.input_dim, device=self.device)
         weights[1:5] = 0.0 # Indices 1, 2, 3, 4
         
@@ -102,14 +102,11 @@ class UnsupervisedAI(threading.Thread):
         # Optimization: Mixed Precision
         self.scaler = torch.cuda.amp.GradScaler()
         
-        # Optimization: Batch Buffer
-        self.batch_buffer = []
-        self.log_buffer = []
-        self.batch_size = 64
-        self.last_batch_time = time.time()
-
+        # Start Redis Storage Link
+        self._init_storage()
+        
         # Log Store & Memory (Init)
-        self._init_databases()
+        self._init_memory()
         print(f"[AI] Async Worker Initialized on {self.device} (AMP Enabled). Context={self.context_epochs}")
         
         # Initial Load
@@ -146,22 +143,36 @@ class UnsupervisedAI(threading.Thread):
                         
                     # Runtime DB Hot-Swap Check
                     if hasattr(self, 'memory'):
-                        db_keys = ["qdrant_path", "qdrant_url", "mongo_uri"]
+                        db_keys = ["qdrant_path", "qdrant_url"]
                         changed = any(old_config.get(k) != new_config.get(k) for k in db_keys)
                         if changed:
                             print("[AI] Database Config Changed. Reconnecting...")
-                            self._init_databases()
+                            self._init_memory()
                         else:
-                            # Refresh Thresholds only (if DB didn't change)
                             self.dedup_dist = self.config.get("memory_dedup_dist", 0.05)
                             self.query_dist = self.config.get("memory_query_dist", 0.10)
                             
         except Exception as e:
              if not self.config: self.config = {}
-             # print(f"[AI] Config Load Error: {e}")
 
-    def _init_databases(self):
-        """Initializes or Re-initializes Memory and Log Stores"""
+    def _init_storage(self):
+        """Initialize Redis connection for Storage Worker decoupled queue."""
+        try:
+            r_cfg = self.config.get("redis", {})
+            self.redis_storage = r_cfg.get("storage_queue", "kinetix_storage")
+            self.redis_out = redis.Redis(
+                host=r_cfg.get("host", "localhost"),
+                port=r_cfg.get("port", 6379),
+                decode_responses=False # KEEP BINARY
+            )
+            self.redis_out.ping()
+            print(f"[AI] Binary Storage Queue Connected: {self.redis_storage}")
+        except Exception as e:
+            print(f"[AI Error] Redis Output Failed: {e}")
+            self.redis_out = None
+
+    def _init_memory(self):
+        """Initializes Memory Store (Qdrant)"""
         
         # 1. Qdrant (Memory)
         try:
@@ -172,24 +183,12 @@ class UnsupervisedAI(threading.Thread):
             
             if q_url:
                 print(f"[AI] Connecting to Remote Qdrant: {q_url}")
-                # Security Check
-                if not q_url.startswith("https://") and "localhost" not in q_url and "127.0.0.1" not in q_url:
-                    print(f"  [WARNING] Remote Qdrant using insecure HTTP. Recommend HTTPS for sensitive data.")
-                
                 self.memory = QdrantClient(url=q_url, api_key=q_key)
             else:
                 print(f"[AI] Connecting to Local Qdrant: {q_path}")
                 self.memory = QdrantClient(path=q_path)
 
             self.mem_collection = "brain_memory"
-            
-            # Ensure Collection Exists (Idempotent usually, but recreate wipes data!)
-            # FIX: Don't recreate if exists, unless forced. QdrantClient.recreate_collection DELETES existing.
-            # We should probably check first or use Create if not exists.
-            # Local Qdrant (path) is persistent on disk. Recreate wipes it?
-            # client.recreate_collection() -> "Operations on collections: create, delete, ... This method DELETES collection if exists."
-            # WAIT. We have been wiping memory on every restart?!
-            # FIX: Use `collection_exists` check.
             
             collections = self.memory.get_collections()
             exists = any(c.name == self.mem_collection for c in collections.collections)
@@ -210,50 +209,6 @@ class UnsupervisedAI(threading.Thread):
         # 2. Thresholds (Reload from config)
         self.dedup_dist = self.config.get("memory_dedup_dist", 0.05)
         self.query_dist = self.config.get("memory_query_dist", 0.10)
-
-        # 3. MongoDB (Log Store)
-        try:
-            # Close old if exists
-            if hasattr(self, 'mongo_client') and self.mongo_client:
-                self.mongo_client.close()
-                
-            self.mongo_uri = os.getenv("MONGO_URI") or self.config.get("mongo_uri", "mongodb://localhost:27017/")
-            
-            # Security: Auto-Enforce TLS for Remote (non-local) if not in URI
-            is_remote = "localhost" not in self.mongo_uri and "127.0.0.1" not in self.mongo_uri
-            mongo_kwargs = {"serverSelectionTimeoutMS": 2000}
-            
-            if is_remote and "ssl=true" not in self.mongo_uri and "tls=true" not in self.mongo_uri:
-                 # Implicitly enable TLS for remote unless explicitly disabled (not supported here to force safety)
-                 # But standard pymongo[srv] does this for +srv URIs.
-                 # If plain mongodb://remote, we force it.
-                 print("[AI] Enforcing TLS for Remote Mongo Connection")
-                 mongo_kwargs["tls"] = True
-                 mongo_kwargs["tlsAllowInvalidCertificates"] = False # Strict
-            
-            self.mongo_client = MongoClient(self.mongo_uri, **mongo_kwargs)
-            self.mongo_db = self.mongo_client["kinetix_brain"]
-            self.mongo_events = self.mongo_db["events"]
-            self.mongo_ddos = self.mongo_db["ddos"]
-            # Check Connection
-            self.mongo_client.server_info()
-            print(f"[AI] MongoDB Connected: {self.mongo_uri}")
-            
-            # Ensure Indexes (Background)
-            self.mongo_events.create_index([("verdict", ASCENDING)], background=True)
-            self.mongo_events.create_index([("host_id", ASCENDING)], background=True)
-            self.mongo_events.create_index([("event_type", ASCENDING)], background=True)
-            self.mongo_events.create_index([("timestamp", DESCENDING)], background=True)
-            self.mongo_events.create_index([("uuid", ASCENDING)], unique=True, background=True) 
-            
-            # DDoS Index (TTL?)
-            self.mongo_ddos.create_index([("timestamp", DESCENDING)], background=True)
-            
-        except Exception as e:
-            print(f"[AI] MongoDB Init Failed: {e}")
-            self.mongo_client = None
-            self.mongo_events = None
-            self.mongo_ddos = None
 
     def _load_initial_checkpoint(self):
         target = self.config.get("ai_checkpoint_file", "auto")
@@ -344,14 +299,16 @@ class UnsupervisedAI(threading.Thread):
 
     def run(self):
         print("[AI] Worker Loop Started.")
+        """Monitor input_queue and handle batching"""
         while self.running:
             try:
-                # Poll frequently to check buffer timeout even if empty
                 try:
-                    vectors, logs = self.input_queue.get(timeout=0.1) 
-                    self.batch_buffer.extend(vectors)
-                    if logs:
-                        self.log_buffer.extend(logs)
+                    # Expecting Tuple[np.ndarray, kinetix_pb2.KinetixPacket]
+                    data = self.input_queue.get(timeout=1.0)
+                    if data:
+                        vector, pkt = data
+                        self.batch_buffer.append(vector)
+                        self.log_buffer.append(pkt)
                 except queue.Empty:
                     pass
                 
@@ -379,9 +336,6 @@ class UnsupervisedAI(threading.Thread):
                     self.last_save_time = now
                     
                 # Runtime Hot-Reload
-                # Check every 1.0 seconds if config changed (for anomaly_threshold)
-                # Runtime Hot-Reload
-                # Check every 1.0 seconds if config changed
                 if now - self.last_config_check > 1.0:
                     self.last_config_check = now
                     self._check_config_reload()
@@ -402,18 +356,13 @@ class UnsupervisedAI(threading.Thread):
             
     def push_evidence(self, evidence):
         """
-        Save DDoS/Drop evidence samples to MongoDB.
-        evidence: List[dict] or single dict from brain.py
+        Pushes to Redis 'kinetix_storage' for Worker handling.
         """
-        if self.mongo_ddos is None: return
-        
+        if not self.redis_out: return
         try:
-            if isinstance(evidence, dict):
-                self.mongo_ddos.insert_one(evidence)
-            elif isinstance(evidence, list) and evidence:
-                self.mongo_ddos.insert_many(evidence, ordered=False)
-        except Exception as e:
-            print(f"[AI] DDoS Evidence Save Failed: {e}")
+             # Logic for pushing evidence (future use)
+             pass
+        except: pass
 
     def process_batch(self, new_window, new_logs=None):
         # Optimization: Convert to tensor ONCE here
@@ -422,23 +371,6 @@ class UnsupervisedAI(threading.Thread):
         
         # Maintain Log FIFO
         # new_logs matches new_window length
-        if new_logs:
-            self.log_queue.extend(new_logs) # Note: List of dicts, unlike tensor_win which is batched
-            # But wait, self.window_queue is a list of Tensors (Batches)
-            # self.log_queue should probably be a flat list of logs matching the flattened tensor sequence?
-            # Actually, `full_seq` (Line 266) concatenates the window_queue.
-            # So `full_seq` is [Total_Len, 34].
-            # So `self.log_queue` should just be [Total_Len] list of dicts.
-            # But `tensor_win` is [Batch, 34].
-            # So `self.window_queue` is List[Tensor[Batch, 34]].
-            # So we should store `self.log_queue` as List[List[Dict]] (Batches of logs) to mirror structure?
-            # No, easier to just utilize flattened view when alerting.
-            pass
-
-        # We need to maintain parallel structures.
-        # self.window_queue = [T1(64), T2(64)...]
-        # self.log_batch_queue = [L1(64), L2(64)...]
-        if not hasattr(self, "log_batch_queue"): self.log_batch_queue = []
         if new_logs:
             self.log_batch_queue.append(new_logs)
 
@@ -475,128 +407,24 @@ class UnsupervisedAI(threading.Thread):
             
         # Alerting Check
         if enforce_mask.any():
-            # Logic: We invert it to get the Loss Threshold
-            # Config 0.9 (Sensitive) -> Threshold 0.1 (Low Bar)
             sensitivity = self.config.get("ai_anomaly_threshold", 0.5)
-            # Clamp to 0.01-0.99 to avoid div by zero or infinite alerts
             sensitivity = max(0.01, min(0.99, sensitivity))
-            
-            # Formula: Higher Sensitivity = Lower Threshold
             threshold = 1.0 - sensitivity
-            
             enforced_losses = raw_loss_map * enforce_mask.float()
-        
-        # --- MEMORY LOGIC START ---
-        
-        # Helper for Qdrant Operations
-        def _check_memory(vector, check_type, max_dist):
-            if not self.memory: return False, 1.0
-            hits = self.memory.search(
-                collection_name=self.mem_collection,
-                query_vector=vector,
-                query_filter=None, # In future, could filter by type
-                limit=1
-            )
-            if not hits: return False, 1.0
-            
-            top = hits[0]
-            # Verify Type match
-            # Note: We need to filter by 'type' in payload if we want strict type checking
-            # But the plan says: Search nearest, THEN differentiate action based on Type.
-            # So let's return the HIT details.
-            return top.payload.get("type") == check_type, top.score  # score for cosine is usually similarity (1.0=same), but distance logic varies.
-            # Qdrant with Distance.COSINE: Score is Cosine Similarity (1.0 = identical, 0.0 = orthogonal, -1.0 = opposite)
-            # Distance = 1.0 - Similarity.
-            
-            # Wait, user specified "distance".
-            # Qdrant Default Cosine Search returns "Score" (Similarity).
-            # To get Distance, we do 1 - score.
-        
-        def _search_nearest(vector):
-            if not self.memory: return None, 1.0
-            hits = self.memory.search(
-                collection_name=self.mem_collection,
-                query_vector=vector,
-                limit=1
-            )
-            if not hits: return None, 1.0
-            sim = hits[0].score # Cosine Similarity
-            dist = 1.0 - sim
-            return hits[0].payload.get("type"), dist
-
-        # Path A: Peace Time (Non-Anomalous)
-        # Iterate over Valid items (Masked IN, but Loss BELOW Threshold)
-        # Actually, simpler: Iterate ALL enforceable items.
-        # If Loss < Threshold -> Path A
-        # If Loss > Threshold -> Path B
-        
-        # Access log batch flat
-        full_logs = []
-        if hasattr(self, "log_batch_queue"):
-            full_logs = [item for sublist in self.log_batch_queue for item in sublist]
-
-        # Optimization: We only check Memory for "Notable" events or Random sampling to build "Normalcy"?
-        # User said "path A: Auto-Learn". This implies learning EVERYTHING that is "Safe".
-        # This loop could be heavy. Limiting to Enforce Mask.
-        
-        # It is faster to process indices on CPU
-        cpu_losses = enforced_losses.detach().cpu().numpy()
-        cpu_threshold = threshold
-        
-        BATCH_SIZE = len(new_window) # Not strictly batch_size buffer, but the window size (accumulated)
-        # Wait, process_batch receives `new_window`.
-        # `full_seq` is the Context + New Window.
-        # We only want to alert/learn on the NEWEST window (the one just added).
-        # We shouldn't re-alert on old context.
-        # `process_batch` calculates loss for `full_seq`?
-        
-        # Looking at Line 280: `recon_x, mu, logvar = self.model(full_seq)`
-        # `train_loss` is scalar. `raw_loss_map` is [Batch, Seq].
-        # We only care about the last elements?
-        # Actually `inference.py` logic so far seemed to check EVERYTHING in the window_queue.
-        # This might be redundant (checking same packet 5 times).
-        # FIX: Only check the LAST slice of the sequence (Size of new_window).
-        
-        # But `enforce_mask` handles "Maturity".
-        # If we stick to existing logic for now, we iterate all `enforced_losses`.
-        
-        # To make this right for Memory:
-        # We should iterate through the indices of `enforced_losses`.
         
         # --- MEMORY LOGIC START (BATCH OPTIMIZED) ---
         
         # 1. Identify Valid Indices (Those with Maturity >= 1.0)
-        valid_indices = torch.nonzero(enforce_mask).cpu().numpy().flatten()
-        # Note: nonzero returns [N, 2] (Batch, Seq) or [N] if 1D. 
-        # But enforce_mask is [1, Seq]. So indices are [[0, 0], [0, 1]...].
-        # We need the 2nd dim.
-        if len(valid_indices) == 0: return
+        valid_coords = torch.nonzero(enforce_mask).cpu().numpy()
+        if len(valid_coords) == 0: return
 
         # Access log batch flat
-        full_logs = []
-        if hasattr(self, "log_batch_queue"):
-             full_logs = [item for sublist in self.log_batch_queue for item in sublist]
+        full_logs = [item for sublist in self.log_batch_queue for item in sublist]
              
         # 2. Extract Data for Valid Items
-        batch_eval = [] # List of (index, vector, log, score, is_anomaly)
-        
-        # Pre-calculation
+        batch_eval = [] # List of (index, vector, pkt, score, is_anomaly)
         cpu_losses = enforced_losses[0].detach().cpu().numpy()
-        cpu_threshold = threshold
-        
-
-        # Lists for Batch Query
         query_vectors = []
-        query_indices = [] # Map query_idx -> batch_eval_idx
-        
-        for idx in valid_indices:
-             # Depending on shape of nonzero:
-             # If enforce_mask is [1, Seq], valid_indices is [0, 1, 0, 5...] 
-             # Actually nonzero returns [ [0,1], [0,5] ].
-             pass
-             
-        # Let's do it safely:
-        valid_coords = torch.nonzero(enforce_mask).cpu().numpy() # [[0, 1], [0, 5]]
         
         for coord in valid_coords:
             idx = coord[1] # Seq index
@@ -604,28 +432,22 @@ class UnsupervisedAI(threading.Thread):
             
             loss_val = cpu_losses[idx]
             vec = full_seq[0, idx, :].detach().cpu().tolist()
-            log = full_logs[idx]
-            is_anom = (loss_val > cpu_threshold)
+            pkt = full_logs[idx]
+            is_anom = (loss_val > threshold)
             
-            # Store context
             batch_eval.append({
                 "vector": vec,
-                "log": log,
-                "score": loss_val,
-                "is_anomaly": is_anom,
-                "id": idx
+                "pkt": pkt,
+                "score": float(loss_val),
+                "is_anomaly": is_anom
             })
-            
-            # Prepare Query
             query_vectors.append(vec)
 
         # 3. Batch Query (One Network Call)
         if not self.memory or not query_vectors:
-            return # Cannot process without memory
+            return
             
         try:
-            # Send all (Safe + Anomalies) in one batch
-            # We filter/decide later based on is_anomaly
             search_results = self.memory.search_batch(
                 collection_name=self.mem_collection,
                 requests=[SearchRequest(vector=v, limit=1) for v in query_vectors]
@@ -636,129 +458,67 @@ class UnsupervisedAI(threading.Thread):
 
         # 4. Process Results
         points_to_upsert = []
-        mongo_docs = []
         
         for i, result in enumerate(search_results):
             ctx = batch_eval[i]
+            pkt = ctx["pkt"]
             top_match = result[0] if result else None
             
             mem_type = top_match.payload.get("type") if top_match else None
             mem_dist = (1.0 - top_match.score) if top_match else 1.0
             
-            # Shared ID for Mongo + Qdrant
+            # Shared ID for Qdrant + Protobuf
             event_uuid = uuid.uuid4().hex
             
+            # Logic for Verdict
+            verdict = "Safe"
             if not ctx["is_anomaly"]:
-                # If it's safe but "New" (Far from existing memory), learn it!
                 if mem_dist > self.dedup_dist:
                     verdict = "NEW SAFE PATTERN"
-                    
-                    storage_cfg = self.config.get("storage_policy", {})
-                    
-                    # 1. Qdrant: Vector + Metadata (NO LOG)
-                    if storage_cfg.get("save_vectors", {}).get("ai_safe", True):
-                        points_to_upsert.append(PointStruct(
-                            id=event_uuid,
-                            vector=ctx["vector"],
-                            payload={"type": "ai_safe", "timestamp": time.time(), "score": ctx["score"]} 
-                        ))
-                    
-                    # 2. Mongo: Full Log + Metadata + UUID Link
-                    if storage_cfg.get("save_logs", {}).get("ai_safe", True):
-                        mongo_docs.append({
-                            "uuid": event_uuid,
-                            "timestamp": time.time(),
-                            "verdict": "ai_safe",
-                            "score": ctx["score"],
-                            "log": ctx["log"]
-                        })
-                else:
-                    # It's just normal safe traffic (matches existing). Ignore.
-                    verdict = "Safe"
-            
-            # PATH B: ANOMALY (Low Flow)
+                    points_to_upsert.append(PointStruct(
+                        id=event_uuid,
+                        vector=ctx["vector"],
+                        payload={"type": "Safe", "timestamp": time.time(), "score": ctx["score"]} 
+                    ))
             else:
                 verdict = "NEW ANOMALY"
-                storage_cfg = self.config.get("storage_policy", {})
-                
-                # Scenario 1: False Positive
                 if mem_type == "Safe" and mem_dist < self.query_dist:
                     verdict = "FALSE POSITIVE"
-                    
-                # Scenario 2: Known Threat
                 elif mem_type == "Threat" and mem_dist < self.query_dist:
                     verdict = "KNOWN THREAT"
-                    
-                # Scenario 3: New Threat/Anomaly
                 else:
-                    # 1. Qdrant: Vector + Metadata (NO LOG)
-                    if storage_cfg.get("save_vectors", {}).get("anomaly", True):
-                        points_to_upsert.append(PointStruct(
-                            id=event_uuid, 
-                            vector=ctx["vector"], 
-                            payload={"type": "New", "timestamp": time.time(), "score": ctx["score"]}
-                        ))
-                    
-                    # 2. Mongo: Full Log + Metadata + UUID Link
-                    if storage_cfg.get("save_logs", {}).get("anomaly", True):
-                        mongo_docs.append({
-                            "uuid": event_uuid,
-                            "timestamp": time.time(),
-                            "verdict": verdict, # "NEW ANOMALY"
-                            "score": ctx["score"],
-                            "status": "active",
-                            "log": ctx["log"]
-                        })
+                    points_to_upsert.append(PointStruct(
+                        id=event_uuid, 
+                        vector=ctx["vector"], 
+                        payload={"type": "Threat", "timestamp": time.time(), "score": ctx["score"]}
+                    ))
                 
-                # REPORT & ALERT
-                evt = ctx["log"].get("event", {})
-                ts_val = ctx["log"].get("timestamp_ref") or ctx["log"].get("_server_ts") or "?"
-                
-                # Map Verdict to Config Key
-                alert_key = "new_anomaly"
-                if verdict == "FALSE POSITIVE": alert_key = "false_positive"
-                elif verdict == "KNOWN THREAT": alert_key = "known_threat"
-                
-                # check alert policy
+                # Console Alert
                 alert_cfg = self.config.get("alert_policy", {}).get("console_alerts", {})
-                
-                # Support old boolean config or new dict
                 should_alert = True
-                if isinstance(alert_cfg, bool): should_alert = alert_cfg
-                elif isinstance(alert_cfg, dict): 
+                if isinstance(alert_cfg, dict):
+                    alert_key = verdict.lower().replace(" ", "_")
                     should_alert = alert_cfg.get(alert_key, True)
                 
                 if should_alert:
-                    print(f"[AI ALERT] Score: {ctx['score']:.4f}")
-                    print(f"  >> [VERDICT] {verdict} (Type: {mem_type or 'None'}, Dist: {mem_dist:.4f})")
-                    print(f"  >> [DETAILS] Time: {ts_val}")
+                    print(f"[AI ALERT] Score: {ctx['score']:.4f} | Verdict: {verdict}")
+                    print(f"  >> [UUID] {event_uuid} (Dist: {mem_dist:.4f})")
 
-            # --- MONGO STORE (Save Everything) ---
-            if self.mongo_events is not None:
-                # Prepare Relational Doc
-                # Enrich Log (REMOVED: ai_verdict, ai_score, ai_uuid as per user request)
-                doc = {
-                    "_id": event_uuid,
-                    "uuid": event_uuid,
-                    "timestamp": time.time(),
-                    "verdict": verdict,
-                    "score": float(ctx["score"]),
-                    # Promoted Index Keys
-                    "host_id": ctx["log"].get("host", {}).get("id"),
-                    "group_id": ctx["log"].get("role"), # Assuming role is group-like
-                    "event_type": ctx["log"].get("event", {}).get("type"),
-                    
-                    "full_log": ctx["log"]
-                }
+            # --- PROTOBUF DECORATION & REDIS PUSH ---
+            try:
+                pkt.uuid = event_uuid
+                pkt.ai_verdict = verdict
+                pkt.ai_anomaly_score = ctx["score"]
                 
-                if ctx["is_anomaly"]:
-                    doc["status"] = "active"
-                    
-                mongo_docs.append(doc)
+                # Push binary to storage queue
+                if self.redis_out:
+                    binary_pkt = pkt.SerializeToString()
+                    self.redis_out.rpush(self.redis_storage, binary_pkt)
+            except Exception as e:
+                print(f"[AI] Serial/Push Failed: {e}")
 
-        # 5. Execute Writes
-        # A. Qdrant (Vectors)
-        if points_to_upsert:
+        # 5. Execute Writes (Qdrant)
+        if points_to_upsert and self.memory:
              try:
                  self.memory.upsert(
                      collection_name=self.mem_collection,
@@ -767,12 +527,4 @@ class UnsupervisedAI(threading.Thread):
              except Exception as e:
                  print(f"[AI] Memory Save Failed: {e}")
                  
-        # B. Mongo (Logs)
-        if mongo_docs and self.mongo_events is not None:
-            try:
-                self.mongo_events.insert_many(mongo_docs, ordered=False)
-            except Exception as e:
-                print(f"[AI] Mongo Save Failed: {e}")
-        
-        # End of memory logic replacement
-        return # Skip old logic
+        return

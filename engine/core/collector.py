@@ -12,6 +12,7 @@ import psutil
 import re
 import ipaddress
 import secrets
+import redis
 from pymongo import MongoClient, UpdateMany, ASCENDING
 
 # --- PROTOBUF BINARY CORE ---
@@ -94,6 +95,7 @@ class PacketReceiver(threading.Thread):
         self.active_lock = threading.Lock()
         
         self._init_db()
+        self._init_redis()
         self.setup_socket()
 
     def _init_db(self):
@@ -115,6 +117,26 @@ class PacketReceiver(threading.Thread):
             self.needs_db_reconnect = False
         except Exception as e:
             print(f"[Collector Error] MongoDB Connection Failed: {e}")
+
+    def _init_redis(self):
+        """Initialize Redis connection for high-speed decoupling."""
+        r_cfg = self.config.get("redis", {})
+        if not r_cfg.get("enabled", False):
+            self.redis = None
+            return
+
+        try:
+            self.redis = redis.Redis(
+                host=r_cfg.get("host", "localhost"),
+                port=r_cfg.get("port", 6379),
+                decode_responses=False # We send RAW binary
+            )
+            # Test connection
+            self.redis.ping()
+            print(f"[Collector] Redis Connected: {r_cfg.get('host')}:{r_cfg.get('port')} (Queue: {r_cfg.get('queue')})")
+        except Exception as e:
+            print(f"[Collector Error] Redis Connection Failed: {e}")
+            self.redis = None
 
     def sync_known_devices(self):
         """Syncs authorized agents and role-networks from DB to in-memory cache every 10s."""
@@ -331,21 +353,36 @@ class PacketReceiver(threading.Thread):
                             self.metrics._accum_count += 1
                             self.metrics._accum_bytes += len(data)
                             
-                            # 7. HOOK: NORMALIZATION & DATA FORWARDING
-                            try:
-                                normalized_dict = MessageToDict(
-                                    pkt, 
-                                    preserving_proto_field_name=True,
-                                    always_print_fields_with_no_presence=True
-                                )
-                                self.forward_to_brain(normalized_dict)
-                            except Exception as e:
-                                print(f"[Collector Error] Normalization Failed: {e}")
+                            # Log Forwarding (Redis or Flow)
+                            if self.redis:
+                                batch_to_process.append(data)
+                            else:
+                                # Normalization Placeholder (If Redis is off)
+                                try:
+                                    normalized_dict = MessageToDict(
+                                        pkt, 
+                                        preserving_proto_field_name=True,
+                                        always_print_fields_with_no_presence=True
+                                    )
+                                    self.forward_to_brain(normalized_dict)
+                                except: pass
                             
                         except BlockingIOError:
                             break
                         except Exception:
                             break
+                    
+                    # HOOK: Batch Redis Push (Pipelining)
+                    if self.redis and batch_to_process:
+                        try:
+                            r_cfg = self.config.get("redis", {})
+                            q_name = r_cfg.get("queue", "kinetix_ingest")
+                            
+                            # Push entire batch once per UDP cycle
+                            self.redis.lpush(q_name, *batch_to_process)
+                            batch_to_process.clear()
+                        except Exception as e:
+                            print(f"[Collector Error] Redis Batch Push Failed: {e}")
             except Exception:
                 pass
 

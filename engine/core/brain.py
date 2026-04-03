@@ -22,6 +22,7 @@ from google.protobuf.json_format import MessageToDict
 # Add project root to path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 from engine.core.vectorizer import LogNormalizer, VectorLibrary
+from engine.core.utils import load_jsonc
 
 try:
     from engine.core.misp_client import MispClient
@@ -177,11 +178,12 @@ class Brain:
 
     def load_config(self):
         try:
-            with open(self.config_path, 'r') as f:
-                lines = [l for l in f.readlines() if not l.strip().startswith("//")]
-                self.config = json.loads("".join(lines))
-                self._update_local_config()
-                print(f"[Config] Loaded: Port={self.config.get('port')}, Window={self.time_window}s")
+            self.config = load_jsonc(self.config_path)
+            if not self.config:
+                print(f"[Error] Config file is empty or missing: {self.config_path}")
+                return
+            self._update_local_config()
+            print(f"[Config] Loaded: Port={self.config.get('port')}, Window={self.time_window}s")
         except Exception as e:
             print(f"[Error] Config Load Failed: {e}")
 
@@ -229,6 +231,9 @@ class Brain:
                     if isinstance(h, str) and len(h) in [32, 40, 64]: # md5, sha1, sha256
                         indicators.add(h)
         return indicators
+
+    def process_queue(self):
+        """Main pipeline logic: Indicator extraction -> MISP -> Vectorization -> AI."""
         # HOOK: Ingress Data from Collector
         # This is where we would receive from a separate IPC channel.
         # For now, we continue to check the local packet_queue which the IPC hook would populate.

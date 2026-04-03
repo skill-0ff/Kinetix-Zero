@@ -2,6 +2,8 @@ import time
 import os
 import threading
 import json
+import redis
+from engine.core.utils import load_jsonc
 from datetime import datetime, timedelta
 from pymongo import MongoClient
 from qdrant_client import QdrantClient
@@ -20,17 +22,7 @@ class Janitor(threading.Thread):
         self._init_dbs()
 
     def load_config(self):
-        try:
-            with open(self.config_path, 'r') as f:
-                # Remove comments manually if needed, or use a comment-supporting parser
-                # Using standard json for now, assuming stripped/valid jsonc
-                content = f.read()
-                # fast & dirty comment stripper
-                import re
-                content = re.sub(r'//.*', '', content)
-                self.config = json.loads(content)
-        except Exception as e:
-            print(f"[Janitor] Config Load Failed: {e}")
+        self.config = load_jsonc(self.config_path)
 
     def _init_dbs(self):
         try:

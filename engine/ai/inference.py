@@ -48,6 +48,12 @@ class UnsupervisedAI(threading.Thread):
         self.running = True
         self.daemon = True
         
+        # Batching Configuration
+        self.batch_size = self.config.get("batch_size", 50)
+        self.batch_buffer = []
+        self.log_buffer = []
+        self.last_batch_time = time.time()
+        
         # Persistence Settings
         self.checkpoint_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "checkpoints")
         if not os.path.exists(self.checkpoint_dir):

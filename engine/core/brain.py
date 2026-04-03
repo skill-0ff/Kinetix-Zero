@@ -94,13 +94,15 @@ class Brain:
             "mbps": 0.0,
             "uptime": 0
         }
-        self._accum_count = 0
-        self._accum_bytes = 0
+        
+        # MISP Cache
+        self.misp_indicator_cache = set()
+        self.last_misp_cache_reset = time.time()
         
         self.misp = None
         if MispClient:
             try:
-                self.misp = MispClient(self.config)
+                self.misp = MispClient(self.config, db=self.db)
                 if self.misp.enabled:
                     print(f"[Brain] MISP Integration Enabled: {self.misp.url}")
             except Exception as e:
@@ -120,8 +122,6 @@ class Brain:
     def _update_local_config(self):
         self.time_window = float(self.config.get("time_window", 5.0))
         self.max_sequence = int(self.config.get("max_sequence", 100))
-        self.ddos_threshold = int(self.config.get("ddos_threshold", 50))
-        self.limit = self.max_sequence + self.ddos_threshold
 
     def _init_redis(self):
         """Initialize Redis connection for decoupled ingestion."""
@@ -202,35 +202,50 @@ class Brain:
         except:
             pass
 
-    def process_queue(self):
+    def _extract_indicators(self, logs):
+        """Deep extract public IPs and hashes from KinetixPacket batch."""
+        indicators = set()
+        for pkt in logs:
+            payload_type = pkt.WhichOneof("payload")
+            if not payload_type or payload_type != "event": continue
+            
+            event_type = pkt.event.WhichOneof("details")
+            if not event_type: continue
+            
+            # Extract based on event detail type
+            details = getattr(pkt.event, event_type)
+            
+            # 1. IPs
+            for field in ["src_ip", "dst_ip", "dst_ip_str", "source_network_address"]:
+                if hasattr(details, field):
+                    ip = getattr(details, field)
+                    if isinstance(ip, str) and self.misp and self.misp._is_public_ip(ip):
+                        indicators.add(ip)
+            
+            # 2. Hashes
+            for field in ["sha256", "hash", "parent_sha256", "module_sha256"]:
+                if hasattr(details, field):
+                    h = getattr(details, field)
+                    if isinstance(h, str) and len(h) in [32, 40, 64]: # md5, sha1, sha256
+                        indicators.add(h)
+        return indicators
         # HOOK: Ingress Data from Collector
         # This is where we would receive from a separate IPC channel.
         # For now, we continue to check the local packet_queue which the IPC hook would populate.
         
         count = 0
         buffer_batch = []
-        limit = self.limit
-        
         while not self.packet_queue.empty():
             try:
                 buffer_batch.append(self.packet_queue.get_nowait())
                 count += 1
-                if count > limit + 10: break 
             except queue.Empty:
                 break
         
         if count == 0: return
 
-        self._accum_count += count
-        try:
-            self._accum_bytes += sum(len(x) if isinstance(x, (bytes, str)) else 0 for x in buffer_batch)
-        except: pass
-
-        if count >= limit:
-            print(f"[ALERT] DDoS DETECTED! Count={count} > Limit={limit}. DROPPING BATCH.")
-            buffer_batch.clear()
-            return
-
+        # Enriched logs collection
+        decoded_logs = []
         for pkt in buffer_batch:
             try:
                 # Injected by the Brain (ISO-8601 Format)
@@ -239,8 +254,23 @@ class Brain:
             except: continue
         
         if self.misp and self.misp.enabled and decoded_logs:
-             try: self.misp.check_batch(decoded_logs)
-             except Exception as e: print(f"[Error] MISP Check Failed: {e}")
+             try:
+                 # 1. Check Cache Reset
+                 ttl = float(self.config.get("misp_cache_ttl_sec", 3600))
+                 if time.time() - self.last_misp_cache_reset > ttl:
+                     self.misp_indicator_cache.clear()
+                     self.last_misp_cache_reset = time.time()
+                 
+                 # 2. Filter & Query
+                 indicators = self._extract_indicators(decoded_logs)
+                 new_indicators = [ind for ind in indicators if ind not in self.misp_indicator_cache]
+                 
+                 if new_indicators:
+                     self.misp.check_batch_optimized(new_indicators, decoded_logs)
+                     self.misp_indicator_cache.update(new_indicators)
+                 
+             except Exception as e: 
+                 print(f"[Error] MISP Optimized Check Failed: {e}")
 
         if decoded_logs:
             vectors = []
@@ -303,18 +333,17 @@ class Brain:
                     self.system_metrics["ram"] = round(p.memory_percent(), 1)
                 except: pass
                 
-                # AGGREGATE COLLECTOR STATS
+                # GET COLLECTOR STATS ONLY (Reading, no counting)
                 try:
                     stats_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "collector_stats.json")
                     if os.path.exists(stats_path):
                         with open(stats_path, "r") as f:
                             c_stats = json.load(f)
-                            self.system_metrics["cpu"] = round(self.system_metrics["cpu"] + c_stats.get("cpu", 0.0), 1)
-                            self.system_metrics["ram"] = round(self.system_metrics["ram"] + c_stats.get("ram", 0.0), 1)
+                            # Keep Brain's own CPU/RAM but update EPS/MBPS from collector
                             self.system_metrics["eps_in"] = c_stats.get("eps", 0.0)
                             self.system_metrics["mbps"] = c_stats.get("mbps", 0.0)
                 except: pass
-                
+
                 metrics_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "system_metrics.json")
                 try:
                     with open(metrics_path, "w") as f:

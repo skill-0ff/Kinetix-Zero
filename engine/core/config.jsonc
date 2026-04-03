@@ -19,6 +19,7 @@
     "misp_enabled": false,
     "misp_url": "https://misp.local",
     "misp_verify_ssl": true,
+    "misp_cache_ttl_sec": 3600,
     "storage_policy": {
         "save_vectors": {
             "ai_safe": true,

@@ -11,21 +11,27 @@ from urllib3.exceptions import InsecureRequestWarning
 warnings.simplefilter('ignore', InsecureRequestWarning)
 
 class MispClient:
-    def __init__(self, config):
+    def __init__(self, config, db=None):
         self.config = config
+        self.db = db
         self.enabled = config.get("misp_enabled", False)
         self.url = config.get("misp_url", "").rstrip("/")
         self.key = os.getenv("MISP_API_KEY") 
         self.verify = config.get("misp_verify_ssl", True)
-        self.report_dir = "reports"
         
-        # Ensure report dir exists
-        if self.enabled and not os.path.exists(self.report_dir):
-            os.makedirs(self.report_dir, exist_ok=True)
             
         if self.enabled and not self.key:
              print("[MISP] Warning: Enabled but no MISP_API_KEY found in environment.")
              self.enabled = False
+        
+        # Initialize MongoDB Indices for Alerts
+        if self.enabled and self.db is not None:
+             try:
+                 self.db.misp_alerts.create_index("misp.hit_value")
+                 self.db.misp_alerts.create_index("timestamp")
+                 self.db.misp_alerts.create_index("alert_id", unique=True)
+             except Exception as e:
+                 print(f"[MISP] Index Init Warning: {e}")
 
     def check_batch(self, logs):
         """
@@ -106,6 +112,65 @@ class MispClient:
         except Exception as e:
             print(f"[MISP] Check Failed: {e}")
 
+    def check_batch_optimized(self, new_indicators, logs):
+        """
+        Receives pre-extracted values from Brain and queries them.
+        Iterates full batch for tagging ONLY if there's a hit.
+        """
+        if not self.enabled or not new_indicators:
+            return
+
+        try:
+            hits = self._query_misp(new_indicators)
+            if not hits: return
+
+            # Build a lookup for fast log tagging
+            # Value -> Hit Object
+            hit_lookup = {h["value"]: h for h in hits}
+            
+            for pkt in logs:
+                # Search for any value in this log that matched a hit
+                found_hit = self._match_pkt_to_hits(pkt, hit_lookup.keys())
+                if found_hit:
+                    hit_obj = hit_lookup[found_hit]
+                    event_id = hit_obj.get("event_id")
+                    info = hit_obj.get("Event", {}).get("info", "Unknown")
+                    
+                    # Tagging (Internal)
+                    # Note: pkt is a KinetixPacket object, we might want to convert to dict or 
+                    # handle differently if purely binary. But Brain uses 'decoded_logs'
+                    # which are Protobuf objects.
+                    
+                    # Generate Report
+                    self._generate_report(pkt, found_hit, event_id, info)
+        except Exception as e:
+            print(f"[MISP Optimized] Failed: {e}")
+
+    def _match_pkt_to_hits(self, pkt, hit_values):
+        """Helper to find if any part of the Protobuf packet matches a MISP hit."""
+        # Simple string-based search for speed, or more surgical
+        # For Protobuf objects, we'd check known fields
+        payload_type = pkt.WhichOneof("payload")
+        if payload_type != "event": return None
+        
+        details_type = pkt.event.WhichOneof("details")
+        if not details_type: return None
+        details = getattr(pkt.event, details_type)
+        
+        # Check IPs
+        for field in ["src_ip", "dst_ip", "dst_ip_str", "source_network_address"]:
+            if hasattr(details, field):
+                val = getattr(details, field)
+                if val in hit_values: return val
+        
+        # Check Hashes
+        for field in ["sha256", "hash", "parent_sha256", "module_sha256"]:
+            if hasattr(details, field):
+                val = getattr(details, field)
+                if val in hit_values: return val
+                
+        return None
+
     def _is_public_ip(self, ip_str):
         try:
             ip = ipaddress.ip_address(ip_str)
@@ -145,26 +210,40 @@ class MispClient:
             return []
 
     def _generate_report(self, log, hit_value, event_id, info):
-        # CHECK TOGGLE: Generate Report File?
+        # 1. Enforcement Check
         if not self.config.get("alert_policy", {}).get("misp_report", True):
             return
 
         try:
-            report_id = str(uuid.uuid4())
-            filename = f"misp_alert_{int(time.time())}_{report_id}.json"
-            path = os.path.join(self.report_dir, filename)
+            # 2. Convert to Dict
+            if hasattr(log, "SerializeToString"):
+                from google.protobuf.json_format import MessageToDict
+                log_data = MessageToDict(log, preserving_proto_field_name=True, always_print_fields_with_no_presence=True)
+            else:
+                log_data = log
             
+            # 3. Create Structured Report Document
+            ts = int(time.time())
             report = {
-                "timestamp": int(time.time()),
-                "misp_event_id": event_id,
-                "misp_info": info,
-                "hit_value": hit_value,
-                "suspect_event": log # Full context as requested
+                "alert_id": str(uuid.uuid4()),
+                "timestamp": ts,
+                "timestamp_iso": datetime.datetime.fromtimestamp(ts).isoformat(),
+                "verdict": "MISP_HIT",
+                "misp": {
+                    "event_id": event_id,
+                    "hit_value": hit_value,
+                    "info": info,
+                    "url": f"{self.url}/events/view/{event_id}" if self.url else None
+                },
+                "suspect_event": log_data
             }
-            
-            with open(path, 'w') as f:
-                json.dump(report, f, indent=4)
-                
-            print(f"[ALERT] MISP Hit! Report saved: {path}")
-        except:
-            pass
+
+            # 4. Save to MongoDB (The only path)
+            if self.db is not None:
+                self.db.misp_alerts.insert_one(report)
+                print(f"[ALERT] MISP Hit! Alert stored in MongoDB.")
+            else:
+                print(f"[Warning] MISP Alert detected but MongoDB connection is missing.")
+
+        except Exception as e:
+            print(f"[MISP Alert Error] {e}")

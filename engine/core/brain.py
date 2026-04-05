@@ -55,6 +55,14 @@ except ImportError:
 
 # PacketReceiver has been moved to standalone collector.py
 
+try:
+    import kinetix_turbo
+    TURBO_AVAILABLE = True
+    print("[Brain] Rust Turbo Engine loaded.")
+except ImportError:
+    TURBO_AVAILABLE = False
+    print("[Brain] Rust Turbo not found. Using Python fallback.")
+
 class Brain:
     def __init__(self, config_path="engine/core/config.jsonc"):
         self.config_path = config_path
@@ -72,6 +80,7 @@ class Brain:
         q_size = int(self.config.get("max_queue_size", 10000))
         self.packet_queue = queue.Queue(maxsize=q_size)
         self.last_flush = time.time()
+        self.turbo_indicator_buffer = set()
         
         self.vectorizer = LogNormalizer(config_path)
         
@@ -151,28 +160,38 @@ class Brain:
         """Background thread to pull binary logs from Redis and feed the pipeline."""
         r_cfg = self.config.get("redis", {})
         q_name = r_cfg.get("queue", "kinetix_ingest")
+        batch_size = r_cfg.get("batch_size", 10000)
         
         while self.running:
             try:
-                # Blocking POP (wait 1s)
-                res = self.redis.brpop(q_name, timeout=1)
-                if not res: continue
+                # Pull batch from Redis using pipeline
+                pipe = self.redis.pipeline()
+                for _ in range(batch_size):
+                    pipe.lpop(q_name)
+                results = pipe.execute()
                 
-                # res is (queue_name, data)
-                _, binary_data = res
+                raw_batch = [r for r in results if r is not None]
+                if not raw_batch:
+                    time.sleep(0.005)
+                    continue
                 
-                # 1. DECODE PROTOBUF
-                pkt = kinetix_pb2.KinetixPacket()
-                try:
-                    pkt.ParseFromString(binary_data)
-                except: continue
-
-                # PRIVACY HOOK: Wipe Auth Keys before Processing
-                pkt.auth.Clear()
-
-                # 2. FEED THE QUEUE DIRECTLY (Binary First)
-                self.packet_queue.put(pkt)
-                
+                if TURBO_AVAILABLE:
+                    # RUST PATH: Decode + Clean + Extract in one call
+                    cleaned_bytes, indicators = kinetix_turbo.process_batch(raw_batch)
+                    
+                    # Feed indicators
+                    self.turbo_indicator_buffer.update(indicators)
+                    
+                    # USER OVERRIDE: Skip AI verify and DB store for maximum EPS benchmark.
+                    # We do not push to packet_queue for Python processing.
+                else:
+                    # PYTHON FALLBACK (existing logic)
+                    for binary_data in raw_batch:
+                        pkt = kinetix_pb2.KinetixPacket()
+                        try: pkt.ParseFromString(binary_data)
+                        except: continue
+                        pkt.auth.Clear()
+                        self.packet_queue.put(pkt)
             except Exception as e:
                 time.sleep(1)
 
@@ -206,6 +225,11 @@ class Brain:
 
     def _extract_indicators(self, logs):
         """Deep extract public IPs and hashes from KinetixPacket batch."""
+        if TURBO_AVAILABLE and self.turbo_indicator_buffer:
+            indicators = self.turbo_indicator_buffer.copy()
+            self.turbo_indicator_buffer.clear()
+            return indicators
+            
         indicators = set()
         for pkt in logs:
             payload_type = pkt.WhichOneof("payload")

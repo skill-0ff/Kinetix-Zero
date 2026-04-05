@@ -1,0 +1,8 @@
+C:\Users\louou\Documents\project\Kinetix-Zero\Kinetix-Zero\engine\core\kinetix_turbo\target\release\build\target-lexicon-a18688295ba58553\build_script_build-a18688295ba58553.d: C:\Users\louou\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\target-lexicon-0.13.5\build.rs C:\Users\louou\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\target-lexicon-0.13.5\src/data_model.rs C:\Users\louou\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\target-lexicon-0.13.5\src/triple.rs C:\Users\louou\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\target-lexicon-0.13.5\src/targets.rs
+
+C:\Users\louou\Documents\project\Kinetix-Zero\Kinetix-Zero\engine\core\kinetix_turbo\target\release\build\target-lexicon-a18688295ba58553\build_script_build-a18688295ba58553.exe: C:\Users\louou\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\target-lexicon-0.13.5\build.rs C:\Users\louou\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\target-lexicon-0.13.5\src/data_model.rs C:\Users\louou\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\target-lexicon-0.13.5\src/triple.rs C:\Users\louou\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\target-lexicon-0.13.5\src/targets.rs
+
+C:\Users\louou\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\target-lexicon-0.13.5\build.rs:
+C:\Users\louou\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\target-lexicon-0.13.5\src/data_model.rs:
+C:\Users\louou\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\target-lexicon-0.13.5\src/triple.rs:
+C:\Users\louou\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\target-lexicon-0.13.5\src/targets.rs:

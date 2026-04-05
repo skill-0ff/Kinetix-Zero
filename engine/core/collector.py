@@ -1,3 +1,5 @@
+import os
+os.environ["PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION"] = "upb"
 import socket
 import json
 import time
@@ -304,6 +306,7 @@ class PacketReceiver(threading.Thread):
 
                 ready = _select([_sock], [], [], 0.02)
                 if ready[0]:
+                    batch_to_process = []
                     for _ in range(100):
                         try:
                             # 1. RECEIVE BINARY BYTES

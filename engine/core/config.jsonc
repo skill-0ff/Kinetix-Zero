@@ -1,9 +1,8 @@
 {
-    "port": 5001,
     "time_window": 5,
-    "max_sequence": 100,
-    "ddos_threshold": 50,
-    "max_queue_size": 10000,
+    "max_sequence": 1000000000,
+    "ddos_threshold": 50000000,
+    "max_queue_size": 1000000000,
     "ai_context_epochs": 5,
     "ai_anomaly_threshold": 0.85,
     "qdrant_path": "DB/vector",
@@ -23,8 +22,7 @@
     "storage_policy": {
         "save_vectors": {
             "ai_safe": true,
-            "anomaly": true,
-            "ddos_evidence": true
+            "anomaly": true
         },
         "save_logs": {
             "ai_safe": true,

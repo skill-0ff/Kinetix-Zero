@@ -1,4 +1,0 @@
-[Error] Config Load Failed: Expecting ',' delimiter: line 1 column 219 (char 218)
-[Error] Role Load Failed: name 'VectorLibrary' is not defined
-[Warning] Config load error: Expecting ',' delimiter: line 1 column 219 (char 218)
-[AI] Compiling model... (This may take a minute on first run)

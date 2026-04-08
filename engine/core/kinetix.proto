@@ -8,19 +8,32 @@ package kinetix;
 
 message Auth {
   string host_id = 1;      // Unique Agent ID
-  string key = 2;          // Secure Key (CSPRNG)
+  string token = 2;          // Secure Key (CSPRNG)
 }
 
-message RegistrationRequest {
-  string host_id = 1;      // Requesting ID
-  string ip = 2;           // Agent Source IP
+// HANDSHAKE PROTOCOL
+message HandshakeRequest {
+  string req = 1;          // e.g. "INF_HELLO"
+  string host_id = 2;
 }
 
-message RegistrationResponse {
+message HandshakeResponse {
+  bytes server_public_key = 1;
+  string status = 2;
+}
+
+message AgentAuthRequest {
+  bytes ephemeral_public_key = 1;
+  bytes encrypted_payload = 2; // HandshakePayload encrypted with shared secret
+  bytes nonce = 3;
+}
+
+message HandshakePayload {
   string host_id = 1;
-  string key = 2;          // Issued Key
-  string role = 3;         // Assigned Role (from Subnet match)
+  string token = 2;
+  bytes agent_public_key = 3; // To be stored in MongoDB
 }
+
 
 // ==========================================
 // 2. METADATA & SYSTEM MONITORING
@@ -259,7 +272,5 @@ message KinetixPacket {
   // 8. THE ATOMIC PAYLOAD (Log OR Registration Management)
   oneof payload {
     Event event = 10;
-    RegistrationRequest reg_req = 11;
-    RegistrationResponse reg_res = 12;
   }
 }

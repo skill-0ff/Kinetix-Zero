@@ -1,9 +1,26 @@
+# General
 node_modules/
 __pycache__/
 *.pyc
 DB/
 .runlogs/
 .vscode/
+
+# Frontend
 frontend/node_modules/
 frontend/dist/
 frontend/.env
+
+# Engine Core (Rust & Security)
+engine/core/kinetix_turbo/target/
+engine/core/server.key
+engine/core/kinetix-collector.exe
+*.exe
+*.pdb
+output.txt
+
+# Python
+.env
+venv/
+env/
+.pytest_cache/

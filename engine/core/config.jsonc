@@ -50,6 +50,12 @@
             "ddos_evidence": 14
         }
     },
+    "session_policy": {
+        "pending_timeout_sec": 5,
+        "online_timeout_sec": 10,
+        "max_pending_agents": 1870000,
+        "max_online_agents": 4790000
+    },
     "redis": {
         "enabled": true,
         "host": "localhost",

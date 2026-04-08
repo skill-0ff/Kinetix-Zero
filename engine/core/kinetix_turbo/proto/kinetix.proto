@@ -166,6 +166,19 @@ message ScheduledTask {
   string user = 4;
 }
 
+// IDLE & WARNING MESSAGES
+message Idle {
+  Auth auth = 1;
+  SystemStatus status = 2; // Ignored for PC roles for now
+  string message = 3;
+}
+
+message Warning {
+  Auth auth = 1;
+  SystemStatus status = 2; // Ignored for PC roles for now
+  string message = 3;
+}
+
 message AccountManagement {
   string action = 1;
   string target_user = 2;
@@ -272,5 +285,7 @@ message KinetixPacket {
   // 8. THE ATOMIC PAYLOAD (Log OR Registration Management)
   oneof payload {
     Event event = 10;
+    Idle idle = 11;
+    Warning warning = 12;
   }
 }

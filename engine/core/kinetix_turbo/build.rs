@@ -6,7 +6,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     
     prost_build::Config::new()
         .out_dir(&out_dir)
-        .compile_protos(&["proto/kinetix.proto"], &["proto/"])?;
+        .compile_protos(&["../kinetix.proto"], &["../"])?;
         
     Ok(())
 }

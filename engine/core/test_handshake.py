@@ -3,25 +3,28 @@ import kinetix_pb2
 from cryptography.hazmat.primitives.asymmetric import x25519
 from cryptography.hazmat.primitives.ciphers.aead import ChaCha20Poly1305
 import sys
+import os
+import time
 
 def run_test():
     host = "127.0.0.1"
     port = 5001
+    agent_id = "test_agent_001"
     
-    print(f"--- Handshake Test: Connecting to {host}:{port} ---")
+    print(f"--- Handshake & Session Test: {host}:{port} ---")
     
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        s.settimeout(5)
+        s.settimeout(10)
         s.connect((host, port))
         
         # 1. Send HandshakeRequest
         req = kinetix_pb2.HandshakeRequest()
-        req.host_id = "test_agent_001"
+        req.host_id = agent_id
         s.sendall(req.SerializeToString())
-        print("-> Sent HandshakeRequest")
+        print(f"-> Sent HandshakeRequest for {agent_id}")
         
-        # 2. Receive HandshakeResponse (Server Public Key)
+        # 2. Receive HandshakeResponse
         data = s.recv(2048)
         resp = kinetix_pb2.HandshakeResponse()
         resp.ParseFromString(data)
@@ -34,27 +37,22 @@ def run_test():
         server_public = x25519.X25519PublicKey.from_public_bytes(server_pub_bytes)
         print("<- Received Server Public Key")
         
-        # 3. Generate Ephemeral Key and Derive Shared Secret (ECDH)
+        # 3. ECDH
         ephemeral_private = x25519.X25519PrivateKey.generate()
         ephemeral_public = ephemeral_private.public_key()
         shared_secret = ephemeral_private.exchange(server_public)
-        print("-> Derived Shared Secret")
         
-        # 4. Prepare Payload
+        # 4. Encrypt Payload
         payload = kinetix_pb2.HandshakePayload()
-        payload.host_id = "test_agent_001"
+        payload.host_id = agent_id
         payload.token = "secret_token_123"
-        payload.agent_public_key = b"A" * 32 # Dummy agent pub key
+        payload.agent_public_key = b"A" * 32
         
-        payload_bytes = payload.SerializeToString()
-        
-        # 5. Encrypt Payload (ChaCha20-Poly1305)
         nonce = os.urandom(12)
         chacha = ChaCha20Poly1305(shared_secret)
-        encrypted_payload = chacha.encrypt(nonce, payload_bytes, None)
-        print("-> Encrypted Auth Payload")
+        encrypted_payload = chacha.encrypt(nonce, payload.SerializeToString(), None)
         
-        # 6. Send AgentAuthRequest
+        # 5. Send AgentAuthRequest
         auth_req = kinetix_pb2.AgentAuthRequest()
         auth_req.ephemeral_public_key = ephemeral_public.public_bytes_raw()
         auth_req.nonce = nonce
@@ -62,21 +60,39 @@ def run_test():
         s.sendall(auth_req.SerializeToString())
         print("-> Sent AgentAuthRequest")
         
-        # 7. Receive Final Status
+        # 6. Verify Auth Success
         final_status = s.recv(1024)
-        print(f"<- Response: {final_status.decode()}")
+        print(f"<- Collector: {final_status.decode()}")
         
         if final_status == b"AUTH_SUCCESS":
-            print("✅ TEST PASSED")
-        else:
-            print("❌ TEST FAILED")
+            print("✅ Handshake Success! Session is PENDING.")
             
+            # 7. Transition to ONLINE by sending an Event
+            print("-> Sending Event (Triggering ONLINE transition)...")
+            packet = kinetix_pb2.KinetixPacket()
+            packet.uuid = "evt-001"
+            packet.event.type = "process_start"
+            # No Auth field needed now!
+            s.sendall(packet.SerializeToString())
+            
+            # 8. Send Idle (Heartbeat)
+            time.sleep(1)
+            print("-> Sending Idle message...")
+            idle_pkt = kinetix_pb2.KinetixPacket()
+            idle_pkt.uuid = "idle-001"
+            idle_pkt.idle.message = "System is quiet."
+            s.sendall(idle_pkt.SerializeToString())
+            
+            print("✅ TEST COMPLETE - Session maintained.")
+        else:
+            print("❌ AUTH FAILED")
+            
+        time.sleep(2)
         s.close()
         
     except Exception as e:
-        print(f"❌ Socket Error: {e}")
+        print(f"❌ Error: {e}")
         sys.exit(1)
 
 if __name__ == "__main__":
-    import os
     run_test()

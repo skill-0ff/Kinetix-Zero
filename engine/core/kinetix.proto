@@ -3,13 +3,8 @@ syntax = "proto3";
 package kinetix;
 
 // ==========================================
-// 1. CORE AUTHENTICATION & MANAGEMENT
+// 1. HANDSHAKE & SESSION MANAGEMENT
 // ==========================================
-
-message Auth {
-  string host_id = 1;      // Unique Agent ID
-  string token = 2;          // Secure Key (CSPRNG)
-}
 
 // HANDSHAKE PROTOCOL
 message HandshakeRequest {
@@ -201,6 +196,15 @@ message WmiEvent {
 }
 
 // ==========================================
+// 4. SESSION & DIAGNOSTIC MESSAGES
+// ==========================================
+
+message Idle {
+  SystemStatus status = 1;
+  string message = 2; 
+}
+
+// ==========================================
 // 4. NETWORK (L2/L3) INFRASTRUCTURE EVENTS
 // ==========================================
 
@@ -224,10 +228,7 @@ message TrafficEvent {
 // ==========================================
 
 message KinetixPacket {
-  // 1. AUTHENTICATION (Field 1 for Maximum Collector Performance)
-  Auth auth = 1;           
-
-  // 2. UNIFIED CORRELATION ID
+  // 1. UNIFIED CORRELATION ID
   string uuid = 2;
 
   // 3. AI OUTCOMES
@@ -272,5 +273,6 @@ message KinetixPacket {
   // 8. THE ATOMIC PAYLOAD (Log OR Registration Management)
   oneof payload {
     Event event = 10;
+    Idle idle = 11;
   }
 }

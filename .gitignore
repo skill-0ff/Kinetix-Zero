@@ -24,4 +24,4 @@ output.txt
 venv/
 env/
 .pytest_cache/
-./tmp
+tmp/

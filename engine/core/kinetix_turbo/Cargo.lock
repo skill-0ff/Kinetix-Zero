@@ -850,6 +850,7 @@ name = "kinetix_turbo"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bytes",
  "chrono",
  "dashmap",
  "futures-util",
@@ -865,6 +866,7 @@ dependencies = [
  "sha2",
  "sysinfo",
  "tokio",
+ "tokio-util",
  "uuid",
  "x25519-dalek",
 ]

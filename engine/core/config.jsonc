@@ -53,6 +53,7 @@
     "session_policy": {
         "pending_timeout_sec": 5,
         "online_timeout_sec": 10,
+        "max_verified_agents": 10000000,
         "max_pending_agents": 1870000,
         "max_online_agents": 4790000
     },

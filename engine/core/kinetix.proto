@@ -3,34 +3,6 @@ syntax = "proto3";
 package kinetix;
 
 // ==========================================
-// 1. HANDSHAKE & SESSION MANAGEMENT
-// ==========================================
-
-// HANDSHAKE PROTOCOL
-message HandshakeRequest {
-  string req = 1;          // e.g. "INF_HELLO"
-  string host_id = 2;
-}
-
-message HandshakeResponse {
-  bytes server_public_key = 1;
-  string status = 2;
-}
-
-message AgentAuthRequest {
-  bytes ephemeral_public_key = 1;
-  bytes encrypted_payload = 2; // HandshakePayload encrypted with shared secret
-  bytes nonce = 3;
-}
-
-message HandshakePayload {
-  string host_id = 1;
-  string token = 2;
-  bytes agent_public_key = 3; // To be stored in MongoDB
-}
-
-
-// ==========================================
 // 2. METADATA & SYSTEM MONITORING
 // ==========================================
 
@@ -196,15 +168,6 @@ message WmiEvent {
 }
 
 // ==========================================
-// 4. SESSION & DIAGNOSTIC MESSAGES
-// ==========================================
-
-message Idle {
-  SystemStatus status = 1;
-  string message = 2; 
-}
-
-// ==========================================
 // 4. NETWORK (L2/L3) INFRASTRUCTURE EVENTS
 // ==========================================
 
@@ -273,6 +236,5 @@ message KinetixPacket {
   // 8. THE ATOMIC PAYLOAD (Log OR Registration Management)
   oneof payload {
     Event event = 10;
-    Idle idle = 11;
   }
 }

@@ -1,8 +1,5 @@
 {
     "time_window": 5,
-    "max_sequence": 1000000000,
-    "ddos_threshold": 50000000,
-    "max_queue_size": 1000000000,
     "ai_context_epochs": 5,
     "ai_anomaly_threshold": 0.85,
     "qdrant_path": "DB/vector",
@@ -50,12 +47,21 @@
             "ddos_evidence": 14
         }
     },
-    "session_policy": {
-        "pending_timeout_sec": 5,
+    "collector": {
+        "idle_timeout_sec": 60,
+        "pending_timeout_sec": 1,
         "online_timeout_sec": 10,
-        "max_verified_agents": 10000000,
+        "max_packet_per_second": 10000000,
+        "max_packet_per_second_per_agent": 10000000,
         "max_pending_agents": 1870000,
-        "max_online_agents": 4790000
+        "max_online_agents": 4790000,
+        "secrets_path": "../collector.key"
+    },
+    "rudp": {
+        "window_size": 10,
+        "mtu": 1400,
+        "retries": 10,
+        "retransmit_ms": 300
     },
     "redis": {
         "enabled": true,

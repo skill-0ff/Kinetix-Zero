@@ -11,6 +11,8 @@ use tokio::sync::RwLock;
 use tokio::net::UdpSocket;
 use x25519_dalek::{EphemeralSecret, PublicKey};
 use rand::rngs::OsRng;
+use chacha20poly1305::{aead::{Aead, KeyInit, Payload}, ChaCha20Poly1305, Nonce};
+use sha2::{Sha256, Digest};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct CollectorConfig {
@@ -298,6 +300,32 @@ fn bootstrap_secrets(config_path: &Path, config: &mut AppConfig) -> Result<Secre
     }
 }
 
+fn derive_cipher_key(shared_secret: &[u8; 32]) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(shared_secret);
+    hasher.finalize().into()
+}
+
+fn encrypt_payload(key: &[u8; 32], seq: u32, ad: &[u8], plaintext: &[u8]) -> Vec<u8> {
+    let cipher = ChaCha20Poly1305::new(key.into());
+    let mut nonce_bytes = [0u8; 12];
+    nonce_bytes[0..4].copy_from_slice(&seq.to_be_bytes());
+    let nonce = Nonce::from_slice(&nonce_bytes);
+    
+    let payload = Payload { msg: plaintext, aad: ad };
+    cipher.encrypt(nonce, payload).unwrap_or_default()
+}
+
+fn decrypt_payload(key: &[u8; 32], seq: u32, ad: &[u8], ciphertext: &[u8]) -> Option<Vec<u8>> {
+    let cipher = ChaCha20Poly1305::new(key.into());
+    let mut nonce_bytes = [0u8; 12];
+    nonce_bytes[0..4].copy_from_slice(&seq.to_be_bytes());
+    let nonce = Nonce::from_slice(&nonce_bytes);
+    
+    let payload = Payload { msg: ciphertext, aad: ad };
+    cipher.decrypt(nonce, payload).ok()
+}
+
 async fn run_rudp_service(config_handle: Arc<RwLock<AppConfig>>, secrets: Arc<Option<Secrets>>) -> Result<()> {
     let initial_cfg = config_handle.read().await.clone();
     let socket = UdpSocket::bind(format!("0.0.0.0:{}", RUDP_PORT)).await?;
@@ -407,33 +435,60 @@ async fn run_rudp_service(config_handle: Arc<RwLock<AppConfig>>, secrets: Arc<Op
                 }
             }
             FLAGS_AUTH_REQ => {
-                // Auth Request: [4-byte ID length][HostID String][48-byte Secret]
-                if len >= 57 {
-                    let id_len = u32::from_be_bytes([buf[5], buf[6], buf[7], buf[8]]) as usize;
-                    if len >= 9 + id_len + 48 {
-                        let host_id = String::from_utf8_lossy(&buf[9..9 + id_len]).to_string();
-                        let agent_secret = String::from_utf8_lossy(&buf[9 + id_len..9 + id_len + 48]).to_string();
+                // If agent is already online, just resend the Auth-Resp (previous one might be lost)
+                if online_peers.contains_key(&addr) {
+                    let mut resp = Vec::with_capacity(21);
+                    resp.extend_from_slice(&seq.to_be_bytes());
+                    resp.push(FLAGS_AUTH_RESP);
+                    
+                    if let Some(peer) = online_peers.get_mut(&addr) {
+                        let key = derive_cipher_key(&peer.shared_secret);
+                        let encrypted = encrypt_payload(&key, seq, &buf[0..5], &[0u8; 1]);
+                        resp.extend_from_slice(&encrypted);
+                    }
+                    let _ = socket.send_to(&resp, addr).await;
+                    return Ok(());
+                }
 
-                        let mut auth_ok = false;
-                        if let Some(ref s) = *secrets {
-                            if s.agen_secret == agent_secret { auth_ok = true; }
-                        }
+                // Auth Request: Encrypted payload expected
+                if len >= 5 + 16 { // Min 5 bytes header + 16 bytes TAG
+                    if let Some(p) = pending_peers.get_mut(&addr) {
+                        if let Some(shared) = p.shared_secret {
+                            let key = derive_cipher_key(&shared);
+                            if let Some(decrypted) = decrypt_payload(&key, seq, &buf[0..5], &buf[5..len]) {
+                                // Decrypted Payload: [4-byte ID length][HostID String][48-byte Secret]
+                                if decrypted.len() >= 4 {
+                                    let id_len = u32::from_be_bytes([decrypted[0], decrypted[1], decrypted[2], decrypted[3]]) as usize;
+                                    if decrypted.len() >= 4 + id_len + 48 {
+                                        let host_id = String::from_utf8_lossy(&decrypted[4..4 + id_len]).to_string();
+                                        let agent_secret = String::from_utf8_lossy(&decrypted[4 + id_len..4 + id_len + 48]).to_string();
 
-                        if auth_ok {
-                            let shared = pending_peers.remove(&addr).and_then(|(_, p)| p.shared_secret);
-                            if let Some(secret) = shared {
-                                if online_peers.len() < current_cfg.collector.max_online_agents as usize {
-                                    online_peers.insert(addr, OnlineSession {
-                                        shared_secret: secret,
-                                        host_id: host_id.clone(),
-                                        last_activity: std::time::Instant::now(),
-                                    });
-                                    println!("Agent [{}] authenticated from {}", host_id, addr);
-                                    
-                                    let mut resp = Vec::with_capacity(5);
-                                    resp.extend_from_slice(&seq.to_be_bytes());
-                                    resp.push(FLAGS_AUTH_RESP);
-                                    let _ = socket.send_to(&resp, addr).await;
+                                        let mut auth_ok = false;
+                                        if let Some(ref s) = *secrets {
+                                            if s.agen_secret == agent_secret { auth_ok = true; }
+                                        }
+
+                                        if auth_ok {
+                                            drop(p); // Release lock before removal
+                                            if let Some((_, p_data)) = pending_peers.remove(&addr) {
+                                                if online_peers.len() < current_cfg.collector.max_online_agents as usize {
+                                                    online_peers.insert(addr, OnlineSession {
+                                                        shared_secret: p_data.shared_secret.unwrap(),
+                                                        host_id: host_id.clone(),
+                                                        last_activity: std::time::Instant::now(),
+                                                    });
+                                                    println!("Agent [{}] authenticated (ENCRYPTED) from {}", host_id, addr);
+                                                    
+                                                    let mut resp = Vec::with_capacity(21);
+                                                    resp.extend_from_slice(&seq.to_be_bytes());
+                                                    resp.push(FLAGS_AUTH_RESP);
+                                                    let encrypted_ack = encrypt_payload(&key, seq, &buf[0..5], &[1u8; 1]);
+                                                    resp.extend_from_slice(&encrypted_ack);
+                                                    let _ = socket.send_to(&resp, addr).await;
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -444,10 +499,15 @@ async fn run_rudp_service(config_handle: Arc<RwLock<AppConfig>>, secrets: Arc<Op
                 if let Some(mut peer) = online_peers.get_mut(&addr) {
                     peer.last_activity = std::time::Instant::now();
                     
-                    let mut ack = Vec::with_capacity(5);
-                    ack.extend_from_slice(&seq.to_be_bytes());
-                    ack.push(FLAGS_ACK);
-                    let _ = socket.send_to(&ack, addr).await;
+                    let key = derive_cipher_key(&peer.shared_secret);
+                    if let Some(_decrypted_data) = decrypt_payload(&key, seq, &buf[0..5], &buf[5..len]) {
+                        // (Payload processing logic would go here using decrypted_data)
+                        
+                        let mut ack = Vec::with_capacity(5);
+                        ack.extend_from_slice(&seq.to_be_bytes());
+                        ack.push(FLAGS_ACK);
+                        let _ = socket.send_to(&ack, addr).await;
+                    }
                 }
             }
             FLAGS_ACK | FLAGS_RESP | FLAGS_AUTH_RESP => {

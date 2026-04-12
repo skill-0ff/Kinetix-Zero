@@ -24,6 +24,8 @@ x25519-dalek = { version = "2.0", features = ["static_secrets"] }
 sha2 = "0.10"
 chacha20poly1305 = "0.10.1"
 crossterm = { version = "0.27", features = ["event-stream"] }
+hostname = "0.4"
+zeroize = { version = "1.7", features = ["derive"] }
 
 [[bin]]
 name = "kinetix-collector"

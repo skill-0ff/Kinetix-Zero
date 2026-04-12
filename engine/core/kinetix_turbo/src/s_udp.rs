@@ -234,8 +234,8 @@ impl SUDPEngine {
         let seq = rand::random::<u32>();
         
         let mut packet = Vec::with_capacity(37);
-        packet.extend_from_slice(&seq.to_be_bytes());
         packet.push(FLAGS_INIT);
+        packet.extend_from_slice(&seq.to_be_bytes());
         packet.extend_from_slice(my_public.as_bytes());
 
         let mut buf = [0u8; 2048];
@@ -250,8 +250,8 @@ impl SUDPEngine {
             let try_start = Instant::now();
             socket.send_to(&packet, target_addr).await?;
             if let Ok(Ok((len, peer_addr))) = tokio::time::timeout(dyn_rto, socket.recv_from(&mut buf)).await {
-                if peer_addr == target_addr && len >= 37 && buf[4] == FLAGS_RESP {
-                    let recv_seq = u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]);
+                if peer_addr == target_addr && len >= 37 && buf[0] == FLAGS_RESP {
+                    let recv_seq = u32::from_be_bytes([buf[1], buf[2], buf[3], buf[4]]);
                     if recv_seq == seq {
                         server_pub_bytes.copy_from_slice(&buf[5..37]);
                         stage1_success = true;
@@ -287,8 +287,8 @@ impl SUDPEngine {
         token_clear.zeroize();
 
         let mut ad_03 = [0u8; 5];
-        ad_03[0..4].copy_from_slice(&seq.to_be_bytes());
-        ad_03[4] = FLAGS_AUTH_REQ;
+        ad_03[0] = FLAGS_AUTH_REQ;
+        ad_03[1..5].copy_from_slice(&seq.to_be_bytes());
         let encrypted = self.encrypt_payload(&key, seq, &ad_03, &plaintext);
         
         let mut resp_03 = Vec::with_capacity(5 + encrypted.len());
@@ -303,8 +303,8 @@ impl SUDPEngine {
             let try_start = Instant::now();
             socket.send_to(&resp_03, target_addr).await?;
             if let Ok(Ok((len, peer_addr))) = tokio::time::timeout(dyn_rto, socket.recv_from(&mut buf)).await {
-                if peer_addr == target_addr && len >= 5 && buf[4] == FLAGS_AUTH_RESP {
-                    let recv_seq = u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]);
+                if peer_addr == target_addr && len >= 5 && buf[0] == FLAGS_AUTH_RESP {
+                    let recv_seq = u32::from_be_bytes([buf[1], buf[2], buf[3], buf[4]]);
                     if recv_seq == seq {
                         if let Some(decrypted) = self.decrypt_payload(&key, seq, &buf[0..5], &buf[5..len]) {
                             // Check server proof
@@ -400,8 +400,8 @@ impl SUDPEngine {
     pub async fn process_packet(&self, socket: &Arc<UdpSocket>, addr: SocketAddr, buf: &[u8], len: usize) -> Result<Option<SUDPEvent>> {
         if len < 5 { return Ok(None); }
         
-        let seq = u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]);
-        let flags = buf[4];
+        let flags = buf[0];
+        let seq = u32::from_be_bytes([buf[1], buf[2], buf[3], buf[4]]);
 
         // 🛡️ Security Filter 1: Flag Range Validation
         if !(S_UDP_FLAG_MIN..=S_UDP_FLAG_MAX).contains(&flags) {
@@ -477,8 +477,8 @@ impl SUDPEngine {
                     }
 
                     let mut resp = Vec::with_capacity(37);
-                    resp.extend_from_slice(&seq.to_be_bytes());
                     resp.push(FLAGS_RESP);
+                    resp.extend_from_slice(&seq.to_be_bytes());
                     resp.extend_from_slice(collector_public.as_bytes());
                     let _ = socket.send_to(&resp, addr).await;
                     return Ok(Some(SUDPEvent::HandshakeStarted));
@@ -488,8 +488,8 @@ impl SUDPEngine {
                 let handshake_start = Instant::now();
                 if self.online_peers.contains_key(&addr) {
                     let mut resp = Vec::with_capacity(21);
-                    resp.extend_from_slice(&seq.to_be_bytes());
                     resp.push(FLAGS_AUTH_RESP);
+                    resp.extend_from_slice(&seq.to_be_bytes());
                     if let Some(peer) = self.online_peers.get_mut(&addr) {
                         let key = self.derive_cipher_key(&peer.shared_secret);
                         let encrypted = self.encrypt_payload(&key, seq, &buf[0..5], &[0u8; 1]);
@@ -565,12 +565,12 @@ impl SUDPEngine {
 
                                             // 3. Encrypt and Send
                                             let mut resp = Vec::with_capacity(5 + payload_data.len() + 16);
-                                            resp.extend_from_slice(&seq_c.to_be_bytes());
                                             resp.push(FLAGS_AUTH_RESP);
+                                            resp.extend_from_slice(&seq_c.to_be_bytes());
 
                                             let mut ad = [0u8; 5];
-                                            ad[0..4].copy_from_slice(&seq_c.to_be_bytes());
-                                            ad[4] = FLAGS_AUTH_RESP;
+                                            ad[0] = FLAGS_AUTH_RESP;
+                                            ad[1..5].copy_from_slice(&seq_c.to_be_bytes());
 
                                             let encrypted = engine.encrypt_payload(&key_c, seq_c, &ad, &payload_data);
                                             resp.extend_from_slice(&encrypted);
@@ -597,15 +597,11 @@ impl SUDPEngine {
                     let key = self.derive_cipher_key(&peer.shared_secret);
                     let ip_port = peer.ip_port.clone();
                     if let Some(decrypted_payload) = self.decrypt_payload(&key, seq, &buf[0..5], &buf[5..len]) {
-                        if decrypted_payload.len() < 6 { return Ok(None); }
+                        if decrypted_payload.len() < 2 { return Ok(None); }
                         
-                        let _stream_id = u32::from_be_bytes([
-                            decrypted_payload[0], decrypted_payload[1], 
-                            decrypted_payload[2], decrypted_payload[3]
-                        ]);
-                        let _index = decrypted_payload[4];
-                        let total = decrypted_payload[5];
-                        let actual_data = &decrypted_payload[6..];
+                        let _index = decrypted_payload[0];
+                        let total = decrypted_payload[1];
+                        let actual_data = &decrypted_payload[2..];
 
                         // 🛰️ DYNAMIC ACK TRIGGER: 
                         // Track last received seq and buffer for the 08 ACK
@@ -623,8 +619,8 @@ impl SUDPEngine {
                             let mut resp = Vec::with_capacity(5 + ack_payload.len() + 16);
                             let ack_seq = seq; // Use current seq as anchor for ACK
                             let mut ad = [0u8; 5];
-                            ad[0..4].copy_from_slice(&ack_seq.to_be_bytes());
-                            ad[4] = FLAGS_ACK;
+                            ad[0] = FLAGS_ACK;
+                            ad[1..5].copy_from_slice(&ack_seq.to_be_bytes());
                             
                             let encrypted = self.encrypt_payload(&key, ack_seq, &ad, &ack_payload);
                             resp.extend_from_slice(&ad);
@@ -870,12 +866,11 @@ impl SUDPEngine {
 
     pub async fn send_data(&self, addr: SocketAddr, data: &[u8]) -> Result<()> {
         if let Some(mut peer) = self.online_peers.get_mut(&addr) {
-            let stream_id: u32 = rand::random(); // 4-byte Unique Stream multiplexer ID
-            let total_chunks = (data.len() + (S_UDP_MTU - 27) - 1) / (S_UDP_MTU - 27); // -27 to account for headers, MAC, and 6 byte chunk metadata
+            let total_chunks = (data.len() + (S_UDP_MTU - 2) - 1) / (S_UDP_MTU - 2); // -2 for index/total metadata
             
             for i in 0..total_chunks {
-                let start = i * (S_UDP_MTU - 27);
-                let end = (start + (S_UDP_MTU - 27)).min(data.len());
+                let start = i * (S_UDP_MTU - 2);
+                let end = (start + (S_UDP_MTU - 2)).min(data.len());
                 let chunk_data = &data[start..end];
 
                 let seq = peer.next_send_seq;
@@ -883,12 +878,11 @@ impl SUDPEngine {
                 
                 let key = self.derive_cipher_key(&peer.shared_secret);
                 let mut ad = [0u8; 5];
-                ad[0..4].copy_from_slice(&seq.to_be_bytes());
-                ad[4] = FLAGS_DATA;
+                ad[0] = FLAGS_DATA;
+                ad[1..5].copy_from_slice(&seq.to_be_bytes());
 
-                // 📦 Dynamic Metadata: Stream ID, Index, and Total
-                let mut plaintext = Vec::with_capacity(6 + chunk_data.len());
-                plaintext.extend_from_slice(&stream_id.to_be_bytes());
+                // 📦 Dynamic Metadata: index and total_packets
+                let mut plaintext = Vec::with_capacity(2 + chunk_data.len());
                 plaintext.push(i as u8);
                 plaintext.push(total_chunks as u8);
                 plaintext.extend_from_slice(chunk_data);

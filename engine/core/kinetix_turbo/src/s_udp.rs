@@ -597,11 +597,15 @@ impl SUDPEngine {
                     let key = self.derive_cipher_key(&peer.shared_secret);
                     let ip_port = peer.ip_port.clone();
                     if let Some(decrypted_payload) = self.decrypt_payload(&key, seq, &buf[0..5], &buf[5..len]) {
-                        if decrypted_payload.len() < 2 { return Ok(None); }
+                        if decrypted_payload.len() < 6 { return Ok(None); }
                         
-                        let _index = decrypted_payload[0];
-                        let total = decrypted_payload[1];
-                        let actual_data = &decrypted_payload[2..];
+                        let _stream_id = u32::from_be_bytes([
+                            decrypted_payload[0], decrypted_payload[1], 
+                            decrypted_payload[2], decrypted_payload[3]
+                        ]);
+                        let _index = decrypted_payload[4];
+                        let total = decrypted_payload[5];
+                        let actual_data = &decrypted_payload[6..];
 
                         // 🛰️ DYNAMIC ACK TRIGGER: 
                         // Track last received seq and buffer for the 08 ACK
@@ -866,11 +870,12 @@ impl SUDPEngine {
 
     pub async fn send_data(&self, addr: SocketAddr, data: &[u8]) -> Result<()> {
         if let Some(mut peer) = self.online_peers.get_mut(&addr) {
-            let total_chunks = (data.len() + (S_UDP_MTU - 2) - 1) / (S_UDP_MTU - 2); // -2 for index/total metadata
+            let stream_id: u32 = rand::random(); // 4-byte Unique Stream multiplexer ID
+            let total_chunks = (data.len() + (S_UDP_MTU - 27) - 1) / (S_UDP_MTU - 27); // -27 to account for headers, MAC, and 6 byte chunk metadata
             
             for i in 0..total_chunks {
-                let start = i * (S_UDP_MTU - 2);
-                let end = (start + (S_UDP_MTU - 2)).min(data.len());
+                let start = i * (S_UDP_MTU - 27);
+                let end = (start + (S_UDP_MTU - 27)).min(data.len());
                 let chunk_data = &data[start..end];
 
                 let seq = peer.next_send_seq;
@@ -881,8 +886,9 @@ impl SUDPEngine {
                 ad[0..4].copy_from_slice(&seq.to_be_bytes());
                 ad[4] = FLAGS_DATA;
 
-                // 📦 Dynamic Metadata: index and total_packets
-                let mut plaintext = Vec::with_capacity(2 + chunk_data.len());
+                // 📦 Dynamic Metadata: Stream ID, Index, and Total
+                let mut plaintext = Vec::with_capacity(6 + chunk_data.len());
+                plaintext.extend_from_slice(&stream_id.to_be_bytes());
                 plaintext.push(i as u8);
                 plaintext.push(total_chunks as u8);
                 plaintext.extend_from_slice(chunk_data);

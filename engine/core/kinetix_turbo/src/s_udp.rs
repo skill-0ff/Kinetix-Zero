@@ -33,7 +33,7 @@ const S_UDP_RTO_DEFAULT: u64 = 500;
 const S_UDP_REPUTATION_TTL: u64 = 600; // 10 Minutes Persistence
 const S_UDP_PENDING_TIMEOUT: u64 = 2;
 const S_UDP_SESSION_TIMEOUT: u64 = 600; // 10 Minutes
-const S_UDP_WINDOW_SIZE: u32 = 20;
+const S_UDP_WINDOW_SIZE: u32 = 31;
 const S_UDP_WINDOW_RETRIES: u32 = 5;
 
 // Security Constants
@@ -597,19 +597,15 @@ impl SUDPEngine {
                     let key = self.derive_cipher_key(&peer.shared_secret);
                     let ip_port = peer.ip_port.clone();
                     if let Some(decrypted_payload) = self.decrypt_payload(&key, seq, &buf[0..5], &buf[5..len]) {
-                        if decrypted_payload.len() < 2 { return Ok(None); }
-                        
-                        let _index = decrypted_payload[0];
-                        let total = decrypted_payload[1];
-                        let actual_data = &decrypted_payload[2..];
+                        let actual_data = &decrypted_payload;
 
                         // 🛰️ DYNAMIC ACK TRIGGER: 
                         // Track last received seq and buffer for the 08 ACK
                         peer.last_recv_seq = seq;
                         peer.recv_window_buffer.push(seq);
-                        peer.expected_window_size = total;
+                        peer.expected_window_size = 1;
 
-                        if peer.recv_window_buffer.len() >= total as usize {
+                        if peer.recv_window_buffer.len() >= 1 {
                             // GENERATE AND SEND ENCRYPTED WINDOWED ACK (08)
                             let mut ack_payload = Vec::with_capacity(peer.recv_window_buffer.len() * 4);
                             for s in &peer.recv_window_buffer {
@@ -866,28 +862,35 @@ impl SUDPEngine {
 
     pub async fn send_data(&self, addr: SocketAddr, data: &[u8]) -> Result<()> {
         if let Some(mut peer) = self.online_peers.get_mut(&addr) {
-            let total_chunks = (data.len() + (S_UDP_MTU - 2) - 1) / (S_UDP_MTU - 2); // -2 for index/total metadata
+            let chunk_limit = S_UDP_MTU - 21; // -21 bytes total overhead
+            let total_chunks = (data.len() + chunk_limit - 1) / chunk_limit;
             
             for i in 0..total_chunks {
-                let start = i * (S_UDP_MTU - 2);
-                let end = (start + (S_UDP_MTU - 2)).min(data.len());
+                let start = i * chunk_limit;
+                let end = (start + chunk_limit).min(data.len());
                 let chunk_data = &data[start..end];
 
-                let seq = peer.next_send_seq;
-                peer.next_send_seq += 1;
+                let packet_idx = (i % 31) as u32; // max 31 packets per window
+                if packet_idx == 0 {
+                    peer.next_send_seq += 1; // Increment absolute window sequence
+                }
+                let window_idx = peer.next_send_seq;
+
+                let is_end_stream: u32 = if i == total_chunks - 1 { 1 } else { 0 };
+                let is_end_window: u32 = if packet_idx == 30 || i == total_chunks - 1 { 1 } else { 0 };
+
+                // 📦 Compact bitmasking into single u32 seq generator
+                let seq: u32 = (is_end_stream << 31)
+                             | (is_end_window << 30)
+                             | ((packet_idx & 0x1F) << 25)
+                             | (window_idx & 0x1FFFFFF);
                 
                 let key = self.derive_cipher_key(&peer.shared_secret);
                 let mut ad = [0u8; 5];
                 ad[0] = FLAGS_DATA;
                 ad[1..5].copy_from_slice(&seq.to_be_bytes());
 
-                // 📦 Dynamic Metadata: index and total_packets
-                let mut plaintext = Vec::with_capacity(2 + chunk_data.len());
-                plaintext.push(i as u8);
-                plaintext.push(total_chunks as u8);
-                plaintext.extend_from_slice(chunk_data);
-                
-                let encrypted = self.encrypt_payload(&key, seq, &ad, &plaintext);
+                let encrypted = self.encrypt_payload(&key, seq, &ad, chunk_data);
                 let mut packet = Vec::with_capacity(5 + encrypted.len());
                 packet.extend_from_slice(&ad);
                 packet.extend_from_slice(&encrypted);

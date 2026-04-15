@@ -33,7 +33,7 @@ const S_UDP_RTO_DEFAULT: u64 = 500;
 const S_UDP_REPUTATION_TTL: u64 = 600; // 10 Minutes Persistence
 const S_UDP_PENDING_TIMEOUT: u64 = 2;
 const S_UDP_SESSION_TIMEOUT: u64 = 600; // 10 Minutes
-const S_UDP_WINDOW_SIZE: u32 = 31;
+const S_UDP_WINDOW_SIZE: u32 = 32;
 const S_UDP_WINDOW_RETRIES: u32 = 5;
 
 // Security Constants
@@ -145,11 +145,12 @@ struct OnlineSession {
     ip_port: String,
     socket: Arc<UdpSocket>,
     last_activity: Instant,
-    window_start_seq: u32,
-    next_send_seq: u32,
-    last_recv_seq: u32,
-    recv_window_buffer: Vec<u32>,
+    window_start_seq: u64,
+    next_send_seq: u64,
+    last_recv_seq: u64,
+    recv_window_buffer: Vec<u64>,
     expected_window_size: u8,
+    last_acked_window: u64,
 }
 
 pub enum SUDPEvent {
@@ -162,7 +163,7 @@ pub enum SUDPEvent {
 pub struct SUDPEngine {
     pending_peers: Arc<DashMap<SocketAddr, PendingSession>>,
     online_peers: Arc<DashMap<SocketAddr, OnlineSession>>,
-    global_acks: Arc<DashMap<(SocketAddr, u32), PendingPacket>>,
+    global_acks: Arc<DashMap<(SocketAddr, u64), PendingPacket>>,
     reputations: Arc<DashMap<IpAddr, IPReputation>>,
     secrets: Arc<Option<Secrets>>,
     identity: Arc<RwLock<Option<SUDPIdentity>>>,
@@ -231,9 +232,9 @@ impl SUDPEngine {
         // 🛡️ Initiate Handshake (Flag 01)
         let my_secret = EphemeralSecret::random_from_rng(OsRng);
         let my_public = PublicKey::from(&my_secret);
-        let seq = rand::random::<u32>();
+        let seq = rand::random::<u64>();
         
-        let mut packet = Vec::with_capacity(37);
+        let mut packet = Vec::with_capacity(41);
         packet.push(FLAGS_INIT);
         packet.extend_from_slice(&seq.to_be_bytes());
         packet.extend_from_slice(my_public.as_bytes());
@@ -250,10 +251,10 @@ impl SUDPEngine {
             let try_start = Instant::now();
             socket.send_to(&packet, target_addr).await?;
             if let Ok(Ok((len, peer_addr))) = tokio::time::timeout(dyn_rto, socket.recv_from(&mut buf)).await {
-                if peer_addr == target_addr && len >= 37 && buf[0] == FLAGS_RESP {
-                    let recv_seq = u32::from_be_bytes([buf[1], buf[2], buf[3], buf[4]]);
+                if peer_addr == target_addr && len >= 41 && buf[0] == FLAGS_RESP {
+                    let recv_seq = u64::from_be_bytes(buf[1..9].try_into().unwrap_or([0u8; 8]));
                     if recv_seq == seq {
-                        server_pub_bytes.copy_from_slice(&buf[5..37]);
+                        server_pub_bytes.copy_from_slice(&buf[9..41]);
                         stage1_success = true;
 
                         // 📈 RTO CALIBRATION (Stage 1 ping)
@@ -286,12 +287,12 @@ impl SUDPEngine {
         let plaintext = token_clear.clone();
         token_clear.zeroize();
 
-        let mut ad_03 = [0u8; 5];
+        let mut ad_03 = [0u8; 9];
         ad_03[0] = FLAGS_AUTH_REQ;
-        ad_03[1..5].copy_from_slice(&seq.to_be_bytes());
+        ad_03[1..9].copy_from_slice(&seq.to_be_bytes());
         let encrypted = self.encrypt_payload(&key, seq, &ad_03, &plaintext);
         
-        let mut resp_03 = Vec::with_capacity(5 + encrypted.len());
+        let mut resp_03 = Vec::with_capacity(9 + encrypted.len());
         resp_03.extend_from_slice(&ad_03);
         resp_03.extend_from_slice(&encrypted);
 
@@ -303,10 +304,10 @@ impl SUDPEngine {
             let try_start = Instant::now();
             socket.send_to(&resp_03, target_addr).await?;
             if let Ok(Ok((len, peer_addr))) = tokio::time::timeout(dyn_rto, socket.recv_from(&mut buf)).await {
-                if peer_addr == target_addr && len >= 5 && buf[0] == FLAGS_AUTH_RESP {
-                    let recv_seq = u32::from_be_bytes([buf[1], buf[2], buf[3], buf[4]]);
+                if peer_addr == target_addr && len >= 9 && buf[0] == FLAGS_AUTH_RESP {
+                    let recv_seq = u64::from_be_bytes(buf[1..9].try_into().unwrap_or([0u8; 8]));
                     if recv_seq == seq {
-                        if let Some(decrypted) = self.decrypt_payload(&key, seq, &buf[0..5], &buf[5..len]) {
+                        if let Some(decrypted) = self.decrypt_payload(&key, seq, &buf[0..9], &buf[9..len]) {
                             // Check server proof
                             let expected_proof = if let Some(id) = self.identity.read().await.as_ref() {
                                 Some(id.reveal_server_proof())
@@ -373,10 +374,11 @@ impl SUDPEngine {
             socket: Arc::clone(&socket),
             last_activity: Instant::now(),
             window_start_seq: 1,
-            next_send_seq: 1,
+            next_send_seq: 2,
             last_recv_seq: seq,
             recv_window_buffer: Vec::new(),
             expected_window_size: S_UDP_WINDOW_SIZE as u8,
+            last_acked_window: 2,
         });
 
         println!(" [S-UDP] Connection Established with: {}", target_addr);
@@ -398,10 +400,10 @@ impl SUDPEngine {
 
 
     pub async fn process_packet(&self, socket: &Arc<UdpSocket>, addr: SocketAddr, buf: &[u8], len: usize) -> Result<Option<SUDPEvent>> {
-        if len < 5 { return Ok(None); }
+        if len < 9 { return Ok(None); }
         
         let flags = buf[0];
-        let seq = u32::from_be_bytes([buf[1], buf[2], buf[3], buf[4]]);
+        let seq = u64::from_be_bytes(buf[1..9].try_into().unwrap_or([0u8; 8]));
 
         // 🛡️ Security Filter 1: Flag Range Validation
         if !(S_UDP_FLAG_MIN..=S_UDP_FLAG_MAX).contains(&flags) {
@@ -465,8 +467,8 @@ impl SUDPEngine {
 
         match flags {
             FLAGS_INIT => {
-                if len >= 37 {
-                    let agent_pub_bytes: [u8; 32] = buf[5..37].try_into().unwrap_or([0u8; 32]);
+                if len >= 41 {
+                    let agent_pub_bytes: [u8; 32] = buf[9..41].try_into().unwrap_or([0u8; 32]);
                     let agent_public = PublicKey::from(agent_pub_bytes);
                     let collector_secret = EphemeralSecret::random_from_rng(OsRng);
                     let collector_public = PublicKey::from(&collector_secret);
@@ -476,7 +478,7 @@ impl SUDPEngine {
                         p.shared_secret = Some(*shared.as_bytes());
                     }
 
-                    let mut resp = Vec::with_capacity(37);
+                    let mut resp = Vec::with_capacity(41);
                     resp.push(FLAGS_RESP);
                     resp.extend_from_slice(&seq.to_be_bytes());
                     resp.extend_from_slice(collector_public.as_bytes());
@@ -487,23 +489,23 @@ impl SUDPEngine {
             FLAGS_AUTH_REQ => {
                 let handshake_start = Instant::now();
                 if self.online_peers.contains_key(&addr) {
-                    let mut resp = Vec::with_capacity(21);
+                    let mut resp = Vec::with_capacity(25);
                     resp.push(FLAGS_AUTH_RESP);
                     resp.extend_from_slice(&seq.to_be_bytes());
                     if let Some(peer) = self.online_peers.get_mut(&addr) {
                         let key = self.derive_cipher_key(&peer.shared_secret);
-                        let encrypted = self.encrypt_payload(&key, seq, &buf[0..5], &[0u8; 1]);
+                        let encrypted = self.encrypt_payload(&key, seq, &buf[0..9], &[0u8; 1]);
                         resp.extend_from_slice(&encrypted);
                     }
                     let _ = socket.send_to(&resp, addr).await;
                     return Ok(None);
                 }
 
-                if len >= 21 {
+                if len >= 25 {
                     if let Some(p) = self.pending_peers.get_mut(&addr) {
                         if let Some(shared) = p.shared_secret {
                             let key = self.derive_cipher_key(&shared);
-                            if let Some(decrypted) = self.decrypt_payload(&key, seq, &buf[0..5], &buf[5..len]) {
+                            if let Some(decrypted) = self.decrypt_payload(&key, seq, &buf[0..9], &buf[9..len]) {
                                 if !decrypted.is_empty() {
                                     let agent_token = String::from_utf8_lossy(&decrypted).to_string();
                                     let agent_token = agent_token.trim_matches(char::from(0)).to_string(); // Clean null padding
@@ -523,10 +525,11 @@ impl SUDPEngine {
                                                 socket: Arc::clone(socket),
                                                 last_activity: Instant::now(),
                                                 window_start_seq: 1,
-                                                next_send_seq: 1,
+                                                next_send_seq: 2,
                                                 last_recv_seq: seq,
                                                 recv_window_buffer: Vec::with_capacity(S_UDP_WINDOW_SIZE as usize),
                                                 expected_window_size: S_UDP_WINDOW_SIZE as u8,
+                                                last_acked_window: 2,
                                             });
                                         } else {
                                             let ip_addr = addr.ip();
@@ -564,13 +567,13 @@ impl SUDPEngine {
                                             }
 
                                             // 3. Encrypt and Send
-                                            let mut resp = Vec::with_capacity(5 + payload_data.len() + 16);
+                                            let mut resp = Vec::with_capacity(9 + payload_data.len() + 16);
                                             resp.push(FLAGS_AUTH_RESP);
                                             resp.extend_from_slice(&seq_c.to_be_bytes());
 
-                                            let mut ad = [0u8; 5];
+                                            let mut ad = [0u8; 9];
                                             ad[0] = FLAGS_AUTH_RESP;
-                                            ad[1..5].copy_from_slice(&seq_c.to_be_bytes());
+                                            ad[1..9].copy_from_slice(&seq_c.to_be_bytes());
 
                                             let encrypted = engine.encrypt_payload(&key_c, seq_c, &ad, &payload_data);
                                             resp.extend_from_slice(&encrypted);
@@ -596,7 +599,7 @@ impl SUDPEngine {
                     peer.last_activity = Instant::now();
                     let key = self.derive_cipher_key(&peer.shared_secret);
                     let ip_port = peer.ip_port.clone();
-                    if let Some(decrypted_payload) = self.decrypt_payload(&key, seq, &buf[0..5], &buf[5..len]) {
+                    if let Some(decrypted_payload) = self.decrypt_payload(&key, seq, &buf[0..9], &buf[9..len]) {
                         let actual_data = &decrypted_payload;
 
                         // 🛰️ DYNAMIC ACK TRIGGER: 
@@ -607,16 +610,16 @@ impl SUDPEngine {
 
                         if peer.recv_window_buffer.len() >= 1 {
                             // GENERATE AND SEND ENCRYPTED WINDOWED ACK (08)
-                            let mut ack_payload = Vec::with_capacity(peer.recv_window_buffer.len() * 4);
+                            let mut ack_payload = Vec::with_capacity(peer.recv_window_buffer.len() * 8);
                             for s in &peer.recv_window_buffer {
                                 ack_payload.extend_from_slice(&s.to_be_bytes());
                             }
                             
-                            let mut resp = Vec::with_capacity(5 + ack_payload.len() + 16);
+                            let mut resp = Vec::with_capacity(9 + ack_payload.len() + 16);
                             let ack_seq = seq; // Use current seq as anchor for ACK
-                            let mut ad = [0u8; 5];
+                            let mut ad = [0u8; 9];
                             ad[0] = FLAGS_ACK;
-                            ad[1..5].copy_from_slice(&ack_seq.to_be_bytes());
+                            ad[1..9].copy_from_slice(&ack_seq.to_be_bytes());
                             
                             let encrypted = self.encrypt_payload(&key, ack_seq, &ad, &ack_payload);
                             resp.extend_from_slice(&ad);
@@ -634,20 +637,22 @@ impl SUDPEngine {
                 // S-UDP Windowed ACK (Flag 08): Contains N encrypted sequence numbers
                 if let Some(mut peer) = self.online_peers.get_mut(&addr) {
                     let key = self.derive_cipher_key(&peer.shared_secret);
-                    if let Some(payload) = self.decrypt_payload(&key, seq, &buf[0..5], &buf[5..len]) {
-                        if payload.len() >= 4 && payload.len() % 4 == 0 {
+                    if let Some(payload) = self.decrypt_payload(&key, seq, &buf[0..9], &buf[9..len]) {
+                        if payload.len() >= 8 && payload.len() % 8 == 0 {
                             let mut confirmed = std::collections::HashSet::new();
                             let ip = addr.ip();
                             let now = Instant::now();
 
-                            let num_confirmed = payload.len() / 4;
+                            let num_confirmed = payload.len() / 8;
                             for i in 0..num_confirmed {
-                                let start = i * 4;
-                                let confirmed_seq = u32::from_be_bytes([
-                                    payload[start], payload[start+1], payload[start+2], payload[start+3]
-                                ]);
+                                let start = i * 8;
+                                let confirmed_seq = u64::from_be_bytes(payload[start..start+8].try_into().unwrap_or([0u8; 8]));
                                 confirmed.insert(confirmed_seq);
                                 self.global_acks.remove(&(addr, confirmed_seq));
+                                let win = confirmed_seq >> 7;
+                                if win > peer.last_acked_window {
+                                    peer.last_acked_window = win;
+                                }
                             }
 
                             // 📈 RTO CALIBRATION & SMOOTHING
@@ -760,7 +765,7 @@ impl SUDPEngine {
                 let windows_to_clear_acks = Vec::new();
                 
                 // Group pending packets by address to check windows
-                let mut addr_windows: std::collections::HashMap<SocketAddr, Vec<(u32, Instant, u32)>> = std::collections::HashMap::new();
+                let mut addr_windows: std::collections::HashMap<SocketAddr, Vec<(u64, Instant, u32)>> = std::collections::HashMap::new();
                 for entry in ac_re.iter() {
                     let ((addr, seq), pending) = entry.pair();
                     addr_windows.entry(*addr).or_default().push((*seq, pending.sent_at, pending.retries));
@@ -826,7 +831,7 @@ impl SUDPEngine {
 
                 for addr in windows_to_clear_acks {
                     // Clear their pending ACKs but DO NOT remove session
-                    let keys_to_remove: Vec<(SocketAddr, u32)> = ac_re.iter()
+                    let keys_to_remove: Vec<(SocketAddr, u64)> = ac_re.iter()
                         .filter(|e| e.key().0 == addr)
                         .map(|e| *e.key())
                         .collect();
@@ -842,76 +847,136 @@ impl SUDPEngine {
         hasher.finalize().into()
     }
 
-    fn encrypt_payload(&self, key: &[u8; 32], seq: u32, ad: &[u8], plaintext: &[u8]) -> Vec<u8> {
+    fn encrypt_payload(&self, key: &[u8; 32], seq: u64, ad: &[u8], plaintext: &[u8]) -> Vec<u8> {
         let cipher = ChaCha20Poly1305::new(key.into());
         let mut nonce_bytes = [0u8; 12];
-        nonce_bytes[0..4].copy_from_slice(&seq.to_be_bytes());
+        nonce_bytes[0..8].copy_from_slice(&seq.to_be_bytes());
         let nonce = Nonce::from_slice(&nonce_bytes);
         let payload = Payload { msg: plaintext, aad: ad };
         cipher.encrypt(nonce, payload).unwrap_or_default()
     }
 
-    fn decrypt_payload(&self, key: &[u8; 32], seq: u32, ad: &[u8], ciphertext: &[u8]) -> Option<Vec<u8>> {
+    fn decrypt_payload(&self, key: &[u8; 32], seq: u64, ad: &[u8], ciphertext: &[u8]) -> Option<Vec<u8>> {
         let cipher = ChaCha20Poly1305::new(key.into());
         let mut nonce_bytes = [0u8; 12];
-        nonce_bytes[0..4].copy_from_slice(&seq.to_be_bytes());
+        nonce_bytes[0..8].copy_from_slice(&seq.to_be_bytes());
         let nonce = Nonce::from_slice(&nonce_bytes);
         let payload = Payload { msg: ciphertext, aad: ad };
         cipher.decrypt(nonce, payload).ok()
     }
 
     pub async fn send_data(&self, addr: SocketAddr, data: &[u8]) -> Result<()> {
-        if let Some(mut peer) = self.online_peers.get_mut(&addr) {
-            let chunk_limit = S_UDP_MTU - 21; // -21 bytes total overhead
-            let total_chunks = (data.len() + chunk_limit - 1) / chunk_limit;
+        let chunk_limit = S_UDP_MTU - 25; // -25 bytes overhead
+        let total_chunks = (data.len() + chunk_limit - 1) / chunk_limit;
+        
+        let mut i = 0;
+        while i < total_chunks {
+            let start = i * chunk_limit;
+            let end = (start + chunk_limit).min(data.len());
+            let chunk_data = &data[start..end];
+
+            let packet_idx = (i % 32) as u64; 
             
-            for i in 0..total_chunks {
-                let start = i * chunk_limit;
-                let end = (start + chunk_limit).min(data.len());
-                let chunk_data = &data[start..end];
+            let mut throttle = false;
+            let mut throttled_window_check = 0;
 
-                let packet_idx = (i % 31) as u32; // max 31 packets per window
-                if packet_idx == 0 {
-                    peer.next_send_seq += 1; // Increment absolute window sequence
+            let mut seq = 0u64;
+            let check_addr = addr;
+            let mut packet: Vec<u8> = Vec::new();
+
+            // Check throttle BEFORE touching peer state
+            if packet_idx == 0 && i != 0 {
+                let (pending_window, last_acked) = if let Some(peer) = self.online_peers.get(&addr) {
+                    (peer.next_send_seq, peer.last_acked_window)
+                } else { return Ok(()); };
+
+                // Rule: At most 1 completed-but-unacked window behind the current.
+                // unacked = next_send_seq - last_acked_window
+                // If unacked >= 2, block until the oldest past window is confirmed.
+                let unacked = pending_window.saturating_sub(last_acked);
+                if unacked >= 2 {
+                    throttle = true;
+                    throttled_window_check = pending_window - 1;
                 }
-                let window_idx = peer.next_send_seq;
-
-                let is_end_stream: u32 = if i == total_chunks - 1 { 1 } else { 0 };
-                let is_end_window: u32 = if packet_idx == 30 || i == total_chunks - 1 { 1 } else { 0 };
-
-                // 📦 Compact bitmasking into single u32 seq generator
-                let seq: u32 = (is_end_stream << 31)
-                             | (is_end_window << 30)
-                             | ((packet_idx & 0x1F) << 25)
-                             | (window_idx & 0x1FFFFFF);
-                
-                let key = self.derive_cipher_key(&peer.shared_secret);
-                let mut ad = [0u8; 5];
-                ad[0] = FLAGS_DATA;
-                ad[1..5].copy_from_slice(&seq.to_be_bytes());
-
-                let encrypted = self.encrypt_payload(&key, seq, &ad, chunk_data);
-                let mut packet = Vec::with_capacity(5 + encrypted.len());
-                packet.extend_from_slice(&ad);
-                packet.extend_from_slice(&encrypted);
-
-                // Record timestamp if it's the last packet of this specific burst (Calibration stopwatch)
-                if i == total_chunks - 1 {
-                    if let Some(mut rep) = self.reputations.get_mut(&addr.ip()) {
-                        rep.last_window_sent_at = Some(Instant::now());
-                    }
-                }
-
-                self.global_acks.insert((addr, seq), PendingPacket {
-                    data: packet.clone(),
-                    sent_at: Instant::now(),
-                    retries: 0,
-                    last_gasp_tried: false,
-                });
-
-                peer.socket.send_to(&packet, addr).await?;
             }
+
+            if throttle {
+                loop {
+                    let acked = if let Some(peer) = self.online_peers.get(&addr) {
+                        peer.last_acked_window
+                    } else { return Ok(()); };
+                    if acked >= throttled_window_check { break; }
+                    tokio::time::sleep(Duration::from_millis(2)).await;
+                }
+                continue; // Re-enter loop, packet_idx==0 again, now increment safely
+            }
+
+            {
+                if let Some(mut peer) = self.online_peers.get_mut(&addr) {
+                    if packet_idx == 0 {
+                        peer.next_send_seq += 1;
+                    }
+                    let window_idx = peer.next_send_seq;
+
+                    let is_end_stream: u64 = if i == total_chunks - 1 { 1 } else { 0 };
+                    let is_end_window: u64 = if packet_idx == 31 || is_end_stream == 1 { 1 } else { 0 };
+
+                    seq = (window_idx << 7) 
+                        | ((packet_idx & 0x1F) << 2) 
+                        | (is_end_window << 1) 
+                        | is_end_stream;
+                    
+                    let key = self.derive_cipher_key(&peer.shared_secret);
+                    let mut ad = [0u8; 9];
+                    ad[0] = FLAGS_DATA;
+                    ad[1..9].copy_from_slice(&seq.to_be_bytes());
+
+                    let encrypted = self.encrypt_payload(&key, seq, &ad, chunk_data);
+                    packet = Vec::with_capacity(9 + encrypted.len());
+                    packet.extend_from_slice(&ad);
+                    packet.extend_from_slice(&encrypted);
+
+                    if is_end_window == 1 {
+                        if let Some(mut rep) = self.reputations.get_mut(&addr.ip()) {
+                            rep.last_window_sent_at = Some(Instant::now());
+                        }
+                    }
+                } else {
+                    return Ok(());
+                }
+            } // Lock released
+
+            self.global_acks.insert((check_addr, seq), PendingPacket {
+                data: packet.clone(),
+                sent_at: Instant::now(),
+                retries: 0,
+                last_gasp_tried: false,
+            });
+
+            let socket = if let Some(peer) = self.online_peers.get(&check_addr) {
+                Arc::clone(&peer.socket)
+            } else { return Ok(()); };
+
+            socket.send_to(&packet, check_addr).await?;
+
+            i += 1;
         }
+
+        // 🛑 STREAM DRAIN: Do not return until every packet for this stream is confirmed
+        // The background retransmit task handles resending lost packets.
+        // We just poll global_acks until nothing remains for this peer.
+        loop {
+            let mut has_pending = false;
+            for entry in self.global_acks.iter() {
+                if entry.key().0 == addr {
+                    has_pending = true;
+                    break;
+                }
+            }
+            if !has_pending { break; }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+
         Ok(())
     }
 }

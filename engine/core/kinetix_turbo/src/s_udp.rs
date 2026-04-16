@@ -154,15 +154,16 @@ struct OnlineSession {
     window_start_seq: u64,
     next_send_seq: u64,
     last_recv_seq: u64,
-    recv_window_buffer: Vec<u64>,
-    expected_window_size: u8,
+    // Receiver: per-window packet buffer
+    recv_window_packets: std::collections::HashMap<u64, std::collections::HashMap<u8, Vec<u8>>>,
+    // Receiver: window_idx → (last_pos, is_end_stream) — set when end_window packet arrives
+    recv_window_end_info: std::collections::HashMap<u64, (u8, bool)>,
     last_acked_window: u64,
 }
 
 pub enum SUDPEvent {
-    HandshakeStarted,
-    Authenticated,
-    Data(String, Vec<u8>),
+    Connected,
+    Data(Vec<u8>),
 }
 
 #[derive(Clone)]
@@ -209,13 +210,12 @@ impl SUDPEngine {
             let (len, peer_addr) = socket.recv_from(&mut buf).await?;
             if let Ok(Some(event)) = self.process_packet(&socket, peer_addr, &buf, len).await {
                 match event {
-                    SUDPEvent::Data(ip_port, data) => {
-                        println!(" [S-UDP] Data Received from {}: {} bytes", ip_port, data.len());
+                    SUDPEvent::Data(data) => {
+                        println!(" [S-UDP] Data Received: {} bytes", data.len());
                     }
-                    SUDPEvent::Authenticated => {
+                    SUDPEvent::Connected => {
                         println!(" [S-UDP] Session Established!");
                     }
-                    _ => {}
                 }
             }
         }
@@ -384,8 +384,8 @@ impl SUDPEngine {
             window_start_seq: 1,
             next_send_seq: 2,
             last_recv_seq: seq,
-            recv_window_buffer: Vec::new(),
-            expected_window_size: S_UDP_WINDOW_SIZE as u8,
+            recv_window_packets: std::collections::HashMap::new(),
+            recv_window_end_info: std::collections::HashMap::new(),
             last_acked_window: 2,
         });
 
@@ -492,7 +492,7 @@ impl SUDPEngine {
                     resp.extend_from_slice(&server_seq.to_be_bytes());
                     resp.extend_from_slice(collector_public.as_bytes());
                     let _ = socket.send_to(&resp, addr).await;
-                    return Ok(Some(SUDPEvent::HandshakeStarted));
+                    return Ok(None); // Internal event, no caller notification
                 }
             }
             FLAGS_AUTH_REQ => {
@@ -542,8 +542,8 @@ impl SUDPEngine {
                                                 window_start_seq: 1,
                                                 next_send_seq: 2,
                                                 last_recv_seq: seq,
-                                                recv_window_buffer: Vec::with_capacity(S_UDP_WINDOW_SIZE as usize),
-                                                expected_window_size: S_UDP_WINDOW_SIZE as u8,
+                                                recv_window_packets: std::collections::HashMap::new(),
+                                                recv_window_end_info: std::collections::HashMap::new(),
                                                 last_acked_window: 2,
                                             });
                                         } else {
@@ -600,7 +600,7 @@ impl SUDPEngine {
                                         });
 
                                         if auth_ok {
-                                            return Ok(Some(SUDPEvent::Authenticated));
+                                            return Ok(Some(SUDPEvent::Connected));
                                         }
                                     }
                                 }
@@ -615,36 +615,179 @@ impl SUDPEngine {
                     let key = self.derive_cipher_key(&peer.shared_secret);
                     let ip_port = peer.ip_port.clone();
                     if let Some(decrypted_payload) = self.decrypt_payload(&key, seq, &buf[0..9], &buf[9..len]) {
-                        let actual_data = &decrypted_payload;
 
-                        // 🛰️ DYNAMIC ACK TRIGGER: 
-                        // Track last received seq and buffer for the 08 ACK
+                        // 🔬 DECODE SEQ FIELDS
+                        let sender_dir  = seq & S_UDP_DIR_BIT;              // bit 63
+                        let window_idx  = (seq & S_UDP_SEQ_MASK) >> 7;      // bits 7+
+                        let packet_pos  = ((seq >> 2) & 0x1F) as u8;        // bits 6-2 (0-31)
+                        let end_window  = ((seq >> 1) & 1) == 1;            // bit 1
+                        let end_stream  = (seq & 1) == 1;                   // bit 0
+
                         peer.last_recv_seq = seq;
-                        peer.recv_window_buffer.push(seq);
-                        peer.expected_window_size = 1;
 
-                        if peer.recv_window_buffer.len() >= 1 {
-                            // GENERATE AND SEND ENCRYPTED WINDOWED ACK (08)
-                            let mut ack_payload = Vec::with_capacity(peer.recv_window_buffer.len() * 8);
-                            for s in &peer.recv_window_buffer {
-                                ack_payload.extend_from_slice(&s.to_be_bytes());
+                        // 📦 BUFFER: Store payload at (window_idx, packet_pos)
+                        peer.recv_window_packets
+                            .entry(window_idx)
+                            .or_insert_with(std::collections::HashMap::new)
+                            .insert(packet_pos, decrypted_payload.clone());
+
+                        // Record end info when end_window arrives
+                        if end_window {
+                            peer.recv_window_end_info.insert(window_idx, (packet_pos, end_stream));
+                        }
+
+                        // 🔍 TRIGGER 2: Detect older windows whose end_window was lost
+                        // If we see window W, any older window with packets but no end_info
+                        // must have been a full 32-packet window (the sender moved on).
+                        let older_windows: Vec<u64> = peer.recv_window_packets.keys()
+                            .filter(|w| **w < window_idx && !peer.recv_window_end_info.contains_key(w))
+                            .cloned()
+                            .collect();
+
+                        for old_w in &older_windows {
+                            // Sender moved past this window → it was full (31 = last pos)
+                            peer.recv_window_end_info.insert(*old_w, (31, false));
+
+                            // Build ACK for this old window immediately
+                            let mut old_lost: Vec<u64> = Vec::new();
+                            if let Some(old_data) = peer.recv_window_packets.get(old_w) {
+                                for p in 0..=31u8 {
+                                    if !old_data.contains_key(&p) {
+                                        let lost = sender_dir | (*old_w << 7) | ((p as u64) << 2);
+                                        old_lost.push(lost);
+                                    }
+                                }
                             }
-                            
-                            let mut resp = Vec::with_capacity(9 + ack_payload.len() + 16);
-                            let ack_seq = seq; // Use current seq as anchor for ACK
+
+                            let old_ack_payload = if old_lost.is_empty() {
+                                Vec::new()
+                            } else {
+                                let mut pl = Vec::with_capacity(old_lost.len() * 8);
+                                for s in &old_lost { pl.extend_from_slice(&s.to_be_bytes()); }
+                                pl
+                            };
+
+                            let my_dir: u64 = if peer.is_server { S_UDP_DIR_BIT } else { 0 };
+                            let old_ack_seq = my_dir | (*old_w << 7) | 0b01;
+                            let mut old_ad = [0u8; 9];
+                            old_ad[0] = FLAGS_ACK;
+                            old_ad[1..9].copy_from_slice(&old_ack_seq.to_be_bytes());
+
+                            let old_enc = self.encrypt_payload(&key, old_ack_seq, &old_ad, &old_ack_payload);
+                            let mut old_resp = Vec::with_capacity(9 + old_enc.len());
+                            old_resp.extend_from_slice(&old_ad);
+                            old_resp.extend_from_slice(&old_enc);
+                            let _ = socket.send_to(&old_resp, addr).await;
+                        }
+
+                        // 🛰️ ACK CHECK (TRIGGER 1): Trigger if we know this window's end
+                        let should_ack = peer.recv_window_end_info.contains_key(&window_idx);
+
+                        if should_ack {
+                            let (end_pos, is_end_stream) = *peer.recv_window_end_info.get(&window_idx).unwrap();
+                            let received = peer.recv_window_packets.get(&window_idx);
+
+                            // Find missing positions
+                            let mut lost_seqs: Vec<u64> = Vec::new();
+                            if let Some(window_data) = received {
+                                for p in 0..=end_pos {
+                                    if !window_data.contains_key(&p) {
+                                        // Reconstruct the full seq of the missing packet
+                                        // Missing packets are never the end_window one (we have that)
+                                        let lost = sender_dir | (window_idx << 7) | ((p as u64) << 2);
+                                        lost_seqs.push(lost);
+                                    }
+                                }
+                            }
+
+                            // Build ACK payload: empty = all good, list = lost seqs
+                            let ack_payload = if lost_seqs.is_empty() {
+                                Vec::new() // ✅ Full confirmation
+                            } else {
+                                // ⚠️ Partial: list lost packet seqs
+                                let mut payload = Vec::with_capacity(lost_seqs.len() * 8);
+                                for s in &lost_seqs {
+                                    payload.extend_from_slice(&s.to_be_bytes());
+                                }
+                                payload
+                            };
+
+                            // ACK seq: my direction | window_idx | 0b01 marker
+                            let my_dir: u64 = if peer.is_server { S_UDP_DIR_BIT } else { 0 };
+                            let ack_seq = my_dir | (window_idx << 7) | 0b01;
+
                             let mut ad = [0u8; 9];
                             ad[0] = FLAGS_ACK;
                             ad[1..9].copy_from_slice(&ack_seq.to_be_bytes());
-                            
+
                             let encrypted = self.encrypt_payload(&key, ack_seq, &ad, &ack_payload);
+                            let mut resp = Vec::with_capacity(9 + encrypted.len());
                             resp.extend_from_slice(&ad);
                             resp.extend_from_slice(&encrypted);
                             let _ = socket.send_to(&resp, addr).await;
-                            
-                            peer.recv_window_buffer.clear();
                         }
 
-                        return Ok(Some(SUDPEvent::Data(ip_port, actual_data.to_vec())));
+                        // 📤 STREAM REASSEMBLY: If end_stream seen + all windows complete
+                        // Check if we can return the full assembled payload
+                        let mut stream_end_window: Option<u64> = None;
+                        for (w_idx, (_end_pos, is_es)) in &peer.recv_window_end_info {
+                            if *is_es {
+                                stream_end_window = Some(*w_idx);
+                                break;
+                            }
+                        }
+
+                        if let Some(last_window) = stream_end_window {
+                            // Check all windows up to last_window are complete
+                            let mut all_complete = true;
+                            let mut window_ids: Vec<u64> = peer.recv_window_end_info.keys().cloned().collect();
+                            window_ids.sort();
+
+                            for w in &window_ids {
+                                if *w > last_window { break; }
+                                if let Some((ep, _)) = peer.recv_window_end_info.get(w) {
+                                    if let Some(data) = peer.recv_window_packets.get(w) {
+                                        for p in 0..=*ep {
+                                            if !data.contains_key(&p) {
+                                                all_complete = false;
+                                                break;
+                                            }
+                                        }
+                                    } else {
+                                        all_complete = false;
+                                    }
+                                } else {
+                                    all_complete = false;
+                                }
+                                if !all_complete { break; }
+                            }
+
+                            if all_complete {
+                                // 🏁 REASSEMBLE: Concatenate all chunks in order
+                                let mut full_payload = Vec::new();
+                                for w in &window_ids {
+                                    if *w > last_window { break; }
+                                    if let Some((ep, _)) = peer.recv_window_end_info.get(w) {
+                                        if let Some(data) = peer.recv_window_packets.get(w) {
+                                            for p in 0..=*ep {
+                                                if let Some(chunk) = data.get(&p) {
+                                                    full_payload.extend_from_slice(chunk);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // Clean up receiver buffers
+                                for w in &window_ids {
+                                    if *w > last_window { break; }
+                                    peer.recv_window_packets.remove(w);
+                                    peer.recv_window_end_info.remove(w);
+                                }
+
+                                return Ok(Some(SUDPEvent::Data(full_payload)));
+                            }
+                        }
                     }
                 }
             }

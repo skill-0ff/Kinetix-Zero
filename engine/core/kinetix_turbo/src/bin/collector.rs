@@ -168,14 +168,11 @@ async fn run_rudp_service(config_handle: Arc<RwLock<AppConfig>>, secrets: Arc<Op
         let (len, addr) = socket.recv_from(&mut buf).await?;
         match engine.process_packet(&socket, addr, &buf, len).await {
             Ok(Some(event)) => match event {
-                SUDPEvent::HandshakeStarted => {
-                    // Transparent logging if needed
+                SUDPEvent::Connected => {
+                    println!("Agent authenticated via S-UDP from {}", addr);
                 }
-                SUDPEvent::Authenticated(host_id) => {
-                    println!("Agent [{}] authenticated via S-UDP from {}", host_id, addr);
-                }
-                SUDPEvent::Data(_host_id, _payload) => {
-                    // Telemetry logic would go here
+                SUDPEvent::Data(payload) => {
+                    let _ = payload; // Telemetry logic would go here
                 }
             },
             Err(e) => eprintln!("Protocol error for {}: {}", addr, e),

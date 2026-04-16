@@ -48,7 +48,7 @@ const S_UDP_INITIAL_BLOCK_MINS: u32 = 3;
 const S_UDP_MAX_BLOCK_MINS: u32 = 1440; // 24 Hours
 
 #[derive(Clone)]
-struct IPReputation {
+struct PeerReputation {
     offenses: u32,
     blocked_until: Option<Instant>,
     handshake_count: u32,
@@ -61,12 +61,12 @@ struct IPReputation {
 
 #[derive(Clone)]
 #[derive(Zeroize, ZeroizeOnDrop)]
-struct SUDPSecurity {
+struct TokenGuard {
     masked_blob: Vec<u8>,
     random_mask: Vec<u8>,
 }
 
-impl SUDPSecurity {
+impl TokenGuard {
     pub fn new(mut raw_token: Vec<u8>) -> Self {
         let mut random_mask = Vec::with_capacity(raw_token.len());
         for _ in 0..raw_token.len() {
@@ -111,14 +111,14 @@ impl SUDPSecurity {
     }
 }
 
-struct SUDPIdentity {
-    agent: SUDPSecurity,
-    server: SUDPSecurity,
+struct SessionIdentity {
+    peer: TokenGuard,
+    server: TokenGuard,
 }
 
-impl SUDPIdentity {
-    pub fn verify_agent(&self, incoming: &[u8]) -> bool {
-        self.agent.verify(incoming)
+impl SessionIdentity {
+    pub fn verify_peer(&self, incoming: &[u8]) -> bool {
+        self.peer.verify(incoming)
     }
 
     pub fn reveal_server_proof(&self) -> Vec<u8> {
@@ -126,7 +126,7 @@ impl SUDPIdentity {
     }
 }
 
-struct PendingPacket {
+struct UnackedPacket {
     data: Vec<u8>,
     sent_at: Instant,
     retries: u32,
@@ -134,19 +134,19 @@ struct PendingPacket {
 }
 
 struct OutgoingHandshake {
-    token: SUDPSecurity,
+    token: TokenGuard,
     ephemeral_secret: EphemeralSecret,
     created_at: Instant,
 }
 
-struct PendingSession {
+struct HandshakeState {
     shared_secret: Option<[u8; 32]>,
     created_at: Instant,
 }
 
-struct OnlineSession {
+struct Session {
     shared_secret: [u8; 32],
-    ip_port: String,
+    
     socket: Arc<UdpSocket>,
     last_activity: Instant,
     is_server: bool,
@@ -161,28 +161,28 @@ struct OnlineSession {
     last_acked_window: u64,
 }
 
-pub enum SUDPEvent {
+pub enum Event {
     Connected,
     Data(Vec<u8>),
 }
 
 #[derive(Clone)]
-pub struct SUDPEngine {
-    pending_peers: Arc<DashMap<SocketAddr, PendingSession>>,
-    online_peers: Arc<DashMap<SocketAddr, OnlineSession>>,
-    global_acks: Arc<DashMap<(SocketAddr, u64), PendingPacket>>,
-    reputations: Arc<DashMap<IpAddr, IPReputation>>,
+pub struct Engine {
+    handshakes: Arc<DashMap<SocketAddr, HandshakeState>>,
+    sessions: Arc<DashMap<SocketAddr, Session>>,
+    unacked: Arc<DashMap<(SocketAddr, u64), UnackedPacket>>,
+    reputations: Arc<DashMap<IpAddr, PeerReputation>>,
     secrets: Arc<Option<Secrets>>,
-    identity: Arc<RwLock<Option<SUDPIdentity>>>,
+    identity: Arc<RwLock<Option<SessionIdentity>>>,
     pending_outbound: Arc<DashMap<SocketAddr, OutgoingHandshake>>,
 }
 
-impl SUDPEngine {
+impl Engine {
     pub fn new(secrets: Secrets) -> Self {
         Self {
-            pending_peers: Arc::new(DashMap::new()),
-            online_peers: Arc::new(DashMap::new()),
-            global_acks: Arc::new(DashMap::new()),
+            handshakes: Arc::new(DashMap::new()),
+            sessions: Arc::new(DashMap::new()),
+            unacked: Arc::new(DashMap::new()),
             reputations: Arc::new(DashMap::new()),
             secrets: Arc::new(Some(secrets)),
             identity: Arc::new(RwLock::new(None)),
@@ -190,14 +190,14 @@ impl SUDPEngine {
         }
     }
     
-    pub async fn listen(&self, addr: &str, agen_token: String, serv_token: String) -> Result<()> {
+    pub async fn listen(&self, addr: &str, peer_token: String, serv_token: String) -> Result<()> {
         let socket = Arc::new(UdpSocket::bind(addr).await?);
         
         {
             let mut id = self.identity.write().await;
-            *id = Some(SUDPIdentity {
-                agent: SUDPSecurity::new(agen_token.into_bytes()),
-                server: SUDPSecurity::new(serv_token.into_bytes()),
+            *id = Some(SessionIdentity {
+                peer: TokenGuard::new(peer_token.into_bytes()),
+                server: TokenGuard::new(serv_token.into_bytes()),
             });
         }
 
@@ -210,10 +210,10 @@ impl SUDPEngine {
             let (len, peer_addr) = socket.recv_from(&mut buf).await?;
             if let Ok(Some(event)) = self.process_packet(&socket, peer_addr, &buf, len).await {
                 match event {
-                    SUDPEvent::Data(data) => {
+                    Event::Data(data) => {
                         println!(" [S-UDP] Data Received: {} bytes", data.len());
                     }
-                    SUDPEvent::Connected => {
+                    Event::Connected => {
                         println!(" [S-UDP] Session Established!");
                     }
                 }
@@ -221,7 +221,7 @@ impl SUDPEngine {
         }
     }
 
-    pub async fn connect(&self, addr: &str, src_port: u16, agen_token: String, serv_token: String) -> Result<()> {
+    pub async fn connect(&self, addr: &str, src_port: u16, peer_token: String, serv_token: String) -> Result<()> {
         let local_addr = format!("0.0.0.0:{}", src_port);
         let socket = Arc::new(UdpSocket::bind(&local_addr).await?);
         let target_addr: SocketAddr = addr.parse()?;
@@ -229,9 +229,9 @@ impl SUDPEngine {
         // Setup Identity to verify Server Proof during handshake
         {
             let mut id = self.identity.write().await;
-            *id = Some(SUDPIdentity {
-                agent: SUDPSecurity::new(agen_token.clone().into_bytes()),
-                server: SUDPSecurity::new(serv_token.clone().into_bytes()),
+            *id = Some(SessionIdentity {
+                peer: TokenGuard::new(peer_token.clone().into_bytes()),
+                server: TokenGuard::new(serv_token.clone().into_bytes()),
             });
         }
 
@@ -289,7 +289,7 @@ impl SUDPEngine {
         let key = self.derive_cipher_key(&shared_key);
 
         // Stage 2: Send 03, Wait 04
-        let mut token_clear = agen_token.into_bytes();
+        let mut token_clear = peer_token.into_bytes();
         let plaintext = token_clear.clone();
         token_clear.zeroize();
 
@@ -362,7 +362,7 @@ impl SUDPEngine {
         }
 
         // Cache established RTO for immediate fast pipeline data bursts!
-        self.reputations.insert(target_addr.ip(), IPReputation {
+        self.reputations.insert(target_addr.ip(), PeerReputation {
             offenses: 0,
             blocked_until: None,
             handshake_count: 1,
@@ -374,9 +374,9 @@ impl SUDPEngine {
         });
 
         // Successfully Authenticated! Add to online peers
-        self.online_peers.insert(target_addr, OnlineSession {
+        self.sessions.insert(target_addr, Session {
             shared_secret: shared_key,
-            ip_port: target_addr.to_string(),
+            
             socket: Arc::clone(&socket),
             last_activity: Instant::now(),
             is_server: false, // Client side
@@ -407,7 +407,7 @@ impl SUDPEngine {
 
 
 
-    pub async fn process_packet(&self, socket: &Arc<UdpSocket>, addr: SocketAddr, buf: &[u8], len: usize) -> Result<Option<SUDPEvent>> {
+    pub async fn process_packet(&self, socket: &Arc<UdpSocket>, addr: SocketAddr, buf: &[u8], len: usize) -> Result<Option<Event>> {
         if len < 9 { return Ok(None); }
         
         let flags = buf[0];
@@ -452,7 +452,7 @@ impl SUDPEngine {
             }
         } else if flags == FLAGS_INIT || flags == FLAGS_AUTH_REQ {
             // New IP sending handshake
-            self.reputations.insert(ip, IPReputation {
+            self.reputations.insert(ip, PeerReputation {
                 offenses: 0,
                 blocked_until: None,
                 handshake_count: 1,
@@ -465,9 +465,9 @@ impl SUDPEngine {
         }
         
         // Ensure peer exists (Standard S-UDP Logic)
-        if !self.pending_peers.contains_key(&addr) && !self.online_peers.contains_key(&addr) {
+        if !self.handshakes.contains_key(&addr) && !self.sessions.contains_key(&addr) {
             if flags != FLAGS_INIT { return Ok(None); } // Ignore non-init for new peers
-            self.pending_peers.insert(addr, PendingSession {
+            self.handshakes.insert(addr, HandshakeState {
                 shared_secret: None,
                 created_at: Instant::now(),
             });
@@ -476,13 +476,13 @@ impl SUDPEngine {
         match flags {
             FLAGS_INIT => {
                 if len >= 41 {
-                    let agent_pub_bytes: [u8; 32] = buf[9..41].try_into().unwrap_or([0u8; 32]);
-                    let agent_public = PublicKey::from(agent_pub_bytes);
-                    let collector_secret = EphemeralSecret::random_from_rng(OsRng);
-                    let collector_public = PublicKey::from(&collector_secret);
-                    let shared = collector_secret.diffie_hellman(&agent_public);
+                    let remote_pub_bytes: [u8; 32] = buf[9..41].try_into().unwrap_or([0u8; 32]);
+                    let remote_public = PublicKey::from(remote_pub_bytes);
+                    let local_secret = EphemeralSecret::random_from_rng(OsRng);
+                    let local_public = PublicKey::from(&local_secret);
+                    let shared = local_secret.diffie_hellman(&remote_public);
                     
-                    if let Some(mut p) = self.pending_peers.get_mut(&addr) {
+                    if let Some(mut p) = self.handshakes.get_mut(&addr) {
                         p.shared_secret = Some(*shared.as_bytes());
                     }
 
@@ -490,19 +490,19 @@ impl SUDPEngine {
                     let mut resp = Vec::with_capacity(41);
                     resp.push(FLAGS_RESP);
                     resp.extend_from_slice(&server_seq.to_be_bytes());
-                    resp.extend_from_slice(collector_public.as_bytes());
+                    resp.extend_from_slice(local_public.as_bytes());
                     let _ = socket.send_to(&resp, addr).await;
                     return Ok(None); // Internal event, no caller notification
                 }
             }
             FLAGS_AUTH_REQ => {
                 let handshake_start = Instant::now();
-                if self.online_peers.contains_key(&addr) {
+                if self.sessions.contains_key(&addr) {
                     let server_seq = seq | S_UDP_DIR_BIT; // Server: bit 63 = 1
                     let mut resp = Vec::with_capacity(25);
                     resp.push(FLAGS_AUTH_RESP);
                     resp.extend_from_slice(&server_seq.to_be_bytes());
-                    if let Some(peer) = self.online_peers.get_mut(&addr) {
+                    if let Some(peer) = self.sessions.get_mut(&addr) {
                         let key = self.derive_cipher_key(&peer.shared_secret);
                         let mut ad_04 = [0u8; 9];
                         ad_04[0] = FLAGS_AUTH_RESP;
@@ -515,26 +515,26 @@ impl SUDPEngine {
                 }
 
                 if len >= 25 {
-                    if let Some(p) = self.pending_peers.get_mut(&addr) {
+                    if let Some(p) = self.handshakes.get_mut(&addr) {
                         if let Some(shared) = p.shared_secret {
                             let key = self.derive_cipher_key(&shared);
                             if let Some(decrypted) = self.decrypt_payload(&key, seq, &buf[0..9], &buf[9..len]) {
                                 if !decrypted.is_empty() {
-                                    let agent_token = String::from_utf8_lossy(&decrypted).to_string();
-                                    let agent_token = agent_token.trim_matches(char::from(0)).to_string(); // Clean null padding
+                                    let peer_token = String::from_utf8_lossy(&decrypted).to_string();
+                                    let peer_token = peer_token.trim_matches(char::from(0)).to_string(); // Clean null padding
 
                                     let mut auth_ok = false;
                                     if let Some(ref id) = *self.identity.read().await {
-                                        if id.verify_agent(agent_token.as_bytes()) { auth_ok = true; }
+                                        if id.verify_peer(peer_token.as_bytes()) { auth_ok = true; }
                                     }
 
                                     drop(p);
-                                    if let Some((_, p_data)) = self.pending_peers.remove(&addr) {
-                                        let peer_id = addr.to_string();
+                                    if let Some((_, p_data)) = self.handshakes.remove(&addr) {
+                                        
                                         if auth_ok {
-                                            self.online_peers.insert(addr, OnlineSession {
+                                            self.sessions.insert(addr, Session {
                                                 shared_secret: p_data.shared_secret.unwrap(),
-                                                ip_port: peer_id.clone(),
+                                                
                                                 socket: Arc::clone(socket),
                                                 last_activity: Instant::now(),
                                                 is_server: true, // Server side
@@ -600,7 +600,7 @@ impl SUDPEngine {
                                         });
 
                                         if auth_ok {
-                                            return Ok(Some(SUDPEvent::Connected));
+                                            return Ok(Some(Event::Connected));
                                         }
                                     }
                                 }
@@ -610,10 +610,10 @@ impl SUDPEngine {
                 }
             }
             FLAGS_DATA => {
-                if let Some(mut peer) = self.online_peers.get_mut(&addr) {
+                if let Some(mut peer) = self.sessions.get_mut(&addr) {
                     peer.last_activity = Instant::now();
                     let key = self.derive_cipher_key(&peer.shared_secret);
-                    let ip_port = peer.ip_port.clone();
+                    
                     if let Some(decrypted_payload) = self.decrypt_payload(&key, seq, &buf[0..9], &buf[9..len]) {
 
                         // 🔬 DECODE SEQ FIELDS
@@ -785,7 +785,7 @@ impl SUDPEngine {
                                     peer.recv_window_end_info.remove(w);
                                 }
 
-                                return Ok(Some(SUDPEvent::Data(full_payload)));
+                                return Ok(Some(Event::Data(full_payload)));
                             }
                         }
                     }
@@ -796,7 +796,7 @@ impl SUDPEngine {
                 // ACK seq = (window_idx << 7) | (ack_gen << 2) | 0b01
                 // Payload empty  = all packets received (full confirmation)
                 // Payload present = list of LOST packet seqs (8 bytes each)
-                if let Some(mut peer) = self.online_peers.get_mut(&addr) {
+                if let Some(mut peer) = self.sessions.get_mut(&addr) {
                     let key = self.derive_cipher_key(&peer.shared_secret);
                     if let Some(payload) = self.decrypt_payload(&key, seq, &buf[0..9], &buf[9..len]) {
                         let acked_window = (seq & S_UDP_SEQ_MASK) >> 7; // Strip direction bit
@@ -808,13 +808,13 @@ impl SUDPEngine {
 
                         if payload.is_empty() {
                             // ✅ FULL ACK: Every packet in this window was received
-                            // Clear all global_acks entries belonging to this window
-                            let keys_to_remove: Vec<(SocketAddr, u64)> = self.global_acks.iter()
+                            // Clear all unacked entries belonging to this window
+                            let keys_to_remove: Vec<(SocketAddr, u64)> = self.unacked.iter()
                                 .filter(|e| e.key().0 == addr && ((e.key().1 & S_UDP_SEQ_MASK) >> 7) == acked_window)
                                 .map(|e| *e.key())
                                 .collect();
                             for k in keys_to_remove {
-                                self.global_acks.remove(&k);
+                                self.unacked.remove(&k);
                             }
 
                             // Advance last_acked_window (unblocks sender throttle)
@@ -829,8 +829,8 @@ impl SUDPEngine {
                                 lost_seqs.insert(lost_seq);
                             }
 
-                            // Collect all global_acks entries for this window
-                            let window_entries: Vec<(SocketAddr, u64)> = self.global_acks.iter()
+                            // Collect all unacked entries for this window
+                            let window_entries: Vec<(SocketAddr, u64)> = self.unacked.iter()
                                 .filter(|e| e.key().0 == addr && ((e.key().1 & S_UDP_SEQ_MASK) >> 7) == acked_window)
                                 .map(|e| *e.key())
                                 .collect();
@@ -838,13 +838,13 @@ impl SUDPEngine {
                             // Clear confirmed packets (in this window but NOT in lost list)
                             for k in &window_entries {
                                 if !lost_seqs.contains(&k.1) {
-                                    self.global_acks.remove(k);
+                                    self.unacked.remove(k);
                                 }
                             }
 
                             // 🚤 Retransmit lost packets immediately
                             for lost_seq in &lost_seqs {
-                                if let Some(mut pending) = self.global_acks.get_mut(&(addr, *lost_seq)) {
+                                if let Some(mut pending) = self.unacked.get_mut(&(addr, *lost_seq)) {
                                     pending.retries += 1;
                                     pending.sent_at = Instant::now();
                                     let _ = socket.send_to(&pending.data, addr).await;
@@ -889,9 +889,9 @@ impl SUDPEngine {
     }
 
     pub async fn start_background_tasks(&self, socket: Arc<UdpSocket>) {
-        let pc_gc = Arc::clone(&self.pending_peers);
-        let oc_gc = Arc::clone(&self.online_peers);
-        let ac_gc = Arc::clone(&self.global_acks);
+        let pc_gc = Arc::clone(&self.handshakes);
+        let oc_gc = Arc::clone(&self.sessions);
+        let ac_gc = Arc::clone(&self.unacked);
         let rc_gc = Arc::clone(&self.reputations);
         
         // GC Task (Standardized Timeouts & Security)
@@ -906,18 +906,18 @@ impl SUDPEngine {
                 interval.tick().await;
                 let now = Instant::now();
                 pc_gc_c.retain(|_, p| p.created_at.elapsed().as_secs() < S_UDP_PENDING_TIMEOUT);
-                let mut dead_peers = Vec::new();
+                let mut expired = Vec::new();
                 oc_gc_c.retain(|addr, o| {
                     if o.last_activity.elapsed().as_secs() < S_UDP_SESSION_TIMEOUT {
                         true
                     } else {
-                        dead_peers.push(*addr);
+                        expired.push(*addr);
                         false
                     }
                 });
 
                 // 🧹 DEEP CLEAN: Wipe all pending packets for dead sessions
-                for addr in dead_peers {
+                for addr in expired {
                     ac_gc_c.retain(|(peer_addr, _), _| *peer_addr != addr);
                 }
                 
@@ -932,8 +932,8 @@ impl SUDPEngine {
         });
 
         // Retransmission Task (Windowed)
-        let ac_re = Arc::clone(&self.global_acks);
-        let oc_re = Arc::clone(&self.online_peers);
+        let ac_re = Arc::clone(&self.unacked);
+        let oc_re = Arc::clone(&self.sessions);
         let rc_re = Arc::clone(&self.reputations);
         let socket_re = Arc::clone(&socket);
         tokio::spawn(async move {
@@ -950,21 +950,21 @@ impl SUDPEngine {
                 }
 
                 // Check for 10-minute session kill (per peer)
-                let mut dead_peers: Vec<SocketAddr> = Vec::new();
+                let mut expired: Vec<SocketAddr> = Vec::new();
                 for entry in oc_re.iter() {
                     if let Some(recovery_start) = entry.recovery_started_at {
                         if recovery_start.elapsed().as_secs() >= 600 {
-                            dead_peers.push(*entry.key());
+                            expired.push(*entry.key());
                         }
                     }
                 }
-                for addr in &dead_peers {
+                for addr in &expired {
                     oc_re.remove(addr);
                     ac_re.retain(|(a, _), _| a != addr);
                 }
 
                 for ((addr, window_idx), packets) in &window_groups {
-                    if dead_peers.contains(addr) { continue; }
+                    if expired.contains(addr) { continue; }
 
                     // Adaptive RTO for this peer
                     let ip = addr.ip();
@@ -1062,12 +1062,12 @@ impl SUDPEngine {
             let mut throttled_window_check = 0;
 
             let mut seq = 0u64;
-            let check_addr = addr;
+            let target = addr;
             let mut packet: Vec<u8> = Vec::new();
 
             // Check throttle BEFORE touching peer state
             if packet_idx == 0 && i != 0 {
-                let (pending_window, last_acked) = if let Some(peer) = self.online_peers.get(&addr) {
+                let (pending_window, last_acked) = if let Some(peer) = self.sessions.get(&addr) {
                     (peer.next_send_seq, peer.last_acked_window)
                 } else { return Ok(()); };
 
@@ -1083,7 +1083,7 @@ impl SUDPEngine {
 
             if throttle {
                 loop {
-                    let acked = if let Some(peer) = self.online_peers.get(&addr) {
+                    let acked = if let Some(peer) = self.sessions.get(&addr) {
                         peer.last_acked_window
                     } else {
                         return Err(anyhow::anyhow!("Connection lost during send"));
@@ -1095,7 +1095,7 @@ impl SUDPEngine {
             }
 
             {
-                if let Some(mut peer) = self.online_peers.get_mut(&addr) {
+                if let Some(mut peer) = self.sessions.get_mut(&addr) {
                     if packet_idx == 0 {
                         peer.next_send_seq += 1;
                     }
@@ -1131,18 +1131,18 @@ impl SUDPEngine {
                 }
             } // Lock released
 
-            self.global_acks.insert((check_addr, seq), PendingPacket {
+            self.unacked.insert((target, seq), UnackedPacket {
                 data: packet.clone(),
                 sent_at: Instant::now(),
                 retries: 0,
                 last_gasp_tried: false,
             });
 
-            let socket = if let Some(peer) = self.online_peers.get(&check_addr) {
+            let socket = if let Some(peer) = self.sessions.get(&target) {
                 Arc::clone(&peer.socket)
             } else { return Err(anyhow::anyhow!("Connection lost during send")); };
 
-            socket.send_to(&packet, check_addr).await?;
+            socket.send_to(&packet, target).await?;
 
             i += 1;
         }
@@ -1152,7 +1152,7 @@ impl SUDPEngine {
         // If session dies (10-min recovery timeout), return error.
         loop {
             let mut has_pending = false;
-            for entry in self.global_acks.iter() {
+            for entry in self.unacked.iter() {
                 if entry.key().0 == addr {
                     has_pending = true;
                     break;
@@ -1161,7 +1161,7 @@ impl SUDPEngine {
             if !has_pending { break; }
 
             // Session killed by recovery timeout → return failure
-            if !self.online_peers.contains_key(&addr) {
+            if !self.sessions.contains_key(&addr) {
                 return Err(anyhow::anyhow!("Connection lost: recovery timeout"));
             }
 

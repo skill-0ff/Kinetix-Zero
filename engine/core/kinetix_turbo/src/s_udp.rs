@@ -36,6 +36,10 @@ const S_UDP_SESSION_TIMEOUT: u64 = 600; // 10 Minutes
 const S_UDP_WINDOW_SIZE: u32 = 32;
 const S_UDP_WINDOW_RETRIES: u32 = 5;
 
+// Direction Bit: Separates client/server nonce spaces
+const S_UDP_DIR_BIT: u64 = 1u64 << 63;
+const S_UDP_SEQ_MASK: u64 = !(1u64 << 63);
+
 // Security Constants
 const S_UDP_FLAG_MIN: u8 = 0x01;
 const S_UDP_FLAG_MAX: u8 = 0x08;
@@ -145,6 +149,8 @@ struct OnlineSession {
     ip_port: String,
     socket: Arc<UdpSocket>,
     last_activity: Instant,
+    is_server: bool,
+    recovery_started_at: Option<Instant>,
     window_start_seq: u64,
     next_send_seq: u64,
     last_recv_seq: u64,
@@ -232,7 +238,7 @@ impl SUDPEngine {
         // 🛡️ Initiate Handshake (Flag 01)
         let my_secret = EphemeralSecret::random_from_rng(OsRng);
         let my_public = PublicKey::from(&my_secret);
-        let seq = rand::random::<u64>();
+        let seq = rand::random::<u64>() & S_UDP_SEQ_MASK; // Client: bit 63 always 0
         
         let mut packet = Vec::with_capacity(41);
         packet.push(FLAGS_INIT);
@@ -253,7 +259,7 @@ impl SUDPEngine {
             if let Ok(Ok((len, peer_addr))) = tokio::time::timeout(dyn_rto, socket.recv_from(&mut buf)).await {
                 if peer_addr == target_addr && len >= 41 && buf[0] == FLAGS_RESP {
                     let recv_seq = u64::from_be_bytes(buf[1..9].try_into().unwrap_or([0u8; 8]));
-                    if recv_seq == seq {
+                    if (recv_seq & S_UDP_SEQ_MASK) == seq { // Strip server's direction bit
                         server_pub_bytes.copy_from_slice(&buf[9..41]);
                         stage1_success = true;
 
@@ -306,9 +312,9 @@ impl SUDPEngine {
             if let Ok(Ok((len, peer_addr))) = tokio::time::timeout(dyn_rto, socket.recv_from(&mut buf)).await {
                 if peer_addr == target_addr && len >= 9 && buf[0] == FLAGS_AUTH_RESP {
                     let recv_seq = u64::from_be_bytes(buf[1..9].try_into().unwrap_or([0u8; 8]));
-                    if recv_seq == seq {
-                        if let Some(decrypted) = self.decrypt_payload(&key, seq, &buf[0..9], &buf[9..len]) {
-                            // Check server proof
+                    if (recv_seq & S_UDP_SEQ_MASK) == seq { // Strip server's direction bit
+                        if let Some(decrypted) = self.decrypt_payload(&key, recv_seq, &buf[0..9], &buf[9..len]) {
+                            // Check server proof (decrypt with server's full seq including dir bit)
                             let expected_proof = if let Some(id) = self.identity.read().await.as_ref() {
                                 Some(id.reveal_server_proof())
                             } else { None };
@@ -373,6 +379,8 @@ impl SUDPEngine {
             ip_port: target_addr.to_string(),
             socket: Arc::clone(&socket),
             last_activity: Instant::now(),
+            is_server: false, // Client side
+            recovery_started_at: None,
             window_start_seq: 1,
             next_send_seq: 2,
             last_recv_seq: seq,
@@ -478,9 +486,10 @@ impl SUDPEngine {
                         p.shared_secret = Some(*shared.as_bytes());
                     }
 
+                    let server_seq = seq | S_UDP_DIR_BIT; // Server: bit 63 = 1
                     let mut resp = Vec::with_capacity(41);
                     resp.push(FLAGS_RESP);
-                    resp.extend_from_slice(&seq.to_be_bytes());
+                    resp.extend_from_slice(&server_seq.to_be_bytes());
                     resp.extend_from_slice(collector_public.as_bytes());
                     let _ = socket.send_to(&resp, addr).await;
                     return Ok(Some(SUDPEvent::HandshakeStarted));
@@ -489,12 +498,16 @@ impl SUDPEngine {
             FLAGS_AUTH_REQ => {
                 let handshake_start = Instant::now();
                 if self.online_peers.contains_key(&addr) {
+                    let server_seq = seq | S_UDP_DIR_BIT; // Server: bit 63 = 1
                     let mut resp = Vec::with_capacity(25);
                     resp.push(FLAGS_AUTH_RESP);
-                    resp.extend_from_slice(&seq.to_be_bytes());
+                    resp.extend_from_slice(&server_seq.to_be_bytes());
                     if let Some(peer) = self.online_peers.get_mut(&addr) {
                         let key = self.derive_cipher_key(&peer.shared_secret);
-                        let encrypted = self.encrypt_payload(&key, seq, &buf[0..9], &[0u8; 1]);
+                        let mut ad_04 = [0u8; 9];
+                        ad_04[0] = FLAGS_AUTH_RESP;
+                        ad_04[1..9].copy_from_slice(&server_seq.to_be_bytes());
+                        let encrypted = self.encrypt_payload(&key, server_seq, &ad_04, &[0u8; 1]);
                         resp.extend_from_slice(&encrypted);
                     }
                     let _ = socket.send_to(&resp, addr).await;
@@ -524,6 +537,8 @@ impl SUDPEngine {
                                                 ip_port: peer_id.clone(),
                                                 socket: Arc::clone(socket),
                                                 last_activity: Instant::now(),
+                                                is_server: true, // Server side
+                                                recovery_started_at: None,
                                                 window_start_seq: 1,
                                                 next_send_seq: 2,
                                                 last_recv_seq: seq,
@@ -545,7 +560,7 @@ impl SUDPEngine {
                                         let engine = self.clone();
                                         let socket = Arc::clone(socket);
                                         let addr_c = addr;
-                                        let seq_c = seq;
+                                        let seq_c = seq | S_UDP_DIR_BIT; // Server: bit 63 = 1
                                         let key_c = key;
 
                                         tokio::spawn(async move {
@@ -566,7 +581,7 @@ impl SUDPEngine {
                                                 tokio::time::sleep(Duration::from_millis(50) - elapsed).await;
                                             }
 
-                                            // 3. Encrypt and Send
+                                            // 3. Encrypt and Send (with server direction bit)
                                             let mut resp = Vec::with_capacity(9 + payload_data.len() + 16);
                                             resp.push(FLAGS_AUTH_RESP);
                                             resp.extend_from_slice(&seq_c.to_be_bytes());
@@ -634,71 +649,91 @@ impl SUDPEngine {
                 }
             }
             FLAGS_ACK => {
-                // S-UDP Windowed ACK (Flag 08): Contains N encrypted sequence numbers
+                // S-UDP Windowed ACK (Flag 08)
+                // ACK seq = (window_idx << 7) | (ack_gen << 2) | 0b01
+                // Payload empty  = all packets received (full confirmation)
+                // Payload present = list of LOST packet seqs (8 bytes each)
                 if let Some(mut peer) = self.online_peers.get_mut(&addr) {
                     let key = self.derive_cipher_key(&peer.shared_secret);
                     if let Some(payload) = self.decrypt_payload(&key, seq, &buf[0..9], &buf[9..len]) {
-                        if payload.len() >= 8 && payload.len() % 8 == 0 {
-                            let mut confirmed = std::collections::HashSet::new();
-                            let ip = addr.ip();
-                            let now = Instant::now();
+                        let acked_window = (seq & S_UDP_SEQ_MASK) >> 7; // Strip direction bit
+                        let ip = addr.ip();
+                        let now = Instant::now();
 
-                            let num_confirmed = payload.len() / 8;
-                            for i in 0..num_confirmed {
-                                let start = i * 8;
-                                let confirmed_seq = u64::from_be_bytes(payload[start..start+8].try_into().unwrap_or([0u8; 8]));
-                                confirmed.insert(confirmed_seq);
-                                self.global_acks.remove(&(addr, confirmed_seq));
-                                let win = confirmed_seq >> 7;
-                                if win > peer.last_acked_window {
-                                    peer.last_acked_window = win;
+                        // 🩹 ACK received — connection is alive, cancel recovery mode
+                        peer.recovery_started_at = None;
+
+                        if payload.is_empty() {
+                            // ✅ FULL ACK: Every packet in this window was received
+                            // Clear all global_acks entries belonging to this window
+                            let keys_to_remove: Vec<(SocketAddr, u64)> = self.global_acks.iter()
+                                .filter(|e| e.key().0 == addr && ((e.key().1 & S_UDP_SEQ_MASK) >> 7) == acked_window)
+                                .map(|e| *e.key())
+                                .collect();
+                            for k in keys_to_remove {
+                                self.global_acks.remove(&k);
+                            }
+
+                            // Advance last_acked_window (unblocks sender throttle)
+                            if acked_window > peer.last_acked_window {
+                                peer.last_acked_window = acked_window;
+                            }
+                        } else if payload.len() % 8 == 0 {
+                            // ⚠️ PARTIAL ACK: Payload lists the LOST packet seqs
+                            let mut lost_seqs = std::collections::HashSet::new();
+                            for chunk in payload.chunks_exact(8) {
+                                let lost_seq = u64::from_be_bytes(chunk.try_into().unwrap_or([0u8; 8]));
+                                lost_seqs.insert(lost_seq);
+                            }
+
+                            // Collect all global_acks entries for this window
+                            let window_entries: Vec<(SocketAddr, u64)> = self.global_acks.iter()
+                                .filter(|e| e.key().0 == addr && ((e.key().1 & S_UDP_SEQ_MASK) >> 7) == acked_window)
+                                .map(|e| *e.key())
+                                .collect();
+
+                            // Clear confirmed packets (in this window but NOT in lost list)
+                            for k in &window_entries {
+                                if !lost_seqs.contains(&k.1) {
+                                    self.global_acks.remove(k);
                                 }
                             }
 
-                            // 📈 RTO CALIBRATION & SMOOTHING
-                            if let Some(mut rep) = self.reputations.get_mut(&ip) {
-                                if let Some(last_sent) = rep.last_window_sent_at {
-                                    let sample = now.duration_since(last_sent);
-                                    
-                                    if let Some(srtt) = rep.srtt {
-                                        // Continuous Smoothing (Alpha=1/8, Beta=1/4)
-                                        let delta = if sample > srtt { sample - srtt } else { srtt - sample };
-                                        rep.rttvar = (rep.rttvar.mul_f32(0.75)) + (delta.mul_f32(0.25));
-                                        rep.srtt = Some((srtt.mul_f32(0.875)) + (sample.mul_f32(0.125)));
-                                    } else {
-                                        // First Window Bootstrap
-                                        rep.srtt = Some(sample);
-                                        rep.rttvar = sample / 2;
-                                    }
-                                    
-                                    // RTO = SRTT + 4 * RTTVAR
-                                    let new_rto = rep.srtt.unwrap() + (rep.rttvar * 4);
-                                    rep.current_rto = new_rto.clamp(
-                                        Duration::from_millis(S_UDP_RTO_MIN),
-                                        Duration::from_millis(S_UDP_RTO_MAX)
-                                    );
-                                    rep.last_window_sent_at = None; // Reset for next window
+                            // 🚤 Retransmit lost packets immediately
+                            for lost_seq in &lost_seqs {
+                                if let Some(mut pending) = self.global_acks.get_mut(&(addr, *lost_seq)) {
+                                    pending.retries += 1;
+                                    pending.sent_at = Instant::now();
+                                    let _ = socket.send_to(&pending.data, addr).await;
                                 }
                             }
 
-                            // 🏎️ FAST SELECTIVE RETRANSMIT: 
-                            // Audit our current window for gaps and resend them instantly!
-                            let w_start = peer.window_start_seq;
-                            for s in w_start..(w_start + S_UDP_WINDOW_SIZE) {
-                                if !confirmed.contains(&s) {
-                                    if let Some(mut pending) = self.global_acks.get_mut(&(addr, s)) {
-                                        // Still in global_acks means it was sent but not confirmed in this 08
-                                        pending.retries += 1;
-                                        pending.sent_at = Instant::now();
-                                        let _ = socket.send_to(&pending.data, addr).await;
-                                    }
-                                }
-                            }
+                            // last_acked_window NOT advanced — window still incomplete
+                        }
 
-                            // Advance window if the lowest seq is confirmed
-                            while !self.global_acks.contains_key(&(addr, peer.window_start_seq)) && 
-                                  peer.window_start_seq <= confirmed.iter().max().cloned().unwrap_or(0) {
-                                peer.window_start_seq += 1;
+                        // 📈 RTO CALIBRATION (valid for both full and partial ACKs)
+                        if let Some(mut rep) = self.reputations.get_mut(&ip) {
+                            if let Some(last_sent) = rep.last_window_sent_at {
+                                let sample = now.duration_since(last_sent);
+                                
+                                if let Some(srtt) = rep.srtt {
+                                    // Continuous Smoothing (Alpha=1/8, Beta=1/4)
+                                    let delta = if sample > srtt { sample - srtt } else { srtt - sample };
+                                    rep.rttvar = (rep.rttvar.mul_f32(0.75)) + (delta.mul_f32(0.25));
+                                    rep.srtt = Some((srtt.mul_f32(0.875)) + (sample.mul_f32(0.125)));
+                                } else {
+                                    // First Window Bootstrap
+                                    rep.srtt = Some(sample);
+                                    rep.rttvar = sample / 2;
+                                }
+                                
+                                // RTO = SRTT + 4 * RTTVAR
+                                let new_rto = rep.srtt.unwrap() + (rep.rttvar * 4);
+                                rep.current_rto = new_rto.clamp(
+                                    Duration::from_millis(S_UDP_RTO_MIN),
+                                    Duration::from_millis(S_UDP_RTO_MAX)
+                                );
+                                rep.last_window_sent_at = None; // Reset for next window
                             }
                         }
                     }
@@ -762,17 +797,33 @@ impl SUDPEngine {
             loop {
                 tokio::time::sleep(Duration::from_millis(S_UDP_RETRANSMIT_MS)).await;
                 
-                let windows_to_clear_acks = Vec::new();
-                
-                // Group pending packets by address to check windows
-                let mut addr_windows: std::collections::HashMap<SocketAddr, Vec<(u64, Instant, u32)>> = std::collections::HashMap::new();
+                // Group pending packets by (addr, window_idx) — scoped retransmit
+                let mut window_groups: std::collections::HashMap<(SocketAddr, u64), Vec<(u64, Instant, u32, bool)>> = std::collections::HashMap::new();
                 for entry in ac_re.iter() {
                     let ((addr, seq), pending) = entry.pair();
-                    addr_windows.entry(*addr).or_default().push((*seq, pending.sent_at, pending.retries));
+                    let window_idx = (*seq & S_UDP_SEQ_MASK) >> 7;
+                    window_groups.entry((*addr, window_idx)).or_default()
+                        .push((*seq, pending.sent_at, pending.retries, pending.last_gasp_tried));
                 }
 
-                for (addr, packets) in addr_windows {
-                    // Check if there is an adaptive RTO for this IP
+                // Check for 10-minute session kill (per peer)
+                let mut dead_peers: Vec<SocketAddr> = Vec::new();
+                for entry in oc_re.iter() {
+                    if let Some(recovery_start) = entry.recovery_started_at {
+                        if recovery_start.elapsed().as_secs() >= 600 {
+                            dead_peers.push(*entry.key());
+                        }
+                    }
+                }
+                for addr in &dead_peers {
+                    oc_re.remove(addr);
+                    ac_re.retain(|(a, _), _| a != addr);
+                }
+
+                for ((addr, window_idx), packets) in &window_groups {
+                    if dead_peers.contains(addr) { continue; }
+
+                    // Adaptive RTO for this peer
                     let ip = addr.ip();
                     let rto = if let Some(rep) = rc_re.get(&ip) {
                         rep.current_rto
@@ -780,62 +831,49 @@ impl SUDPEngine {
                         Duration::from_millis(S_UDP_RTO_DEFAULT)
                     };
 
-                    // Check for "Last Gasp" Trigger (8 minutes of silence)
-                    let mut trigger_gasp = false;
-                    if let Some(peer) = oc_re.get(&addr) {
-                        if peer.last_activity.elapsed().as_secs() >= 480 {
-                            trigger_gasp = true;
-                        }
-                    }
+                    // Check timeout from LATEST sent_at in this window
+                    // (= when we finished sending/resending this window)
+                    let latest_sent = packets.iter().map(|p| p.1).max().unwrap();
+                    if latest_sent.elapsed() < rto { continue; }
 
-                    // If any packet in the window is older than its current RTO, we re-handle the whole window
-                    if let Some(oldest) = packets.iter().min_by_key(|p| p.1) {
-                        if oldest.1.elapsed() >= rto {
-                            let retry_count = oldest.2;
-                            
-                            if retry_count < S_UDP_WINDOW_RETRIES {
-                                // 🚤 NORMAL BURST: RESEND ALL PACKETS IN THIS WINDOW
-                                for mut entry in ac_re.iter_mut() {
-                                    let ((a, _), mut pending) = entry.pair_mut();
-                                    if *a == addr && pending.retries < S_UDP_WINDOW_RETRIES {
-                                        pending.retries += 1;
-                                        pending.sent_at = Instant::now();
-                                        let _ = socket_re.send_to(&pending.data, addr).await;
-                                    }
+                    let min_retries = packets.iter().map(|p| p.2).min().unwrap_or(0);
+                    let any_last_gasp = packets.iter().any(|p| p.3);
+
+                    // Enter recovery mode on first retry
+                    if let Some(mut peer) = oc_re.get_mut(addr) {
+                        if peer.recovery_started_at.is_none() {
+                            peer.recovery_started_at = Some(Instant::now());
+                        }
+
+                        let recovery_elapsed = peer.recovery_started_at
+                            .map(|t| t.elapsed().as_secs())
+                            .unwrap_or(0);
+
+                        if min_retries < S_UDP_WINDOW_RETRIES {
+                            // 🚤 NORMAL RETRY: Resend only THIS window
+                            for mut entry in ac_re.iter_mut() {
+                                let ((a, s), pending) = entry.pair_mut();
+                                let w = (*s & S_UDP_SEQ_MASK) >> 7;
+                                if *a == *addr && w == *window_idx && pending.retries < S_UDP_WINDOW_RETRIES {
+                                    pending.retries += 1;
+                                    pending.sent_at = Instant::now();
+                                    let _ = socket_re.send_to(&pending.data, *addr).await;
                                 }
-                            } else if retry_count < 100 {
-                                // 🛑 STAGE 1: PARKED (After 5 failures)
-                                for mut entry in ac_re.iter_mut() {
-                                    let ((a, _), mut pending) = entry.pair_mut();
-                                    if *a == addr && pending.retries == S_UDP_WINDOW_RETRIES {
-                                        pending.retries = 100; // Mark as parked
-                                    }
+                            }
+                        } else if recovery_elapsed >= 480 && !any_last_gasp {
+                            // ⚡ LAST GASP (8 minutes): Resend ALL unACKed windows for this peer
+                            for mut entry in ac_re.iter_mut() {
+                                let ((a, _), pending) = entry.pair_mut();
+                                if *a == *addr {
+                                    pending.retries = 0;
+                                    pending.last_gasp_tried = true;
+                                    pending.sent_at = Instant::now();
+                                    let _ = socket_re.send_to(&pending.data, *addr).await;
                                 }
-                            } else if retry_count == 100 && trigger_gasp {
-                                // ⚡ STAGE 2: THE LAST GASP (At 8 minutes)
-                                for mut entry in ac_re.iter_mut() {
-                                    let ((a, _), mut pending) = entry.pair_mut();
-                                    if *a == addr && pending.retries == 100 && !pending.last_gasp_tried {
-                                        pending.retries = 0; // Reset for final 5 tries
-                                        pending.last_gasp_tried = true;
-                                        pending.sent_at = Instant::now();
-                                        let _ = socket_re.send_to(&pending.data, addr).await;
-                                    }
-                                }
-                            } else if retry_count == S_UDP_WINDOW_RETRIES && trigger_gasp {
-                                // STAGE 3: FINAL FAILURE (Wait for 10m hard GC)
                             }
                         }
+                        // else: PARKED — retries >= 5, waiting for 8-min mark or ACK
                     }
-                }
-
-                for addr in windows_to_clear_acks {
-                    // Clear their pending ACKs but DO NOT remove session
-                    let keys_to_remove: Vec<(SocketAddr, u64)> = ac_re.iter()
-                        .filter(|e| e.key().0 == addr)
-                        .map(|e| *e.key())
-                        .collect();
-                    for k in keys_to_remove { ac_re.remove(&k); }
                 }
             }
         });
@@ -904,7 +942,9 @@ impl SUDPEngine {
                 loop {
                     let acked = if let Some(peer) = self.online_peers.get(&addr) {
                         peer.last_acked_window
-                    } else { return Ok(()); };
+                    } else {
+                        return Err(anyhow::anyhow!("Connection lost during send"));
+                    };
                     if acked >= throttled_window_check { break; }
                     tokio::time::sleep(Duration::from_millis(2)).await;
                 }
@@ -917,11 +957,13 @@ impl SUDPEngine {
                         peer.next_send_seq += 1;
                     }
                     let window_idx = peer.next_send_seq;
+                    let dir_bit: u64 = if peer.is_server { S_UDP_DIR_BIT } else { 0 };
 
                     let is_end_stream: u64 = if i == total_chunks - 1 { 1 } else { 0 };
                     let is_end_window: u64 = if packet_idx == 31 || is_end_stream == 1 { 1 } else { 0 };
 
-                    seq = (window_idx << 7) 
+                    seq = dir_bit
+                        | (window_idx << 7) 
                         | ((packet_idx & 0x1F) << 2) 
                         | (is_end_window << 1) 
                         | is_end_stream;
@@ -942,7 +984,7 @@ impl SUDPEngine {
                         }
                     }
                 } else {
-                    return Ok(());
+                    return Err(anyhow::anyhow!("Connection lost during send"));
                 }
             } // Lock released
 
@@ -955,7 +997,7 @@ impl SUDPEngine {
 
             let socket = if let Some(peer) = self.online_peers.get(&check_addr) {
                 Arc::clone(&peer.socket)
-            } else { return Ok(()); };
+            } else { return Err(anyhow::anyhow!("Connection lost during send")); };
 
             socket.send_to(&packet, check_addr).await?;
 
@@ -964,7 +1006,7 @@ impl SUDPEngine {
 
         // 🛑 STREAM DRAIN: Do not return until every packet for this stream is confirmed
         // The background retransmit task handles resending lost packets.
-        // We just poll global_acks until nothing remains for this peer.
+        // If session dies (10-min recovery timeout), return error.
         loop {
             let mut has_pending = false;
             for entry in self.global_acks.iter() {
@@ -974,6 +1016,12 @@ impl SUDPEngine {
                 }
             }
             if !has_pending { break; }
+
+            // Session killed by recovery timeout → return failure
+            if !self.online_peers.contains_key(&addr) {
+                return Err(anyhow::anyhow!("Connection lost: recovery timeout"));
+            }
+
             tokio::time::sleep(Duration::from_millis(5)).await;
         }
 

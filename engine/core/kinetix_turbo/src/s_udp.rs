@@ -150,6 +150,7 @@ struct HandshakeState {
 
 struct Session {
     shared_secret: [u8; 32],
+    cipher_key: [u8; 32],
     
     socket: Arc<UdpSocket>,
     last_activity: Instant,
@@ -163,11 +164,44 @@ struct Session {
     // Receiver: window_idx → (last_pos, is_end_stream) — set when end_window packet arrives
     recv_window_end_info: std::collections::HashMap<u64, (u8, bool)>,
     last_acked_window: u64,
+    // Receiver: highest window fully reassembled (duplicate rejection)
+    recv_complete_window: u64,
+    // Receiver: per-stream metrics (reset after each reassembly)
+    recv_stream_start: Option<Instant>,
+    recv_partial_acks: u32,
+    recv_duplicates: u32,
+    // Session-level metrics (cumulative, never reset)
+    created_at: Instant,
+    total_bytes_sent: usize,
+    total_bytes_received: usize,
+    streams_sent: u32,
+    streams_received: u32,
 }
 
 pub enum Event {
     Connected,
-    Data(Vec<u8>),
+    Data(RecvReport),
+}
+
+/// Final report returned with reassembled payload on receive
+#[derive(Debug, Clone)]
+pub struct RecvReport {
+    /// The reassembled payload
+    pub payload: Vec<u8>,
+    /// Total payload size in bytes
+    pub total_bytes: usize,
+    /// Total number of chunks reassembled
+    pub total_chunks: usize,
+    /// Number of sliding windows used
+    pub windows_used: u64,
+    /// Time from first packet to full reassembly
+    pub elapsed: Duration,
+    /// Number of partial ACKs (gap reports) sent during receive
+    pub partial_acks_sent: u32,
+    /// Number of duplicate packets rejected
+    pub duplicates_rejected: u32,
+    /// Effective throughput in bytes per second
+    pub throughput_bps: f64,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -205,6 +239,35 @@ pub struct SendReport {
     pub drain_elapsed: Duration,
     pub throttle_stalls: u32,
     pub throughput_bps: f64,
+}
+
+/// Snapshot of a live session — returned by `get_session_info()` and `list_sessions()`
+#[derive(Debug, Clone)]
+pub struct SessionInfo {
+    /// Remote peer address
+    pub peer_addr: SocketAddr,
+    /// Role in this session
+    pub role: SessionRole,
+    /// When the session was established (as Duration since creation)
+    pub uptime: Duration,
+    /// Time since last send or receive activity
+    pub idle: Duration,
+    /// Total bytes sent across all streams in this session
+    pub total_bytes_sent: usize,
+    /// Total bytes received across all streams in this session
+    pub total_bytes_received: usize,
+    /// Number of completed send_data calls
+    pub streams_sent: u32,
+    /// Number of fully reassembled receive streams
+    pub streams_received: u32,
+    /// Whether the session is in recovery mode
+    pub in_recovery: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum SessionRole {
+    Client,
+    Server,
 }
 
 #[derive(Clone)]
@@ -251,8 +314,13 @@ impl Engine {
             let (len, peer_addr) = socket.recv_from(&mut buf).await?;
             if let Ok(Some(event)) = self.process_packet(&socket, peer_addr, &buf, len).await {
                 match event {
-                    Event::Data(data) => {
-                        println!(" [S-UDP] Data Received: {} bytes", data.len());
+                    Event::Data(report) => {
+                        println!(" [S-UDP] Data Received: {} bytes in {:.1}ms ({} windows, {} chunks)",
+                            report.total_bytes,
+                            report.elapsed.as_secs_f64() * 1000.0,
+                            report.windows_used,
+                            report.total_chunks,
+                        );
                     }
                     Event::Connected => {
                         println!(" [S-UDP] Session Established!");
@@ -414,8 +482,10 @@ impl Engine {
         });
 
         // Successfully Authenticated! Add to online peers
+        let ck = self.derive_cipher_key(&shared_key);
         self.sessions.insert(target_addr, Session {
             shared_secret: shared_key,
+            cipher_key: ck,
             
             socket: Arc::clone(&socket),
             last_activity: Instant::now(),
@@ -427,6 +497,15 @@ impl Engine {
             recv_window_packets: std::collections::HashMap::new(),
             recv_window_end_info: std::collections::HashMap::new(),
             last_acked_window: 0,
+            recv_complete_window: 0,
+            recv_stream_start: None,
+            recv_partial_acks: 0,
+            recv_duplicates: 0,
+            created_at: Instant::now(),
+            total_bytes_sent: 0,
+            total_bytes_received: 0,
+            streams_sent: 0,
+            streams_received: 0,
         });
 
         println!(" [S-UDP] Connection Established with: {}", target_addr);
@@ -543,11 +622,10 @@ impl Engine {
                     resp.push(SUDP_AUTH_RESP);
                     resp.extend_from_slice(&server_seq.to_be_bytes());
                     if let Some(peer) = self.sessions.get_mut(&addr) {
-                        let key = self.derive_cipher_key(&peer.shared_secret);
                         let mut ad_04 = [0u8; 9];
                         ad_04[0] = SUDP_AUTH_RESP;
                         ad_04[1..9].copy_from_slice(&server_seq.to_be_bytes());
-                        let encrypted = self.encrypt_payload(&key, SUDP_DIR_BIT, &ad_04, &[0u8; 1])?; // Nonce DIR_BIT: reserved for server handshake
+                        let encrypted = self.encrypt_payload(&peer.cipher_key, SUDP_DIR_BIT, &ad_04, &[0u8; 1])?; // Nonce DIR_BIT: reserved for server handshake
                         resp.extend_from_slice(&encrypted);
                     }
                     let _ = socket.send_to(&resp, addr).await;
@@ -572,8 +650,11 @@ impl Engine {
                                     if let Some((_, handshake_data)) = self.handshakes.remove(&addr) {
                                         
                                         if auth_ok {
+                                            let ss = handshake_data.shared_secret.unwrap();
+                                            let ck = self.derive_cipher_key(&ss);
                                             self.sessions.insert(addr, Session {
-                                                shared_secret: handshake_data.shared_secret.unwrap(),
+                                                shared_secret: ss,
+                                                cipher_key: ck,
                                                 
                                                 socket: Arc::clone(socket),
                                                 last_activity: Instant::now(),
@@ -585,6 +666,15 @@ impl Engine {
                                                 recv_window_packets: std::collections::HashMap::new(),
                                                 recv_window_end_info: std::collections::HashMap::new(),
                                                 last_acked_window: 0,
+                                                recv_complete_window: 0,
+                                                recv_stream_start: None,
+                                                recv_partial_acks: 0,
+                                                recv_duplicates: 0,
+                                                created_at: Instant::now(),
+                                                total_bytes_sent: 0,
+                                                total_bytes_received: 0,
+                                                streams_sent: 0,
+                                                streams_received: 0,
                                             });
                                         } else {
                                             let ip_addr = addr.ip();
@@ -655,9 +745,8 @@ impl Engine {
             SUDP_DATA => {
                 if let Some(mut peer) = self.sessions.get_mut(&addr) {
                     peer.last_activity = Instant::now();
-                    let key = self.derive_cipher_key(&peer.shared_secret);
                     
-                    if let Some(decrypted_payload) = self.decrypt_payload(&key, seq, &buf[0..9], &buf[9..len]) {
+                    if let Some(decrypted_payload) = self.decrypt_payload(&peer.cipher_key, seq, &buf[0..9], &buf[9..len]) {
 
                         // 🔬 DECODE SEQ FIELDS
                         let sender_dir  = seq & SUDP_DIR_BIT;              // bit 63
@@ -666,39 +755,56 @@ impl Engine {
                         let end_window  = ((seq >> 1) & 1) == 1;            // bit 1
                         let end_stream  = (seq & 1) == 1;                   // bit 0
 
+                        // 🛡️ Direction validation: sender must be the opposite side
+                        let expected_dir = if peer.is_server { 0u64 } else { SUDP_DIR_BIT };
+                        if sender_dir != expected_dir { return Ok(None); }
+
+                        // 🛡️ Duplicate rejection: skip packets for already-reassembled windows
+                        if window_idx <= peer.recv_complete_window {
+                            peer.recv_duplicates += 1;
+                            return Ok(None);
+                        }
+
+                        // ⏱️ Start timing on first packet of a new stream
+                        if peer.recv_stream_start.is_none() {
+                            peer.recv_stream_start = Some(Instant::now());
+                        }
+
                         peer.last_recv_seq = seq;
 
                         // 📦 BUFFER: Store payload at (window_idx, packet_pos)
                         peer.recv_window_packets
                             .entry(window_idx)
                             .or_insert_with(std::collections::HashMap::new)
-                            .insert(packet_pos, decrypted_payload.clone());
+                            .insert(packet_pos, decrypted_payload); // owned, no clone needed
 
                         // Record end info when end_window arrives
                         if end_window {
                             peer.recv_window_end_info.insert(window_idx, (packet_pos, end_stream));
                         }
 
-                        // 🔍 TRIGGER 2: Detect older windows whose end_window was lost
-                        // If we see window W, any older window with packets but no end_info
-                        // must have been a full 32-packet window (the sender moved on).
-                        let older_windows: Vec<u64> = peer.recv_window_packets.keys()
-                            .filter(|w| **w < window_idx && !peer.recv_window_end_info.contains_key(w))
-                            .cloned()
-                            .collect();
+                        // 🔍 TRIGGER 2: Detect older windows with missing end_info
+                        // Check the CONTIGUOUS range from our lowest buffered window to current.
+                        // This catches 100%-lost windows that have zero packets in our buffer.
+                        let min_window = peer.recv_window_packets.keys()
+                            .chain(peer.recv_window_end_info.keys())
+                            .min().copied().unwrap_or(window_idx);
 
-                        for old_w in &older_windows {
+                        let my_dir: u64 = if peer.is_server { SUDP_DIR_BIT } else { 0 };
+
+                        for old_w in min_window..window_idx {
+                            if peer.recv_window_end_info.contains_key(&old_w) { continue; }
+
                             // Sender moved past this window → it was full (31 = last pos)
-                            peer.recv_window_end_info.insert(*old_w, (31, false));
+                            peer.recv_window_end_info.insert(old_w, (31, false));
 
-                            // Build ACK for this old window immediately
+                            // Build ACK — find what's missing (could be all 32 if 100% lost)
                             let mut old_lost: Vec<u64> = Vec::new();
-                            if let Some(old_data) = peer.recv_window_packets.get(old_w) {
-                                for p in 0..=31u8 {
-                                    if !old_data.contains_key(&p) {
-                                        let lost = sender_dir | (*old_w << 7) | ((p as u64) << 2);
-                                        old_lost.push(lost);
-                                    }
+                            let old_data = peer.recv_window_packets.get(&old_w);
+                            for p in 0..=31u8 {
+                                let have = old_data.map_or(false, |d| d.contains_key(&p));
+                                if !have {
+                                    old_lost.push(sender_dir | (old_w << 7) | ((p as u64) << 2));
                                 }
                             }
 
@@ -710,24 +816,24 @@ impl Engine {
                                 pl
                             };
 
-                            let my_dir: u64 = if peer.is_server { SUDP_DIR_BIT } else { 0 };
-                            let old_ack_seq = my_dir | (*old_w << 7) | 0b01;
+                            let old_ack_seq = my_dir | (old_w << 7) | 0b01;
                             let mut old_ad = [0u8; 9];
                             old_ad[0] = SUDP_ACK;
                             old_ad[1..9].copy_from_slice(&old_ack_seq.to_be_bytes());
 
-                            let old_enc = self.encrypt_payload(&key, old_ack_seq, &old_ad, &old_ack_payload)?;
+                            let old_enc = self.encrypt_payload(&peer.cipher_key, old_ack_seq, &old_ad, &old_ack_payload)?;
                             let mut old_resp = Vec::with_capacity(9 + old_enc.len());
                             old_resp.extend_from_slice(&old_ad);
                             old_resp.extend_from_slice(&old_enc);
                             let _ = socket.send_to(&old_resp, addr).await;
+                            if !old_lost.is_empty() { peer.recv_partial_acks += 1; }
                         }
 
                         // 🛰️ ACK CHECK (TRIGGER 1): Trigger if we know this window's end
                         let should_ack = peer.recv_window_end_info.contains_key(&window_idx);
 
                         if should_ack {
-                            let (end_pos, is_end_stream) = *peer.recv_window_end_info.get(&window_idx).unwrap();
+                            let (end_pos, _is_end_stream) = *peer.recv_window_end_info.get(&window_idx).unwrap();
                             let received = peer.recv_window_packets.get(&window_idx);
 
                             // Find missing positions
@@ -735,8 +841,6 @@ impl Engine {
                             if let Some(window_data) = received {
                                 for p in 0..=end_pos {
                                     if !window_data.contains_key(&p) {
-                                        // Reconstruct the full seq of the missing packet
-                                        // Missing packets are never the end_window one (we have that)
                                         let lost = sender_dir | (window_idx << 7) | ((p as u64) << 2);
                                         lost_seqs.push(lost);
                                     }
@@ -747,7 +851,6 @@ impl Engine {
                             let ack_payload = if lost_seqs.is_empty() {
                                 Vec::new() // ✅ Full confirmation
                             } else {
-                                // ⚠️ Partial: list lost packet seqs
                                 let mut payload = Vec::with_capacity(lost_seqs.len() * 8);
                                 for s in &lost_seqs {
                                     payload.extend_from_slice(&s.to_be_bytes());
@@ -755,41 +858,38 @@ impl Engine {
                                 payload
                             };
 
-                            // ACK seq: my direction | window_idx | 0b01 marker
-                            let my_dir: u64 = if peer.is_server { SUDP_DIR_BIT } else { 0 };
                             let ack_seq = my_dir | (window_idx << 7) | 0b01;
 
                             let mut ad = [0u8; 9];
                             ad[0] = SUDP_ACK;
                             ad[1..9].copy_from_slice(&ack_seq.to_be_bytes());
 
-                            let encrypted = self.encrypt_payload(&key, ack_seq, &ad, &ack_payload)?;
+                            let encrypted = self.encrypt_payload(&peer.cipher_key, ack_seq, &ad, &ack_payload)?;
                             let mut resp = Vec::with_capacity(9 + encrypted.len());
                             resp.extend_from_slice(&ad);
                             resp.extend_from_slice(&encrypted);
                             let _ = socket.send_to(&resp, addr).await;
+                            if !lost_seqs.is_empty() { peer.recv_partial_acks += 1; }
                         }
 
                         // 📤 STREAM REASSEMBLY: If end_stream seen + all windows complete
-                        // Check if we can return the full assembled payload
                         let mut stream_end_window: Option<u64> = None;
-                        for (w_idx, (_end_pos, is_es)) in &peer.recv_window_end_info {
+                        for (_w_idx, (_end_pos, is_es)) in &peer.recv_window_end_info {
                             if *is_es {
-                                stream_end_window = Some(*w_idx);
+                                stream_end_window = Some(*_w_idx);
                                 break;
                             }
                         }
 
                         if let Some(last_window) = stream_end_window {
-                            // Check all windows up to last_window are complete
-                            let mut all_complete = true;
-                            let mut window_ids: Vec<u64> = peer.recv_window_end_info.keys().cloned().collect();
-                            window_ids.sort();
+                            // Determine the first expected window in this stream
+                            let first_window = peer.recv_complete_window + 1;
 
-                            for w in &window_ids {
-                                if *w > last_window { break; }
-                                if let Some((ep, _)) = peer.recv_window_end_info.get(w) {
-                                    if let Some(data) = peer.recv_window_packets.get(w) {
+                            // Check CONTIGUOUS range: every window from first to last must be complete
+                            let mut all_complete = true;
+                            for w in first_window..=last_window {
+                                if let Some((ep, _)) = peer.recv_window_end_info.get(&w) {
+                                    if let Some(data) = peer.recv_window_packets.get(&w) {
                                         for p in 0..=*ep {
                                             if !data.contains_key(&p) {
                                                 all_complete = false;
@@ -808,10 +908,9 @@ impl Engine {
                             if all_complete {
                                 // 🏁 REASSEMBLE: Concatenate all chunks in order
                                 let mut full_payload = Vec::new();
-                                for w in &window_ids {
-                                    if *w > last_window { break; }
-                                    if let Some((ep, _)) = peer.recv_window_end_info.get(w) {
-                                        if let Some(data) = peer.recv_window_packets.get(w) {
+                                for w in first_window..=last_window {
+                                    if let Some((ep, _)) = peer.recv_window_end_info.get(&w) {
+                                        if let Some(data) = peer.recv_window_packets.get(&w) {
                                             for p in 0..=*ep {
                                                 if let Some(chunk) = data.get(&p) {
                                                     full_payload.extend_from_slice(chunk);
@@ -821,14 +920,48 @@ impl Engine {
                                     }
                                 }
 
-                                // Clean up receiver buffers
-                                for w in &window_ids {
-                                    if *w > last_window { break; }
-                                    peer.recv_window_packets.remove(w);
-                                    peer.recv_window_end_info.remove(w);
+                                // 📊 Compute total chunks across all windows
+                                let mut total_chunks: usize = 0;
+                                for w in first_window..=last_window {
+                                    if let Some((ep, _)) = peer.recv_window_end_info.get(&w) {
+                                        total_chunks += (*ep as usize) + 1;
+                                    }
                                 }
+                                // Clean up receiver buffers & advance watermark
+                                let elapsed = peer.recv_stream_start
+                                    .map(|t| t.elapsed())
+                                    .unwrap_or(Duration::ZERO);
+                                let total_bytes = full_payload.len();
+                                let throughput_bps = if elapsed.as_secs_f64() > 0.0 {
+                                    total_bytes as f64 / elapsed.as_secs_f64()
+                                } else { 0.0 };
+                                let windows_used = last_window - first_window + 1;
+                                let partial_acks_sent = peer.recv_partial_acks;
+                                let duplicates_rejected = peer.recv_duplicates;
 
-                                return Ok(Some(Event::Data(full_payload)));
+                                for w in first_window..=last_window {
+                                    peer.recv_window_packets.remove(&w);
+                                    peer.recv_window_end_info.remove(&w);
+                                }
+                                peer.recv_complete_window = last_window;
+                                // Reset per-stream metrics
+                                peer.recv_stream_start = None;
+                                peer.recv_partial_acks = 0;
+                                peer.recv_duplicates = 0;
+                                // 📊 Update session-level counters
+                                peer.total_bytes_received += total_bytes;
+                                peer.streams_received += 1;
+
+                                return Ok(Some(Event::Data(RecvReport {
+                                    total_chunks,
+                                    total_bytes,
+                                    windows_used,
+                                    elapsed,
+                                    partial_acks_sent,
+                                    duplicates_rejected,
+                                    throughput_bps,
+                                    payload: full_payload,
+                                })));
                             }
                         }
                     }
@@ -836,12 +969,10 @@ impl Engine {
             }
             SUDP_ACK => {
                 // S-UDP Windowed ACK (Flag 08)
-                // ACK seq = (window_idx << 7) | (ack_gen << 2) | 0b01
                 // Payload empty  = all packets received (full confirmation)
                 // Payload present = list of LOST packet seqs (8 bytes each)
                 if let Some(mut peer) = self.sessions.get_mut(&addr) {
-                    let key = self.derive_cipher_key(&peer.shared_secret);
-                    if let Some(payload) = self.decrypt_payload(&key, seq, &buf[0..9], &buf[9..len]) {
+                    if let Some(payload) = self.decrypt_payload(&peer.cipher_key, seq, &buf[0..9], &buf[9..len]) {
                         let acked_window = (seq & SUDP_SEQ_MASK) >> 7; // Strip direction bit
                         let ip = addr.ip();
                         let now = Instant::now();
@@ -1124,7 +1255,7 @@ impl Engine {
 
         // 🔑 Derive cipher key once for the entire stream
         let mut key = if let Some(peer) = self.sessions.get(&addr) {
-            self.derive_cipher_key(&peer.shared_secret)
+            peer.cipher_key
         } else {
             return Err(anyhow::anyhow!("No active session for target"));
         };
@@ -1349,6 +1480,12 @@ impl Engine {
             });
         }
 
+        // 📊 Update session-level counters
+        if let Some(mut peer) = self.sessions.get_mut(&addr) {
+            peer.total_bytes_sent += total_bytes;
+            peer.streams_sent += 1;
+        }
+
         Ok(SendReport {
             total_bytes,
             total_chunks,
@@ -1359,5 +1496,67 @@ impl Engine {
             throttle_stalls,
             throughput_bps,
         })
+    }
+
+    // ─── Session Management APIs ─────────────────────────────────────
+
+    /// Get info for a specific session
+    pub fn get_session_info(&self, addr: SocketAddr) -> Option<SessionInfo> {
+        self.sessions.get(&addr).map(|peer| {
+            let now = Instant::now();
+            SessionInfo {
+                peer_addr: addr,
+                role: if peer.is_server { SessionRole::Server } else { SessionRole::Client },
+                uptime: now.duration_since(peer.created_at),
+                idle: now.duration_since(peer.last_activity),
+                total_bytes_sent: peer.total_bytes_sent,
+                total_bytes_received: peer.total_bytes_received,
+                streams_sent: peer.streams_sent,
+                streams_received: peer.streams_received,
+                in_recovery: peer.recovery_started_at.is_some(),
+            }
+        })
+    }
+
+    /// List all active sessions
+    pub fn list_sessions(&self) -> Vec<SessionInfo> {
+        let now = Instant::now();
+        self.sessions.iter().map(|entry| {
+            let addr = *entry.key();
+            let peer = entry.value();
+            SessionInfo {
+                peer_addr: addr,
+                role: if peer.is_server { SessionRole::Server } else { SessionRole::Client },
+                uptime: now.duration_since(peer.created_at),
+                idle: now.duration_since(peer.last_activity),
+                total_bytes_sent: peer.total_bytes_sent,
+                total_bytes_received: peer.total_bytes_received,
+                streams_sent: peer.streams_sent,
+                streams_received: peer.streams_received,
+                in_recovery: peer.recovery_started_at.is_some(),
+            }
+        }).collect()
+    }
+
+    /// Close a specific session and clean up all associated state
+    pub fn close_session(&self, addr: SocketAddr) -> bool {
+        // Remove session
+        let removed = self.sessions.remove(&addr).is_some();
+        // Clean up all unacked packets for this peer
+        let keys_to_remove: Vec<(SocketAddr, u64)> = self.unacked.iter()
+            .filter(|e| e.key().0 == addr)
+            .map(|e| *e.key())
+            .collect();
+        for k in keys_to_remove {
+            self.unacked.remove(&k);
+        }
+        // Clean up handshake state
+        self.handshakes.remove(&addr);
+        removed
+    }
+
+    /// Number of active sessions
+    pub fn session_count(&self) -> usize {
+        self.sessions.len()
     }
 }

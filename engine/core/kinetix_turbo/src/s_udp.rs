@@ -2,7 +2,7 @@ use std::net::{SocketAddr, IpAddr};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::net::UdpSocket;
-use tokio::sync::RwLock;
+use tokio::sync::{RwLock, watch};
 use tokio::time::interval;
 use zeroize::{Zeroize, ZeroizeOnDrop};
 use dashmap::DashMap;
@@ -24,6 +24,7 @@ pub const SUDP_ACK: u8 = 0x08;
 
 // S-UDP Transport Constants
 const SUDP_MTU: usize = 1400;
+const SUDP_OVERHEAD: usize = 25; // 1 (flag) + 8 (seq) + 16 (Poly1305 tag)
 const SUDP_RETRANSMIT_MS: u64 = 300;
 const SUDP_RTO_MIN: u64 = 50;
 const SUDP_RTO_MAX: u64 = 2000;
@@ -37,6 +38,11 @@ const SUDP_WINDOW_RETRIES: u32 = 5;
 // S-UDP Direction Bit: Separates client/server nonce spaces
 const SUDP_DIR_BIT: u64 = 1u64 << 63;
 const SUDP_SEQ_MASK: u64 = !(1u64 << 63);
+
+// S-UDP Reserved Nonce Space:
+// Handshake encryption (03/04) uses nonce 0 (client) and DIR_BIT (server).
+// Data packets (05) start at window_idx=1, so the minimum data nonce is 128.
+// This guarantees zero overlap between handshake and data nonce spaces.
 
 // S-UDP Security Constants
 const SUDP_FLAG_MIN: u8 = 0x01;
@@ -164,6 +170,43 @@ pub enum Event {
     Data(Vec<u8>),
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum SendPhase {
+    Sending,
+    Draining,
+    Complete,
+}
+
+/// Real-time progress snapshot — subscribe via `watch::Receiver<SendProgress>`
+#[derive(Debug, Clone)]
+pub struct SendProgress {
+    pub total_bytes: usize,
+    pub bytes_sent: usize,
+    pub bytes_remaining: usize,
+    pub total_chunks: usize,
+    pub chunks_sent: usize,
+    pub chunks_remaining: usize,
+    pub windows_used: u64,
+    pub elapsed: Duration,
+    pub eta: Duration,
+    pub send_percent: f64,
+    pub throttle_stalls: u32,
+    pub phase: SendPhase,
+}
+
+/// Final report returned by `send_data` after full ACK confirmation
+#[derive(Debug, Clone)]
+pub struct SendReport {
+    pub total_bytes: usize,
+    pub total_chunks: usize,
+    pub windows_used: u64,
+    pub elapsed: Duration,
+    pub send_elapsed: Duration,
+    pub drain_elapsed: Duration,
+    pub throttle_stalls: u32,
+    pub throughput_bps: f64,
+}
+
 #[derive(Clone)]
 pub struct Engine {
     handshakes: Arc<DashMap<SocketAddr, HandshakeState>>,
@@ -236,11 +279,10 @@ impl Engine {
         // 🛡️ Initiate Handshake (Flag 01)
         let my_secret = EphemeralSecret::random_from_rng(OsRng);
         let my_public = PublicKey::from(&my_secret);
-        let seq = rand::random::<u64>() & SUDP_SEQ_MASK; // Client: bit 63 always 0
-        
+        // Client handshake seq: all zeros, bit 63 = 0
         let mut packet = Vec::with_capacity(41);
         packet.push(SUDP_INIT);
-        packet.extend_from_slice(&seq.to_be_bytes());
+        packet.extend_from_slice(&0u64.to_be_bytes());
         packet.extend_from_slice(my_public.as_bytes());
 
         let mut buf = [0u8; 2048];
@@ -257,7 +299,7 @@ impl Engine {
             if let Ok(Ok((len, peer_addr))) = tokio::time::timeout(dyn_rto, socket.recv_from(&mut buf)).await {
                 if peer_addr == target_addr && len >= 41 && buf[0] == SUDP_RESP {
                     let recv_seq = u64::from_be_bytes(buf[1..9].try_into().unwrap_or([0u8; 8]));
-                    if (recv_seq & SUDP_SEQ_MASK) == seq { // Strip server's direction bit
+                    if recv_seq == SUDP_DIR_BIT { // Server response: all zeros, bit 63 = 1
                         server_pub_bytes.copy_from_slice(&buf[9..41]);
                         stage1_success = true;
 
@@ -293,8 +335,8 @@ impl Engine {
 
         let mut ad_03 = [0u8; 9];
         ad_03[0] = SUDP_AUTH_REQ;
-        ad_03[1..9].copy_from_slice(&seq.to_be_bytes());
-        let encrypted = self.encrypt_payload(&key, seq, &ad_03, &plaintext);
+        // Bytes 1-8 already zero: client handshake nonce = 0
+        let encrypted = self.encrypt_payload(&key, 0u64, &ad_03, &plaintext)?; // Nonce 0: reserved for client handshake
         
         let mut resp_03 = Vec::with_capacity(9 + encrypted.len());
         resp_03.extend_from_slice(&ad_03);
@@ -310,8 +352,8 @@ impl Engine {
             if let Ok(Ok((len, peer_addr))) = tokio::time::timeout(dyn_rto, socket.recv_from(&mut buf)).await {
                 if peer_addr == target_addr && len >= 9 && buf[0] == SUDP_AUTH_RESP {
                     let recv_seq = u64::from_be_bytes(buf[1..9].try_into().unwrap_or([0u8; 8]));
-                    if (recv_seq & SUDP_SEQ_MASK) == seq { // Strip server's direction bit
-                        if let Some(decrypted) = self.decrypt_payload(&key, recv_seq, &buf[0..9], &buf[9..len]) {
+                    if recv_seq == SUDP_DIR_BIT { // Server response: all zeros, bit 63 = 1
+                        if let Some(decrypted) = self.decrypt_payload(&key, SUDP_DIR_BIT, &buf[0..9], &buf[9..len]) { // Nonce DIR_BIT: reserved for server handshake
                             // Check server proof (decrypt with server's full seq including dir bit)
                             let expected_proof = if let Some(id) = self.identity.read().await.as_ref() {
                                 Some(id.reveal_server_proof())
@@ -379,12 +421,12 @@ impl Engine {
             last_activity: Instant::now(),
             is_server: false, // Client side
             recovery_started_at: None,
-            window_start_seq: 1,
-            next_send_seq: 2,
-            last_recv_seq: seq,
+            window_start_seq: 0,
+            next_send_seq: 0,
+            last_recv_seq: 0,
             recv_window_packets: std::collections::HashMap::new(),
             recv_window_end_info: std::collections::HashMap::new(),
-            last_acked_window: 2,
+            last_acked_window: 0,
         });
 
         println!(" [S-UDP] Connection Established with: {}", target_addr);
@@ -496,7 +538,7 @@ impl Engine {
             SUDP_AUTH_REQ => {
                 let handshake_start = Instant::now();
                 if self.sessions.contains_key(&addr) {
-                    let server_seq = seq | SUDP_DIR_BIT; // Server: bit 63 = 1
+                    let server_seq = SUDP_DIR_BIT; // Server handshake seq: all zeros, bit 63 = 1
                     let mut resp = Vec::with_capacity(25);
                     resp.push(SUDP_AUTH_RESP);
                     resp.extend_from_slice(&server_seq.to_be_bytes());
@@ -505,7 +547,7 @@ impl Engine {
                         let mut ad_04 = [0u8; 9];
                         ad_04[0] = SUDP_AUTH_RESP;
                         ad_04[1..9].copy_from_slice(&server_seq.to_be_bytes());
-                        let encrypted = self.encrypt_payload(&key, server_seq, &ad_04, &[0u8; 1]);
+                        let encrypted = self.encrypt_payload(&key, SUDP_DIR_BIT, &ad_04, &[0u8; 1])?; // Nonce DIR_BIT: reserved for server handshake
                         resp.extend_from_slice(&encrypted);
                     }
                     let _ = socket.send_to(&resp, addr).await;
@@ -516,7 +558,7 @@ impl Engine {
                     if let Some(p) = self.handshakes.get_mut(&addr) {
                         if let Some(shared) = p.shared_secret {
                             let key = self.derive_cipher_key(&shared);
-                            if let Some(decrypted) = self.decrypt_payload(&key, seq, &buf[0..9], &buf[9..len]) {
+                            if let Some(decrypted) = self.decrypt_payload(&key, 0u64, &buf[0..9], &buf[9..len]) { // Nonce 0: reserved for client handshake
                                 if !decrypted.is_empty() {
                                     let peer_token = String::from_utf8_lossy(&decrypted).to_string();
                                     let peer_token = peer_token.trim_matches(char::from(0)).to_string(); // Clean null padding
@@ -537,12 +579,12 @@ impl Engine {
                                                 last_activity: Instant::now(),
                                                 is_server: true, // Server side
                                                 recovery_started_at: None,
-                                                window_start_seq: 1,
-                                                next_send_seq: 2,
-                                                last_recv_seq: seq,
+                                                window_start_seq: 0,
+                                                next_send_seq: 0,
+                                                last_recv_seq: 0,
                                                 recv_window_packets: std::collections::HashMap::new(),
                                                 recv_window_end_info: std::collections::HashMap::new(),
-                                                last_acked_window: 2,
+                                                last_acked_window: 0,
                                             });
                                         } else {
                                             let ip_addr = addr.ip();
@@ -558,7 +600,7 @@ impl Engine {
                                         let engine = self.clone();
                                         let socket = Arc::clone(socket);
                                         let addr_c = addr;
-                                        let seq_c = seq | SUDP_DIR_BIT; // Server: bit 63 = 1
+                                        let seq_c = SUDP_DIR_BIT; // Server handshake seq: all zeros, bit 63 = 1
                                         let key_c = key;
 
                                         tokio::spawn(async move {
@@ -588,7 +630,10 @@ impl Engine {
                                             ad[0] = SUDP_AUTH_RESP;
                                             ad[1..9].copy_from_slice(&seq_c.to_be_bytes());
 
-                                            let encrypted = engine.encrypt_payload(&key_c, seq_c, &ad, &payload_data);
+                                            let encrypted = match engine.encrypt_payload(&key_c, SUDP_DIR_BIT, &ad, &payload_data) {
+                                                Ok(enc) => enc,
+                                                Err(_) => return,
+                                            }; // Nonce DIR_BIT: reserved for server handshake
                                             resp.extend_from_slice(&encrypted);
 
                                             let _ = socket.send_to(&resp, addr_c).await;
@@ -671,7 +716,7 @@ impl Engine {
                             old_ad[0] = SUDP_ACK;
                             old_ad[1..9].copy_from_slice(&old_ack_seq.to_be_bytes());
 
-                            let old_enc = self.encrypt_payload(&key, old_ack_seq, &old_ad, &old_ack_payload);
+                            let old_enc = self.encrypt_payload(&key, old_ack_seq, &old_ad, &old_ack_payload)?;
                             let mut old_resp = Vec::with_capacity(9 + old_enc.len());
                             old_resp.extend_from_slice(&old_ad);
                             old_resp.extend_from_slice(&old_enc);
@@ -718,7 +763,7 @@ impl Engine {
                             ad[0] = SUDP_ACK;
                             ad[1..9].copy_from_slice(&ack_seq.to_be_bytes());
 
-                            let encrypted = self.encrypt_payload(&key, ack_seq, &ad, &ack_payload);
+                            let encrypted = self.encrypt_payload(&key, ack_seq, &ad, &ack_payload)?;
                             let mut resp = Vec::with_capacity(9 + encrypted.len());
                             resp.extend_from_slice(&ad);
                             resp.extend_from_slice(&encrypted);
@@ -1026,13 +1071,13 @@ impl Engine {
         hasher.finalize().into()
     }
 
-    fn encrypt_payload(&self, key: &[u8; 32], seq: u64, ad: &[u8], plaintext: &[u8]) -> Vec<u8> {
+    fn encrypt_payload(&self, key: &[u8; 32], seq: u64, ad: &[u8], plaintext: &[u8]) -> Result<Vec<u8>> {
         let cipher = ChaCha20Poly1305::new(key.into());
         let mut nonce_bytes = [0u8; 12];
         nonce_bytes[0..8].copy_from_slice(&seq.to_be_bytes());
         let nonce = Nonce::from_slice(&nonce_bytes);
         let payload = Payload { msg: plaintext, aad: ad };
-        cipher.encrypt(nonce, payload).unwrap_or_default()
+        cipher.encrypt(nonce, payload).map_err(|e| anyhow::anyhow!("S-UDP encrypt failed: {}", e))
     }
 
     fn decrypt_payload(&self, key: &[u8; 32], seq: u64, ad: &[u8], ciphertext: &[u8]) -> Option<Vec<u8>> {
@@ -1044,18 +1089,73 @@ impl Engine {
         cipher.decrypt(nonce, payload).ok()
     }
 
-    pub async fn send_data(&self, addr: SocketAddr, data: &[u8]) -> Result<()> {
-        let chunk_limit = SUDP_MTU - 25; // -25 bytes overhead
-        let total_chunks = (data.len() + chunk_limit - 1) / chunk_limit;
-        
+    /// 🚀 Simple send — returns only success/failure, no metrics.
+    /// Use `send_data()` for full report or live progress.
+    pub async fn send(&self, addr: SocketAddr, data: &[u8]) -> Result<()> {
+        self.send_data(addr, data, None).await?;
+        Ok(())
+    }
+
+    /// 🚀 Full send — returns `SendReport` with metrics.
+    /// Pass a `watch::Sender<SendProgress>` for real-time progress updates.
+    ///
+    /// # API Tiers
+    /// | Need                        | Call                                        |
+    /// |-----------------------------|---------------------------------------------|
+    /// | Just success/fail           | `engine.send(addr, &data).await?`           |
+    /// | Final report (no live)      | `engine.send_data(addr, &data, None).await` |
+    /// | Live progress + report      | `engine.send_data(addr, &data, Some(&tx))…` |
+    pub async fn send_data(
+        &self,
+        addr: SocketAddr,
+        data: &[u8],
+        progress_tx: Option<&watch::Sender<SendProgress>>,
+    ) -> Result<SendReport> {
+        let start_time = Instant::now();
+        let total_bytes = data.len();
+        let chunk_limit = SUDP_MTU - SUDP_OVERHEAD;
+        let total_chunks = (total_bytes + chunk_limit - 1) / chunk_limit;
+
+        // 📊 Metrics
+        let mut bytes_sent: usize = 0;
+        let mut chunks_sent: usize = 0;
+        let mut windows_used: u64 = 0;
+        let mut throttle_stalls: u32 = 0;
+
+        // 🔑 Derive cipher key once for the entire stream
+        let mut key = if let Some(peer) = self.sessions.get(&addr) {
+            self.derive_cipher_key(&peer.shared_secret)
+        } else {
+            return Err(anyhow::anyhow!("No active session for target"));
+        };
+
+        // 📡 Emit initial progress
+        if let Some(tx) = &progress_tx {
+            let _ = tx.send(SendProgress {
+                total_bytes,
+                bytes_sent: 0,
+                bytes_remaining: total_bytes,
+                total_chunks,
+                chunks_sent: 0,
+                chunks_remaining: total_chunks,
+                windows_used: 0,
+                elapsed: Duration::ZERO,
+                eta: Duration::ZERO,
+                send_percent: 0.0,
+                throttle_stalls: 0,
+                phase: SendPhase::Sending,
+            });
+        }
+
         let mut i = 0;
         while i < total_chunks {
             let start = i * chunk_limit;
-            let end = (start + chunk_limit).min(data.len());
+            let end = (start + chunk_limit).min(total_bytes);
             let chunk_data = &data[start..end];
+            let chunk_size = end - start;
 
-            let packet_idx = (i % 32) as u64; 
-            
+            let packet_idx = (i % 32) as u64;
+
             let mut throttle = false;
             let mut throttled_window_check = 0;
 
@@ -1067,11 +1167,10 @@ impl Engine {
             if packet_idx == 0 && i != 0 {
                 let (pending_window, last_acked) = if let Some(peer) = self.sessions.get(&addr) {
                     (peer.next_send_seq, peer.last_acked_window)
-                } else { return Ok(()); };
+                } else {
+                    return Err(anyhow::anyhow!("Connection lost during send"));
+                };
 
-                // Rule: At most 1 completed-but-unacked window behind the current.
-                // unacked = next_send_seq - last_acked_window
-                // If unacked >= 2, block until the oldest past window is confirmed.
                 let unacked = pending_window.saturating_sub(last_acked);
                 if unacked >= 2 {
                     throttle = true;
@@ -1080,6 +1179,7 @@ impl Engine {
             }
 
             if throttle {
+                throttle_stalls += 1;
                 loop {
                     let acked = if let Some(peer) = self.sessions.get(&addr) {
                         peer.last_acked_window
@@ -1089,13 +1189,14 @@ impl Engine {
                     if acked >= throttled_window_check { break; }
                     tokio::time::sleep(Duration::from_millis(2)).await;
                 }
-                continue; // Re-enter loop, packet_idx==0 again, now increment safely
+                continue;
             }
 
             {
                 if let Some(mut peer) = self.sessions.get_mut(&addr) {
                     if packet_idx == 0 {
                         peer.next_send_seq += 1;
+                        windows_used += 1;
                     }
                     let window_idx = peer.next_send_seq;
                     let dir_bit: u64 = if peer.is_server { SUDP_DIR_BIT } else { 0 };
@@ -1104,17 +1205,16 @@ impl Engine {
                     let is_end_window: u64 = if packet_idx == 31 || is_end_stream == 1 { 1 } else { 0 };
 
                     seq = dir_bit
-                        | (window_idx << 7) 
-                        | ((packet_idx & 0x1F) << 2) 
-                        | (is_end_window << 1) 
+                        | (window_idx << 7)
+                        | ((packet_idx & 0x1F) << 2)
+                        | (is_end_window << 1)
                         | is_end_stream;
-                    
-                    let key = self.derive_cipher_key(&peer.shared_secret);
+
                     let mut ad = [0u8; 9];
                     ad[0] = SUDP_DATA;
                     ad[1..9].copy_from_slice(&seq.to_be_bytes());
 
-                    let encrypted = self.encrypt_payload(&key, seq, &ad, chunk_data);
+                    let encrypted = self.encrypt_payload(&key, seq, &ad, chunk_data)?;
                     packet = Vec::with_capacity(9 + encrypted.len());
                     packet.extend_from_slice(&ad);
                     packet.extend_from_slice(&encrypted);
@@ -1140,9 +1240,66 @@ impl Engine {
                 Arc::clone(&peer.socket)
             } else { return Err(anyhow::anyhow!("Connection lost during send")); };
 
-            socket.send_to(&packet, target).await?;
+            if let Err(e) = socket.send_to(&packet, target).await {
+                self.unacked.remove(&(target, seq));
+                return Err(e.into());
+            }
+
+            // 📊 Update metrics
+            bytes_sent += chunk_size;
+            chunks_sent += 1;
+
+            // 📡 Emit progress
+            if let Some(tx) = &progress_tx {
+                let elapsed = start_time.elapsed();
+                let send_percent = (chunks_sent as f64 / total_chunks as f64) * 100.0;
+                let eta = if chunks_sent > 0 {
+                    let rate = elapsed.as_secs_f64() / chunks_sent as f64;
+                    Duration::from_secs_f64(rate * (total_chunks - chunks_sent) as f64)
+                } else {
+                    Duration::ZERO
+                };
+
+                let _ = tx.send(SendProgress {
+                    total_bytes,
+                    bytes_sent,
+                    bytes_remaining: total_bytes - bytes_sent,
+                    total_chunks,
+                    chunks_sent,
+                    chunks_remaining: total_chunks - chunks_sent,
+                    windows_used,
+                    elapsed,
+                    eta,
+                    send_percent,
+                    throttle_stalls,
+                    phase: SendPhase::Sending,
+                });
+            }
 
             i += 1;
+        }
+
+        let send_elapsed = start_time.elapsed();
+
+        // 🛡️ Zeroize cipher key — no longer needed
+        key.zeroize();
+
+        // 📡 Emit drain phase
+        if let Some(tx) = &progress_tx {
+            let _ = tx.send(SendProgress {
+                total_bytes,
+                bytes_sent,
+                bytes_remaining: 0,
+                total_chunks,
+                chunks_sent,
+                chunks_remaining: 0,
+                windows_used,
+                elapsed: send_elapsed,
+                eta: Duration::ZERO,
+                send_percent: 100.0,
+                throttle_stalls,
+                phase: SendPhase::Draining,
+            });
         }
 
         // 🛑 STREAM DRAIN: Do not return until every packet for this stream is confirmed
@@ -1166,6 +1323,41 @@ impl Engine {
             tokio::time::sleep(Duration::from_millis(5)).await;
         }
 
-        Ok(())
+        let total_elapsed = start_time.elapsed();
+        let drain_elapsed = total_elapsed - send_elapsed;
+        let throughput_bps = if total_elapsed.as_secs_f64() > 0.0 {
+            total_bytes as f64 / total_elapsed.as_secs_f64()
+        } else {
+            0.0
+        };
+
+        // 📡 Emit complete
+        if let Some(tx) = &progress_tx {
+            let _ = tx.send(SendProgress {
+                total_bytes,
+                bytes_sent,
+                bytes_remaining: 0,
+                total_chunks,
+                chunks_sent,
+                chunks_remaining: 0,
+                windows_used,
+                elapsed: total_elapsed,
+                eta: Duration::ZERO,
+                send_percent: 100.0,
+                throttle_stalls,
+                phase: SendPhase::Complete,
+            });
+        }
+
+        Ok(SendReport {
+            total_bytes,
+            total_chunks,
+            windows_used,
+            elapsed: total_elapsed,
+            send_elapsed,
+            drain_elapsed,
+            throttle_stalls,
+            throughput_bps,
+        })
     }
 }

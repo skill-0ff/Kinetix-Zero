@@ -1,8 +1,8 @@
 use std::net::{SocketAddr, IpAddr};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex as StdMutex};
 use std::time::{Duration, Instant};
 use tokio::net::UdpSocket;
-use tokio::sync::{RwLock, watch};
+use tokio::sync::{RwLock, watch, mpsc};
 use tokio::time::interval;
 use zeroize::{Zeroize, ZeroizeOnDrop};
 use dashmap::DashMap;
@@ -20,6 +20,7 @@ pub const SUDP_RESP: u8 = 0x02;
 pub const SUDP_AUTH_REQ: u8 = 0x03;
 pub const SUDP_AUTH_RESP: u8 = 0x04;
 pub const SUDP_DATA: u8 = 0x05;
+pub const SUDP_DISCONNECT: u8 = 0x06;
 pub const SUDP_ACK: u8 = 0x08;
 
 // S-UDP Transport Constants
@@ -181,6 +182,18 @@ struct Session {
 pub enum Event {
     Connected,
     Data(RecvReport),
+    Disconnected(DisconnectInfo),
+}
+
+/// Info returned when a peer sends a graceful disconnect (flag 0x06)
+#[derive(Debug, Clone)]
+pub struct DisconnectInfo {
+    /// The peer that disconnected
+    pub peer_addr: SocketAddr,
+    /// Reason provided by the peer
+    pub reason: String,
+    /// Session snapshot at time of disconnect
+    pub session: SessionInfo,
 }
 
 /// Final report returned with reassembled payload on receive
@@ -270,6 +283,62 @@ pub enum SessionRole {
     Server,
 }
 
+/// Structured log entry emitted by the S-UDP engine
+#[derive(Debug, Clone)]
+pub struct LogEntry {
+    pub elapsed_ms: f64,
+    pub level: LogLevel,
+    pub category: LogCategory,
+    pub message: String,
+    pub peer: Option<SocketAddr>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum LogLevel {
+    Trace,
+    Debug,
+    Info,
+    Warn,
+    Error,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum LogCategory {
+    Handshake,
+    Data,
+    Ack,
+    Disconnect,
+    Security,
+    Session,
+    Retransmit,
+    Reassembly,
+}
+
+impl std::fmt::Display for LogEntry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let peer_str = self.peer.map_or(String::new(), |p| format!(" [{}]", p));
+        write!(f, "[{:>10.2}ms] [{:?}] [{:?}]{} {}",
+            self.elapsed_ms, self.level, self.category, peer_str, self.message)
+    }
+}
+
+/// Internal macro for zero-cost logging when disabled
+macro_rules! slog {
+    ($engine:expr, $level:expr, $cat:expr, $peer:expr, $($arg:tt)*) => {
+        if let Ok(guard) = $engine.log_tx.lock() {
+            if let Some(tx) = guard.as_ref() {
+                let _ = tx.send(LogEntry {
+                    elapsed_ms: $engine.boot_time.elapsed().as_secs_f64() * 1000.0,
+                    level: $level,
+                    category: $cat,
+                    message: format!($($arg)*),
+                    peer: $peer,
+                });
+            }
+        }
+    };
+}
+
 #[derive(Clone)]
 pub struct Engine {
     handshakes: Arc<DashMap<SocketAddr, HandshakeState>>,
@@ -279,6 +348,8 @@ pub struct Engine {
     secrets: Arc<Option<Secrets>>,
     identity: Arc<RwLock<Option<SessionIdentity>>>,
     pending_outbound: Arc<DashMap<SocketAddr, OutgoingHandshake>>,
+    log_tx: Arc<StdMutex<Option<mpsc::UnboundedSender<LogEntry>>>>,
+    boot_time: Instant,
 }
 
 impl Engine {
@@ -291,10 +362,29 @@ impl Engine {
             secrets: Arc::new(Some(secrets)),
             identity: Arc::new(RwLock::new(None)),
             pending_outbound: Arc::new(DashMap::new()),
+            log_tx: Arc::new(StdMutex::new(None)),
+            boot_time: Instant::now(),
+        }
+    }
+
+    /// Enable protocol logging. Returns a receiver for structured log events.
+    /// Logs are only generated while this is active — zero cost when off.
+    pub fn enable_logging(&self) -> mpsc::UnboundedReceiver<LogEntry> {
+        let (tx, rx) = mpsc::unbounded_channel();
+        if let Ok(mut guard) = self.log_tx.lock() {
+            *guard = Some(tx);
+        }
+        rx
+    }
+
+    /// Disable protocol logging. Drops the sender, receiver will get None.
+    pub fn disable_logging(&self) {
+        if let Ok(mut guard) = self.log_tx.lock() {
+            *guard = None;
         }
     }
     
-    pub async fn listen(&self, addr: &str, peer_token: String, serv_token: String) -> Result<()> {
+    pub async fn listen(&self, addr: &str, peer_token: String, serv_token: String) -> Result<mpsc::Receiver<Event>> {
         let socket = Arc::new(UdpSocket::bind(addr).await?);
         
         {
@@ -309,28 +399,28 @@ impl Engine {
 
         println!(" [S-UDP] Standardized Listener Active on: {}", addr);
 
-        let mut buf = [0u8; 2048];
-        loop {
-            let (len, peer_addr) = socket.recv_from(&mut buf).await?;
-            if let Ok(Some(event)) = self.process_packet(&socket, peer_addr, &buf, len).await {
-                match event {
-                    Event::Data(report) => {
-                        println!(" [S-UDP] Data Received: {} bytes in {:.1}ms ({} windows, {} chunks)",
-                            report.total_bytes,
-                            report.elapsed.as_secs_f64() * 1000.0,
-                            report.windows_used,
-                            report.total_chunks,
-                        );
+        let (tx, rx) = mpsc::channel::<Event>(256);
+        let engine = self.clone();
+        tokio::spawn(async move {
+            let mut buf = [0u8; 2048];
+            loop {
+                match socket.recv_from(&mut buf).await {
+                    Ok((len, peer_addr)) => {
+                        if let Ok(Some(event)) = engine.process_packet(&socket, peer_addr, &buf, len).await {
+                            if tx.send(event).await.is_err() {
+                                break; // Receiver dropped — dev no longer listening
+                            }
+                        }
                     }
-                    Event::Connected => {
-                        println!(" [S-UDP] Session Established!");
-                    }
+                    Err(_) => break,
                 }
             }
-        }
+        });
+
+        Ok(rx)
     }
 
-    pub async fn connect(&self, addr: &str, src_port: u16, peer_token: String, serv_token: String) -> Result<()> {
+    pub async fn connect(&self, addr: &str, src_port: u16, peer_token: String, serv_token: String) -> Result<mpsc::Receiver<Event>> {
         let local_addr = format!("0.0.0.0:{}", src_port);
         let socket = Arc::new(UdpSocket::bind(&local_addr).await?);
         let target_addr: SocketAddr = addr.parse()?;
@@ -513,15 +603,20 @@ impl Engine {
         // 🚀 Start background tasks ONLY AFTER handshake finishes safely
         self.start_background_tasks(Arc::clone(&socket)).await;
 
+        let (tx, rx) = mpsc::channel::<Event>(256);
         let engine = self.clone();
         tokio::spawn(async move {
             let mut buf = [0u8; 2048];
             while let Ok((len, peer_addr)) = socket.recv_from(&mut buf).await {
-                let _ = engine.process_packet(&socket, peer_addr, &buf, len).await;
+                if let Ok(Some(event)) = engine.process_packet(&socket, peer_addr, &buf, len).await {
+                    if tx.send(event).await.is_err() {
+                        break; // Receiver dropped
+                    }
+                }
             }
         });
 
-        Ok(())
+        Ok(rx)
     }
 
 
@@ -534,6 +629,7 @@ impl Engine {
 
         // 🛡️ Security Filter 1: Flag Range Validation
         if !(SUDP_FLAG_MIN..=SUDP_FLAG_MAX).contains(&flags) {
+            slog!(self, LogLevel::Warn, LogCategory::Security, Some(addr), "Invalid flag 0x{:02X} rejected", flags);
             return Ok(None);
         }
 
@@ -545,6 +641,7 @@ impl Engine {
             // Check if currently blocked
             if let Some(blocked_until) = rep.blocked_until {
                 if now < blocked_until {
+                    slog!(self, LogLevel::Trace, LogCategory::Security, Some(addr), "Blocked IP dropped ({}s left)", (blocked_until - now).as_secs());
                     return Ok(None);
                 } else {
                     rep.blocked_until = None; // Block expired
@@ -565,6 +662,7 @@ impl Engine {
                         
                         rep.blocked_until = Some(now + Duration::from_secs(penalty_mins as u64 * 60));
                         rep.offenses += 1;
+                        slog!(self, LogLevel::Warn, LogCategory::Security, Some(addr), "Rate limited: blocked for {}min (offense #{})", penalty_mins, rep.offenses);
                         return Ok(None);
                     }
                 }
@@ -611,7 +709,8 @@ impl Engine {
                     resp.extend_from_slice(&server_seq.to_be_bytes());
                     resp.extend_from_slice(local_public.as_bytes());
                     let _ = socket.send_to(&resp, addr).await;
-                    return Ok(None); // Internal event, no caller notification
+                    slog!(self, LogLevel::Debug, LogCategory::Handshake, Some(addr), "INIT received, RESP sent (stage 1)");
+                    return Ok(None);
                 }
             }
             SUDP_AUTH_REQ => {
@@ -676,7 +775,9 @@ impl Engine {
                                                 streams_sent: 0,
                                                 streams_received: 0,
                                             });
+                                            slog!(self, LogLevel::Info, LogCategory::Session, Some(addr), "Session established (server-side)");
                                         } else {
+                                            slog!(self, LogLevel::Warn, LogCategory::Handshake, Some(addr), "Auth rejected: invalid peer token");
                                             let ip_addr = addr.ip();
                                             if let Some(mut rep) = self.reputations.get_mut(&ip_addr) {
                                                 let penalty_mins = (SUDP_INITIAL_BLOCK_MINS * 2u32.pow(rep.offenses))
@@ -757,11 +858,15 @@ impl Engine {
 
                         // 🛡️ Direction validation: sender must be the opposite side
                         let expected_dir = if peer.is_server { 0u64 } else { SUDP_DIR_BIT };
-                        if sender_dir != expected_dir { return Ok(None); }
+                        if sender_dir != expected_dir {
+                            slog!(self, LogLevel::Warn, LogCategory::Security, Some(addr), "Direction mismatch: got {:016X}, expected {:016X}", sender_dir, expected_dir);
+                            return Ok(None);
+                        }
 
                         // 🛡️ Duplicate rejection: skip packets for already-reassembled windows
                         if window_idx <= peer.recv_complete_window {
                             peer.recv_duplicates += 1;
+                            slog!(self, LogLevel::Trace, LogCategory::Data, Some(addr), "Duplicate rejected: window {} <= watermark {}", window_idx, peer.recv_complete_window);
                             return Ok(None);
                         }
 
@@ -771,6 +876,8 @@ impl Engine {
                         }
 
                         peer.last_recv_seq = seq;
+
+                        slog!(self, LogLevel::Trace, LogCategory::Data, Some(addr), "DATA: w={} p={} end_w={} end_s={} ({}B)", window_idx, packet_pos, end_window, end_stream, decrypted_payload.len());
 
                         // 📦 BUFFER: Store payload at (window_idx, packet_pos)
                         peer.recv_window_packets
@@ -826,7 +933,10 @@ impl Engine {
                             old_resp.extend_from_slice(&old_ad);
                             old_resp.extend_from_slice(&old_enc);
                             let _ = socket.send_to(&old_resp, addr).await;
-                            if !old_lost.is_empty() { peer.recv_partial_acks += 1; }
+                            if !old_lost.is_empty() {
+                                peer.recv_partial_acks += 1;
+                                slog!(self, LogLevel::Debug, LogCategory::Ack, Some(addr), "Gap ACK sent: window {} ({} lost)", old_w, old_lost.len());
+                            }
                         }
 
                         // 🛰️ ACK CHECK (TRIGGER 1): Trigger if we know this window's end
@@ -869,7 +979,12 @@ impl Engine {
                             resp.extend_from_slice(&ad);
                             resp.extend_from_slice(&encrypted);
                             let _ = socket.send_to(&resp, addr).await;
-                            if !lost_seqs.is_empty() { peer.recv_partial_acks += 1; }
+                            if !lost_seqs.is_empty() {
+                                peer.recv_partial_acks += 1;
+                                slog!(self, LogLevel::Debug, LogCategory::Ack, Some(addr), "Partial ACK sent: window {} ({} lost)", window_idx, lost_seqs.len());
+                            } else {
+                                slog!(self, LogLevel::Debug, LogCategory::Ack, Some(addr), "Full ACK sent: window {}", window_idx);
+                            }
                         }
 
                         // 📤 STREAM REASSEMBLY: If end_stream seen + all windows complete
@@ -952,6 +1067,8 @@ impl Engine {
                                 peer.total_bytes_received += total_bytes;
                                 peer.streams_received += 1;
 
+                                slog!(self, LogLevel::Info, LogCategory::Reassembly, Some(addr), "Stream reassembled: {} bytes in {} windows ({:.1}ms)", total_bytes, windows_used, elapsed.as_secs_f64() * 1000.0);
+
                                 return Ok(Some(Event::Data(RecvReport {
                                     total_chunks,
                                     total_bytes,
@@ -982,6 +1099,7 @@ impl Engine {
 
                         if payload.is_empty() {
                             // ✅ FULL ACK: Every packet in this window was received
+                            slog!(self, LogLevel::Debug, LogCategory::Ack, Some(addr), "Full ACK received: window {} cleared", acked_window);
                             // Clear all unacked entries belonging to this window
                             let keys_to_remove: Vec<(SocketAddr, u64)> = self.unacked.iter()
                                 .filter(|e| e.key().0 == addr && ((e.key().1 & SUDP_SEQ_MASK) >> 7) == acked_window)
@@ -1002,6 +1120,7 @@ impl Engine {
                                 let lost_seq = u64::from_be_bytes(chunk.try_into().unwrap_or([0u8; 8]));
                                 lost_seqs.insert(lost_seq);
                             }
+                            slog!(self, LogLevel::Debug, LogCategory::Ack, Some(addr), "Partial ACK received: window {} ({} lost)", acked_window, lost_seqs.len());
 
                             // Collect all unacked entries for this window
                             let window_entries: Vec<(SocketAddr, u64)> = self.unacked.iter()
@@ -1053,6 +1172,63 @@ impl Engine {
                                 rep.last_window_sent_at = None; // Reset for next window
                             }
                         }
+                    }
+                }
+            }
+
+            SUDP_DISCONNECT => {
+                // 🔌 Graceful Disconnect (Flag 06)
+                // seq = dir_bit | SUDP_SEQ_MASK (all 1s) — unique, can never collide with data
+                // Payload = encrypted reason string
+                if let Some(peer) = self.sessions.get_mut(&addr) {
+                    if let Some(payload) = self.decrypt_payload(&peer.cipher_key, seq, &buf[0..9], &buf[9..len]) {
+                        let reason = String::from_utf8_lossy(&payload).to_string();
+                        slog!(self, LogLevel::Info, LogCategory::Disconnect, Some(addr), "Peer disconnected: {}", reason);
+
+                        // Build session snapshot before cleanup
+                        let now = Instant::now();
+                        let session_info = SessionInfo {
+                            peer_addr: addr,
+                            role: if peer.is_server { SessionRole::Server } else { SessionRole::Client },
+                            uptime: now.duration_since(peer.created_at),
+                            idle: now.duration_since(peer.last_activity),
+                            total_bytes_sent: peer.total_bytes_sent,
+                            total_bytes_received: peer.total_bytes_received,
+                            streams_sent: peer.streams_sent,
+                            streams_received: peer.streams_received,
+                            in_recovery: peer.recovery_started_at.is_some(),
+                        };
+
+                        // 📨 Send ACK for disconnect
+                        let my_dir: u64 = if peer.is_server { SUDP_DIR_BIT } else { 0 };
+                        let ack_seq = my_dir | SUDP_SEQ_MASK;
+                        let mut ad = [0u8; 9];
+                        ad[0] = SUDP_ACK;
+                        ad[1..9].copy_from_slice(&ack_seq.to_be_bytes());
+                        if let Ok(encrypted) = self.encrypt_payload(&peer.cipher_key, ack_seq, &ad, &[]) {
+                            let mut resp = Vec::with_capacity(9 + encrypted.len());
+                            resp.extend_from_slice(&ad);
+                            resp.extend_from_slice(&encrypted);
+                            let _ = socket.send_to(&resp, addr).await;
+                        }
+
+                        // Drop the lock before cleanup
+                        drop(peer);
+
+                        // 🧹 Clean up all state for this peer
+                        self.sessions.remove(&addr);
+                        let keys_to_remove: Vec<(SocketAddr, u64)> = self.unacked.iter()
+                            .filter(|e| e.key().0 == addr)
+                            .map(|e| *e.key())
+                            .collect();
+                        for k in keys_to_remove { self.unacked.remove(&k); }
+                        self.handshakes.remove(&addr);
+
+                        return Ok(Some(Event::Disconnected(DisconnectInfo {
+                            peer_addr: addr,
+                            reason,
+                            session: session_info,
+                        })));
                     }
                 }
             }
@@ -1110,6 +1286,7 @@ impl Engine {
         let oc_re = Arc::clone(&self.sessions);
         let rc_re = Arc::clone(&self.reputations);
         let socket_re = Arc::clone(&socket);
+        let engine_re = self.clone();
         tokio::spawn(async move {
             loop {
                 tokio::time::sleep(Duration::from_millis(SUDP_RETRANSMIT_MS)).await;
@@ -1177,6 +1354,7 @@ impl Engine {
                                     let _ = socket_re.send_to(&pending.data, *addr).await;
                                 }
                             }
+                            slog!(engine_re, LogLevel::Info, LogCategory::Retransmit, Some(*addr), "Retransmit: window {} (RTO: {}ms)", window_idx, rto.as_millis());
                         } else if recovery_elapsed >= 480 && !any_last_gasp {
                             // ⚡ LAST GASP (8 minutes): Resend ALL unACKed windows for this peer
                             for mut entry in ac_re.iter_mut() {
@@ -1538,7 +1716,64 @@ impl Engine {
         }).collect()
     }
 
-    /// Close a specific session and clean up all associated state
+    /// 🔌 Graceful disconnect — sends flag 0x06 with encrypted reason, then cleans up.
+    /// Returns a session snapshot from before cleanup.
+    pub async fn disconnect(&self, addr: SocketAddr, reason: &str) -> Result<SessionInfo> {
+        let (cipher_key, session_info) = if let Some(peer) = self.sessions.get(&addr) {
+            let now = Instant::now();
+            let info = SessionInfo {
+                peer_addr: addr,
+                role: if peer.is_server { SessionRole::Server } else { SessionRole::Client },
+                uptime: now.duration_since(peer.created_at),
+                idle: now.duration_since(peer.last_activity),
+                total_bytes_sent: peer.total_bytes_sent,
+                total_bytes_received: peer.total_bytes_received,
+                streams_sent: peer.streams_sent,
+                streams_received: peer.streams_received,
+                in_recovery: peer.recovery_started_at.is_some(),
+            };
+            (peer.cipher_key, info)
+        } else {
+            return Err(anyhow::anyhow!("No active session for {}", addr));
+        };
+
+        // Build disconnect packet: flag 0x06, seq = all 1s
+        let dir_bit: u64 = match session_info.role {
+            SessionRole::Server => SUDP_DIR_BIT,
+            SessionRole::Client => 0,
+        };
+        let disconnect_seq = dir_bit | SUDP_SEQ_MASK; // All 1s in data portion
+
+        let mut ad = [0u8; 9];
+        ad[0] = SUDP_DISCONNECT;
+        ad[1..9].copy_from_slice(&disconnect_seq.to_be_bytes());
+
+        let encrypted = self.encrypt_payload(&cipher_key, disconnect_seq, &ad, reason.as_bytes())?;
+        let mut packet = Vec::with_capacity(9 + encrypted.len());
+        packet.extend_from_slice(&ad);
+        packet.extend_from_slice(&encrypted);
+
+        // Send disconnect — use the session's socket
+        let socket = if let Some(peer) = self.sessions.get(&addr) {
+            Arc::clone(&peer.socket)
+        } else {
+            return Err(anyhow::anyhow!("Connection lost"));
+        };
+        let _ = socket.send_to(&packet, addr).await;
+
+        // 🧹 Clean up all state immediately
+        self.sessions.remove(&addr);
+        let keys_to_remove: Vec<(SocketAddr, u64)> = self.unacked.iter()
+            .filter(|e| e.key().0 == addr)
+            .map(|e| *e.key())
+            .collect();
+        for k in keys_to_remove { self.unacked.remove(&k); }
+        self.handshakes.remove(&addr);
+
+        Ok(session_info)
+    }
+
+    /// Close a specific session locally (no network message sent)
     pub fn close_session(&self, addr: SocketAddr) -> bool {
         // Remove session
         let removed = self.sessions.remove(&addr).is_some();

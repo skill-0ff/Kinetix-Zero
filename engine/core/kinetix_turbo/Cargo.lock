@@ -955,6 +955,7 @@ dependencies = [
  "rand 0.8.5",
  "redis",
  "ring",
+ "s-udp",
  "serde",
  "serde_json",
  "sha2",
@@ -1666,6 +1667,22 @@ name = "ryu"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
+
+[[package]]
+name = "s-udp"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chacha20poly1305",
+ "chrono",
+ "dashmap",
+ "rand 0.8.5",
+ "ring",
+ "sha2",
+ "tokio",
+ "x25519-dalek",
+ "zeroize",
+]
 
 [[package]]
 name = "scopeguard"

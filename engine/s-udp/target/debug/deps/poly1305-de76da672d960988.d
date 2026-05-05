@@ -1,0 +1,10 @@
+C:\Users\louou\Documents\project\Kinetix-Zero\engine\s-udp\target\debug\deps\poly1305-de76da672d960988.d: C:\Users\louou\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\poly1305-0.8.0\src\lib.rs C:\Users\louou\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\poly1305-0.8.0\src\backend.rs C:\Users\louou\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\poly1305-0.8.0\src\backend\avx2.rs C:\Users\louou\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\poly1305-0.8.0\src\backend\avx2\helpers.rs C:\Users\louou\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\poly1305-0.8.0\src\backend\autodetect.rs C:\Users\louou\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\poly1305-0.8.0\src\backend\soft.rs
+
+C:\Users\louou\Documents\project\Kinetix-Zero\engine\s-udp\target\debug\deps\libpoly1305-de76da672d960988.rmeta: C:\Users\louou\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\poly1305-0.8.0\src\lib.rs C:\Users\louou\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\poly1305-0.8.0\src\backend.rs C:\Users\louou\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\poly1305-0.8.0\src\backend\avx2.rs C:\Users\louou\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\poly1305-0.8.0\src\backend\avx2\helpers.rs C:\Users\louou\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\poly1305-0.8.0\src\backend\autodetect.rs C:\Users\louou\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\poly1305-0.8.0\src\backend\soft.rs
+
+C:\Users\louou\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\poly1305-0.8.0\src\lib.rs:
+C:\Users\louou\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\poly1305-0.8.0\src\backend.rs:
+C:\Users\louou\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\poly1305-0.8.0\src\backend\avx2.rs:
+C:\Users\louou\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\poly1305-0.8.0\src\backend\avx2\helpers.rs:
+C:\Users\louou\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\poly1305-0.8.0\src\backend\autodetect.rs:
+C:\Users\louou\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\poly1305-0.8.0\src\backend\soft.rs:

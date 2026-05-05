@@ -12,8 +12,6 @@ use rand::rngs::OsRng;
 use chacha20poly1305::{aead::{Aead, KeyInit, Payload}, ChaCha20Poly1305, Nonce};
 use sha2::{Sha256, Digest};
 
-use crate::Secrets;
-
 // S-UDP Protocol Flags
 pub const SUDP_INIT: u8 = 0x01;
 pub const SUDP_RESP: u8 = 0x02;
@@ -138,11 +136,7 @@ struct UnackedPacket {
     last_gasp_tried: bool,
 }
 
-struct OutgoingHandshake {
-    token: TokenGuard,
-    ephemeral_secret: EphemeralSecret,
-    created_at: Instant,
-}
+
 
 struct HandshakeState {
     shared_secret: Option<[u8; 32]>,
@@ -150,14 +144,12 @@ struct HandshakeState {
 }
 
 struct Session {
-    shared_secret: [u8; 32],
     cipher_key: [u8; 32],
     
     socket: Arc<UdpSocket>,
     last_activity: Instant,
     is_server: bool,
     recovery_started_at: Option<Instant>,
-    window_start_seq: u64,
     next_send_seq: u64,
     last_recv_seq: u64,
     // Receiver: per-window packet buffer
@@ -345,23 +337,19 @@ pub struct Engine {
     sessions: Arc<DashMap<SocketAddr, Session>>,
     unacked: Arc<DashMap<(SocketAddr, u64), UnackedPacket>>,
     reputations: Arc<DashMap<IpAddr, PeerReputation>>,
-    secrets: Arc<Option<Secrets>>,
     identity: Arc<RwLock<Option<SessionIdentity>>>,
-    pending_outbound: Arc<DashMap<SocketAddr, OutgoingHandshake>>,
     log_tx: Arc<StdMutex<Option<mpsc::UnboundedSender<LogEntry>>>>,
     boot_time: Instant,
 }
 
 impl Engine {
-    pub fn new(secrets: Secrets) -> Self {
+    pub fn new() -> Self {
         Self {
             handshakes: Arc::new(DashMap::new()),
             sessions: Arc::new(DashMap::new()),
             unacked: Arc::new(DashMap::new()),
             reputations: Arc::new(DashMap::new()),
-            secrets: Arc::new(Some(secrets)),
             identity: Arc::new(RwLock::new(None)),
-            pending_outbound: Arc::new(DashMap::new()),
             log_tx: Arc::new(StdMutex::new(None)),
             boot_time: Instant::now(),
         }
@@ -397,7 +385,7 @@ impl Engine {
 
         self.start_background_tasks(Arc::clone(&socket)).await;
 
-        println!(" [S-UDP] Standardized Listener Active on: {}", addr);
+        slog!(self, LogLevel::Info, LogCategory::Session, None, "Standardized Listener Active on: {}", addr);
 
         let (tx, rx) = mpsc::channel::<Event>(256);
         let engine = self.clone();
@@ -574,14 +562,12 @@ impl Engine {
         // Successfully Authenticated! Add to online peers
         let ck = self.derive_cipher_key(&shared_key);
         self.sessions.insert(target_addr, Session {
-            shared_secret: shared_key,
             cipher_key: ck,
             
             socket: Arc::clone(&socket),
             last_activity: Instant::now(),
             is_server: false, // Client side
             recovery_started_at: None,
-            window_start_seq: 0,
             next_send_seq: 0,
             last_recv_seq: 0,
             recv_window_packets: std::collections::HashMap::new(),
@@ -598,7 +584,7 @@ impl Engine {
             streams_received: 0,
         });
 
-        println!(" [S-UDP] Connection Established with: {}", target_addr);
+        slog!(self, LogLevel::Info, LogCategory::Session, Some(target_addr), "Connection Established with: {}", target_addr);
 
         // 🚀 Start background tasks ONLY AFTER handshake finishes safely
         self.start_background_tasks(Arc::clone(&socket)).await;
@@ -621,7 +607,7 @@ impl Engine {
 
 
 
-    pub async fn process_packet(&self, socket: &Arc<UdpSocket>, addr: SocketAddr, buf: &[u8], len: usize) -> Result<Option<Event>> {
+    async fn process_packet(&self, socket: &Arc<UdpSocket>, addr: SocketAddr, buf: &[u8], len: usize) -> Result<Option<Event>> {
         if len < 9 { return Ok(None); }
         
         let flags = buf[0];
@@ -752,14 +738,12 @@ impl Engine {
                                             let ss = handshake_data.shared_secret.unwrap();
                                             let ck = self.derive_cipher_key(&ss);
                                             self.sessions.insert(addr, Session {
-                                                shared_secret: ss,
                                                 cipher_key: ck,
                                                 
                                                 socket: Arc::clone(socket),
                                                 last_activity: Instant::now(),
                                                 is_server: true, // Server side
                                                 recovery_started_at: None,
-                                                window_start_seq: 0,
                                                 next_send_seq: 0,
                                                 last_recv_seq: 0,
                                                 recv_window_packets: std::collections::HashMap::new(),
@@ -902,13 +886,13 @@ impl Engine {
                         for old_w in min_window..window_idx {
                             if peer.recv_window_end_info.contains_key(&old_w) { continue; }
 
-                            // Sender moved past this window → it was full (31 = last pos)
-                            peer.recv_window_end_info.insert(old_w, (31, false));
+                            // Sender moved past this window → it was full
+                            peer.recv_window_end_info.insert(old_w, ((SUDP_WINDOW_SIZE - 1) as u8, false));
 
-                            // Build ACK — find what's missing (could be all 32 if 100% lost)
+                            // Build ACK — find what's missing
                             let mut old_lost: Vec<u64> = Vec::new();
                             let old_data = peer.recv_window_packets.get(&old_w);
-                            for p in 0..=31u8 {
+                            for p in 0..=(SUDP_WINDOW_SIZE - 1) as u8 {
                                 let have = old_data.map_or(false, |d| d.contains_key(&p));
                                 if !have {
                                     old_lost.push(sender_dir | (old_w << 7) | ((p as u64) << 2));
@@ -1238,7 +1222,7 @@ impl Engine {
         Ok(None)
     }
 
-    pub async fn start_background_tasks(&self, socket: Arc<UdpSocket>) {
+    async fn start_background_tasks(&self, socket: Arc<UdpSocket>) {
         let pc_gc = Arc::clone(&self.handshakes);
         let oc_gc = Arc::clone(&self.sessions);
         let ac_gc = Arc::clone(&self.unacked);
@@ -1463,7 +1447,7 @@ impl Engine {
             let chunk_data = &data[start..end];
             let chunk_size = end - start;
 
-            let packet_idx = (i % 32) as u64;
+            let packet_idx = (i as u64) % (SUDP_WINDOW_SIZE as u64);
 
             let mut throttle = false;
             let mut throttled_window_check = 0;
@@ -1511,7 +1495,7 @@ impl Engine {
                     let dir_bit: u64 = if peer.is_server { SUDP_DIR_BIT } else { 0 };
 
                     let is_end_stream: u64 = if i == total_chunks - 1 { 1 } else { 0 };
-                    let is_end_window: u64 = if packet_idx == 31 || is_end_stream == 1 { 1 } else { 0 };
+                    let is_end_window: u64 = if packet_idx == (SUDP_WINDOW_SIZE as u64 - 1) || is_end_stream == 1 { 1 } else { 0 };
 
                     seq = dir_bit
                         | (window_idx << 7)

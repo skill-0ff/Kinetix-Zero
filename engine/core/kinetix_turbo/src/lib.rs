@@ -1,6 +1,4 @@
-pub mod s_udp {
-    pub use ::s_udp::*;
-}
+pub mod s_udp;
 
 use serde::{Deserialize, Serialize};
 

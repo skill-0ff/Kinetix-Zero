@@ -34,9 +34,3 @@ path = "src/bin/collector.rs"
 [build-dependencies]
 prost-build = "0.12"
 
-[[bin]]
-name = "test-s-udp"
-path = "src/bin/test_s_udp.rs"
-
-s-udp = { path = "../../s-udp" }
-

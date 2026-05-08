@@ -5,11 +5,10 @@ use tokio::time::interval;
 use anyhow::{Context, Result};
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tokio::net::UdpSocket;
 use kinetix_turbo::{AppConfig, Secrets};
 use s_udp::{Engine, Event as SudpEvent};
 
-const RUDP_PORT: u16 = 5001;
+const SUDP_PORT: u16 = 5001;
 
 /// Strip comments from JSONC (JSON with Comments) text.
 fn strip_jsonc_comments(text: &str) -> String {
@@ -153,33 +152,49 @@ fn bootstrap_secrets(config_path: &Path, config: &mut AppConfig) -> Result<Secre
     }
 }
 
-async fn run_rudp_service(_config_handle: Arc<RwLock<AppConfig>>, _secrets: Arc<Option<Secrets>>) -> Result<()> {
-    let socket = UdpSocket::bind(format!("0.0.0.0:{}", RUDP_PORT)).await?;
-    let socket = Arc::new(socket);
+async fn run_sudp_service(_config_handle: Arc<RwLock<AppConfig>>, secrets: Arc<Option<Secrets>>, engine: Engine) -> Result<()> {
+    let (peer_token, serv_token) = if let Some(s) = secrets.as_ref() {
+        (s.agen_secret.clone(), s.serv_secret.clone())
+    } else {
+        return Err(anyhow::anyhow!("Secrets required for S-UDP"));
+    };
+
+    let addr_str = format!("0.0.0.0:{}", SUDP_PORT);
     
-    // Create S-UDP Engine
-    let engine = Engine::new();
-    engine.start_background_tasks(Arc::clone(&socket)).await;
+    // Use S-UDP high-level listen method (handles identity and receive loop automatically)
+    let mut rx = engine.listen(&addr_str, peer_token, serv_token).await?;
+    println!("S-UDP Service listening securely on {}", addr_str);
 
-    println!("S-UDP Service listening on port {}", RUDP_PORT);
+    // Demonstration of sending data exclusively through S-UDP
+    let engine_tx = engine.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(30));
+        loop {
+            interval.tick().await;
+            for session in engine_tx.list_sessions() {
+                // S-UDP Handles encryption, sliding window, and RTO retransmissions!
+                let _ = engine_tx.send(session.peer_addr, b"SERVER_PING_HEARTBEAT").await;
+            }
+        }
+    });
 
-    let mut buf = vec![0u8; 1400]; // Standardized S-UDP MTU
-    loop {
-        let (len, addr) = socket.recv_from(&mut buf).await?;
-        match engine.process_packet(&socket, addr, &buf, len).await {
-            Ok(Some(event)) => match event {
-                SudpEvent::Connected => {
-                    println!("Agent authenticated via S-UDP from {}", addr);
-                }
-                SudpEvent::Data(payload) => {
-                    let _ = payload; // Telemetry logic would go here
-                }
-                _ => {}
-            },
-            Err(e) => eprintln!("Protocol error for {}: {}", addr, e),
-            _ => {}
+    // Handle high-level events emitted by the S-UDP engine
+    while let Some(event) = rx.recv().await {
+        match event {
+            SudpEvent::Connected => {
+                println!("Agent authenticated via S-UDP");
+            }
+            SudpEvent::Data(report) => {
+                let _payload = report.payload;
+                // Telemetry logic would go here
+            }
+            SudpEvent::Disconnected(info) => {
+                println!("Agent {} disconnected: {}", info.peer_addr, info.reason);
+            }
         }
     }
+
+    Ok(())
 }
 
 use crossterm::{
@@ -189,7 +204,7 @@ use crossterm::{
 };
 use futures_util::StreamExt;
 
-async fn run_interactive_dashboard(config_handle: Arc<RwLock<AppConfig>>) -> Result<()> {
+async fn run_interactive_dashboard(config_handle: Arc<RwLock<AppConfig>>, engine: Engine) -> Result<()> {
     enable_raw_mode()?;
     let mut reader = EventStream::new();
     let mut interval = interval(Duration::from_secs(5));
@@ -200,7 +215,7 @@ async fn run_interactive_dashboard(config_handle: Arc<RwLock<AppConfig>>) -> Res
             _ = interval.tick() => {
                 let config = config_handle.read().await;
                 execute!(std::io::stdout(), Clear(ClearType::All), crossterm::cursor::MoveTo(0, 0))?;
-                print_cyber_dashboard(&config);
+                print_cyber_dashboard(&config, &engine);
                 print_dashboard_footer();
             }
             maybe_event = reader.next() => {
@@ -225,18 +240,32 @@ fn print_dashboard_footer() {
     println!("\x1b[1;35m======================================\x1b[0m");
 }
 
-fn print_cyber_dashboard(config: &AppConfig) {
+fn print_cyber_dashboard(config: &AppConfig, engine: &Engine) {
     println!("\r\x1b[1;36m🚀 [ KINETIX-ZERO COLLECTOR CORE ] 🚀\x1b[0m");
     println!("\x1b[1;35m======================================\x1b[0m");
     let ddos_status = if config.storage_policy.save_logs.ddos_evidence { "ACTIVE ✅" } else { "DISABLED ❌" };
     println!("\x1b[1m[🚨] DDOS EVIDENCE >> {}\x1b[0m", ddos_status);
     println!("  \x1b[1;36m├─ [🔬]\x1b[0m Sample Rate: {}", config.forensic_sample_rate);
     println!("  \x1b[1;35m--------------------------------------\x1b[0m");
-    println!("\x1b[1m[🛡️] S-UDP CONFIG\x1b[0m");
-    println!("  >> Pending Handshake: \x1b[1;33m2s\x1b[0m (Fixed)");
-    println!("  >> Session Lifetime:  \x1b[1;33m60s\x1b[0m (Fixed)");
-    println!("  >> Max Pending:       {}", config.collector.max_pending_agents);
-    println!("  >> Max Sessions:      {}", config.collector.max_online_agents);
+    println!("\x1b[1m[🛡️] S-UDP ENGINE STATUS\x1b[0m");
+    
+    let active_sessions = engine.session_count();
+    let sessions = engine.list_sessions();
+    let mut total_rx = 0;
+    let mut total_tx = 0;
+    let mut total_streams_rx = 0;
+    let mut total_streams_tx = 0;
+    
+    for s in &sessions {
+        total_rx += s.total_bytes_received;
+        total_tx += s.total_bytes_sent;
+        total_streams_rx += s.streams_received;
+        total_streams_tx += s.streams_sent;
+    }
+    
+    println!("  >> Active Agents:    {} / {}", active_sessions, config.collector.max_online_agents);
+    println!("  >> Total Received:   {} Bytes ({} Streams)", total_rx, total_streams_rx);
+    println!("  >> Total Sent:       {} Bytes ({} Streams)", total_tx, total_streams_tx);
     println!("\x1b[1;35m======================================\x1b[0m");
 }
 
@@ -256,14 +285,17 @@ async fn main() -> Result<()> {
     let shared_config = Arc::new(RwLock::new(initial_config));
     let shared_secrets = Arc::new(secrets);
     
-    let rudp_shared = Arc::clone(&shared_config);
+    let engine = Engine::new();
+    
+    let sudp_shared = Arc::clone(&shared_config);
     let secrets_shared = Arc::clone(&shared_secrets);
+    let engine_service = engine.clone();
     tokio::spawn(async move {
-        let _ = run_rudp_service(rudp_shared, secrets_shared).await;
+        let _ = run_sudp_service(sudp_shared, secrets_shared, engine_service).await;
     });
 
     if show_conf {
-        run_interactive_dashboard(shared_config).await?;
+        run_interactive_dashboard(shared_config, engine).await?;
         return Ok(());
     }
 

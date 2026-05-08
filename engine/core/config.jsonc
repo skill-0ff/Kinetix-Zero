@@ -48,7 +48,9 @@
         }
     },
     "collector": {
-        "secrets_path": "../collector.key"
+        "secrets_path": "../collector.key",
+        "max_pending_agents": 100,
+        "max_online_agents": 1000
     },
     "redis": {
         "enabled": true,

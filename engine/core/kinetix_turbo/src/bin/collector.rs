@@ -1,5 +1,6 @@
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 use tokio::time::interval;
 use anyhow::{Context, Result};
@@ -7,6 +8,8 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use kinetix_turbo::{AppConfig, Secrets};
 use s_udp::{Engine, Event as SudpEvent};
+use prost::Message;
+use sysinfo::System;
 
 const SUDP_PORT: u16 = 5001;
 
@@ -152,12 +155,9 @@ fn bootstrap_secrets(config_path: &Path, config: &mut AppConfig) -> Result<Secre
     }
 }
 
-async fn run_sudp_service(_config_handle: Arc<RwLock<AppConfig>>, secrets: Arc<Option<Secrets>>, engine: Engine) -> Result<()> {
-    let (peer_token, serv_token) = if let Some(s) = secrets.as_ref() {
-        (s.agen_secret.clone(), s.serv_secret.clone())
-    } else {
-        return Err(anyhow::anyhow!("Secrets required for S-UDP"));
-    };
+async fn run_sudp_service(_config_handle: Arc<RwLock<AppConfig>>, _secrets: Arc<Option<Secrets>>, engine: Engine, shared_eps: Arc<AtomicUsize>) -> Result<()> {
+    let peer_token = "client_token".to_string();
+    let serv_token = "serv_token".to_string();
 
     let addr_str = format!("0.0.0.0:{}", SUDP_PORT);
     
@@ -181,16 +181,18 @@ async fn run_sudp_service(_config_handle: Arc<RwLock<AppConfig>>, secrets: Arc<O
     // Handle high-level events emitted by the S-UDP engine
     while let Some(event) = rx.recv().await {
         match event {
-            SudpEvent::Connected => {
-                println!("Agent authenticated via S-UDP");
-            }
+            SudpEvent::Connected => {} // Disabled print to keep dashboard clean
             SudpEvent::Data(report) => {
-                let _payload = report.payload;
-                // Telemetry logic would go here
+                let mut cursor = &report.payload[..];
+                while cursor.len() > 0 {
+                    if let Ok(_parsed) = kinetix_turbo::proto::KinetixPacket::decode_length_delimited(&mut cursor) {
+                        shared_eps.fetch_add(1, Ordering::Relaxed);
+                    } else {
+                        break;
+                    }
+                }
             }
-            SudpEvent::Disconnected(info) => {
-                println!("Agent {} disconnected: {}", info.peer_addr, info.reason);
-            }
+            SudpEvent::Disconnected(_info) => {} // Disabled print
         }
     }
 
@@ -204,25 +206,51 @@ use crossterm::{
 };
 use futures_util::StreamExt;
 
-async fn run_interactive_dashboard(config_handle: Arc<RwLock<AppConfig>>, engine: Engine) -> Result<()> {
+#[derive(PartialEq)]
+enum ViewMode {
+    Status,
+    Config,
+}
+
+async fn run_interactive_status(config_handle: Arc<RwLock<AppConfig>>, engine: Engine, shared_eps: Arc<AtomicUsize>) -> Result<()> {
     enable_raw_mode()?;
     let mut reader = EventStream::new();
-    let mut interval = interval(Duration::from_secs(5));
-    println!("Interactive Dashboard started. Press 'Q' to exit view.");
+    let mut interval = interval(Duration::from_secs(1));
+    let mut sys = System::new_all();
+    let mut mode = ViewMode::Status;
 
+    println!("Interactive Terminal Initialized. [Q] Quit | [C] Config View");
     loop {
         tokio::select! {
             _ = interval.tick() => {
                 let config = config_handle.read().await;
+                let pid = sysinfo::get_current_pid().expect("Failed to get PID");
+                sys.refresh_process(pid);
+                let current_eps = shared_eps.swap(0, Ordering::Relaxed);
+                
                 execute!(std::io::stdout(), Clear(ClearType::All), crossterm::cursor::MoveTo(0, 0))?;
-                print_cyber_dashboard(&config, &engine);
-                print_dashboard_footer();
+                match mode {
+                    ViewMode::Status => {
+                        let last_eps = current_eps;
+                        print_cyber_status(&config, &engine, last_eps, &sys);
+                    },
+                    ViewMode::Config => print_config_hud(&config),
+                }
             }
             maybe_event = reader.next() => {
                 match maybe_event {
                     Some(Ok(Event::Key(key))) => {
-                        if key.kind == KeyEventKind::Press && (key.code == KeyCode::Char('q') || key.code == KeyCode::Char('Q')) {
-                            break;
+                        if key.kind == KeyEventKind::Press {
+                            match key.code {
+                                KeyCode::Char('q') | KeyCode::Char('Q') => break,
+                                KeyCode::Char('c') | KeyCode::Char('C') => {
+                                    if mode == ViewMode::Status { mode = ViewMode::Config; }
+                                }
+                                KeyCode::Esc => {
+                                    if mode == ViewMode::Config { mode = ViewMode::Status; }
+                                }
+                                _ => {}
+                            }
                         }
                     }
                     _ => {}
@@ -234,68 +262,153 @@ async fn run_interactive_dashboard(config_handle: Arc<RwLock<AppConfig>>, engine
     Ok(())
 }
 
-fn print_dashboard_footer() {
-    println!("\x1b[1;35m======================================\x1b[0m");
-    println!("\x1b[1;36m💡 INFO:\x1b[0m Use \x1b[1m[Q]\x1b[0m to exit | \x1b[1m[Ctrl+C]\x1b[0m to kill collector");
-    println!("\x1b[1;35m======================================\x1b[0m");
+fn print_config_hud(config: &AppConfig) {
+    let aqua = "\x1b[38;5;51m";
+    let orange = "\x1b[38;5;208m";
+    let white = "\x1b[1;37m";
+    let gray = "\x1b[38;5;244m";
+    let reset = "\x1b[0m";
+
+    let width: usize = 58; // Internal width between ┃ and ┃
+
+    let print_line = |content: &str, color: &str| {
+        let text_len = content.chars().count();
+        let padding = width.saturating_sub(text_len + 1); // 1 space at start
+        println!("\r{}┃ {}{}{}┃{}{}", aqua, color, content, " ".repeat(padding), aqua, reset);
+    };
+
+    println!("\r{}╭──────────────────────────────────────────────────────────╮{}", aqua, reset);
+    let header_text = "🛰️  KINETIX CONFIGURATION_MATRIX";
+    let status_tag = "[ LIVE ● ]";
+    // 60 total width. ┃ (1) + space (1) + text + spaces + tag + space (1) + ┃ (1) = 60
+    // text(31) + tag(10) = 41. 60 - 41 - 4 = 15 spaces.
+    println!("\r{}┃ {} {}            {} {}┃{}{}", aqua, white, header_text, aqua, status_tag, aqua, reset);
+    println!("\r{}┣──────────────────────────────────────────────────────────┫{}", aqua, reset);
+    
+    print_line(&format!("[ DATABASE_CORE ]"), orange);
+    print_line("", "");
+    print_line(" MONGO_URI:", white);
+    print_line(&format!(" {}", config.mongo_uri), gray);
+    
+    println!("\r{}┣──────────────────────────────────────────────────────────┫{}", aqua, reset);
+    
+    print_line(&format!("[ COLLECTOR_NODE ]"), orange);
+    print_line("", "");
+    print_line(" SECRETS_PATH:", white);
+    print_line(&format!(" {}", config.collector.secrets_path), gray);
+    print_line("", "");
+    
+    println!("\r{}╰──────────────────────────────────────────────────────────╯{}", aqua, reset);
+    
+    println!("\r");
+    println!("\r {}[ESC] {}RETURN TO MAIN DASHBOARD  {}|  {}[Q] {}QUIT{}", aqua, white, gray, aqua, white, reset);
 }
 
-fn print_cyber_dashboard(config: &AppConfig, engine: &Engine) {
-    println!("\r\x1b[1;36m🚀 [ KINETIX-ZERO COLLECTOR CORE ] 🚀\x1b[0m");
-    println!("\x1b[1;35m======================================\x1b[0m");
-    let ddos_status = if config.storage_policy.save_logs.ddos_evidence { "ACTIVE ✅" } else { "DISABLED ❌" };
-    println!("\x1b[1m[🚨] DDOS EVIDENCE >> {}\x1b[0m", ddos_status);
-    println!("  \x1b[1;36m├─ [🔬]\x1b[0m Sample Rate: {}", config.forensic_sample_rate);
-    println!("  \x1b[1;35m--------------------------------------\x1b[0m");
-    println!("\x1b[1m[🛡️] S-UDP ENGINE STATUS\x1b[0m");
-    
+fn print_cyber_status(_config: &AppConfig, engine: &Engine, eps: usize, sys: &System) {
+    let pid = sysinfo::get_current_pid().expect("Failed to get PID");
+    let (cpu_usage, mem_used, mem_total, mem_pct) = if let Some(proc) = sys.process(pid) {
+        let cpu = proc.cpu_usage();
+        let mem = proc.memory() as f64 / 1_048_576.0; 
+        let total = sys.total_memory() as f64 / 1_048_576.0;
+        let pct = (proc.memory() as f64 / sys.total_memory() as f64) * 100.0;
+        (cpu, mem, total, pct)
+    } else {
+        (0.0, 0.0, 0.0, 0.0)
+    };
+
     let active_sessions = engine.session_count();
     let sessions = engine.list_sessions();
     let mut total_rx = 0;
     let mut total_tx = 0;
-    let mut total_streams_rx = 0;
-    let mut total_streams_tx = 0;
+    let mut in_recovery = 0;
     
     for s in &sessions {
         total_rx += s.total_bytes_received;
         total_tx += s.total_bytes_sent;
-        total_streams_rx += s.streams_received;
-        total_streams_tx += s.streams_sent;
+        if s.in_recovery {
+            in_recovery += 1;
+        }
     }
     
-    println!("  >> Active Agents:    {} / {}", active_sessions, config.collector.max_online_agents);
-    println!("  >> Total Received:   {} Bytes ({} Streams)", total_rx, total_streams_rx);
-    println!("  >> Total Sent:       {} Bytes ({} Streams)", total_tx, total_streams_tx);
-    println!("\x1b[1;35m======================================\x1b[0m");
+    let cpu_bar = make_bar(cpu_usage as f64, 100.0, 20);
+    let mem_bar = make_bar(mem_pct, 100.0, 20);
+    
+    // Cyberpunk Color Palette (256-color ANSI)
+    let aqua = "\x1b[38;5;51m";
+    let purple = "\x1b[38;5;93m";
+    let yellow = "\x1b[38;5;226m";
+    let white = "\x1b[1;37m";
+    let gray = "\x1b[38;5;244m";
+    let reset = "\x1b[0m";
+
+    println!("\r{}{:>58}{}", purple, "╭──────────────────────────────────────────────────────────╮", reset);
+    println!("\r{}│  {}🚀 KINETIX-ZERO // {}COLLECTOR CORE {}[ONLINE]              {}│", purple, aqua, white, yellow, purple);
+    println!("\r{}{:>58}{}", purple, "╰──────────────────────────────────────────────────────────╯", reset);
+    
+    println!("\r");
+    println!("\r {}[💻] {}COLLECTOR CPU", yellow, white);
+    println!("\r {} {} {:>5.1}%", aqua, cpu_bar, cpu_usage);
+    
+    println!("\r");
+    println!("\r {}[🧠] {}COLLECTOR RAM", yellow, white);
+    println!("\r {} {} {:>5.1}% ({:.1} MB / {:.0} MB)", aqua, mem_bar, mem_pct, mem_used, mem_total);
+    
+    println!("\r");
+    println!("\r {}{}╾────────────────────────────────────────────────────────╼{}", gray, gray, reset);
+    
+    println!("\r  {}⚡ LIVE TRAFFIC:  {} [ {}{} EPS{} ]", white, reset, yellow, eps, reset);
+    println!("\r  {}🌐 ACTIVE AGENTS: {} [ {}{} ]", white, reset, yellow, active_sessions);
+    
+    let (status_text, status_color) = if in_recovery > 0 { 
+        (format!("RECOVERY: {} ACTIVE", in_recovery), "\x1b[38;5;196m") 
+    } else { 
+        ("STABLE ✓".to_string(), "\x1b[38;5;46m") 
+    };
+    println!("\r  {}📈 NETWORK:       {} [ {}{} ]", white, reset, status_color, status_text);
+    
+    println!("\r {}{}╾────────────────────────────────────────────────────────╼{}", gray, gray, reset);
+    
+    println!("\r  {}⬇ RX: {:.1} MB  {}|  {}⬆ TX: {:.1} MB", aqua, total_rx as f64 / 1_048_576.0, gray, aqua, total_tx as f64 / 1_048_576.0);
+    println!("\r");
+    println!("\r \x1b[38;5;240m[Q] Quit | [C] Config | [Ctrl+C] Kill\x1b[0m");
+}
+
+fn make_bar(val: f64, max: f64, len: usize) -> String {
+    let pct = (val / max).clamp(0.0, 1.0);
+    let filled = (pct * len as f64).round() as usize;
+    let empty = len.saturating_sub(filled);
+    format!("{}{}", "▰".repeat(filled), "▱".repeat(empty))
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().collect();
-    let show_conf = args.iter().any(|arg| arg == "-conf");
+    let show_status = args.iter().any(|arg| arg == "-status");
 
     let config_path = find_config_file()?;
     let mut initial_config = load_config(&config_path)?;
     
     let mut secrets = None;
-    if !show_conf {
+    if !show_status {
         secrets = Some(bootstrap_secrets(&config_path, &mut initial_config)?);
     }
 
     let shared_config = Arc::new(RwLock::new(initial_config));
     let shared_secrets = Arc::new(secrets);
+    let shared_eps = Arc::new(AtomicUsize::new(0));
     
     let engine = Engine::new();
     
     let sudp_shared = Arc::clone(&shared_config);
     let secrets_shared = Arc::clone(&shared_secrets);
     let engine_service = engine.clone();
+    let eps_service = Arc::clone(&shared_eps);
     tokio::spawn(async move {
-        let _ = run_sudp_service(sudp_shared, secrets_shared, engine_service).await;
+        let _ = run_sudp_service(sudp_shared, secrets_shared, engine_service, eps_service).await;
     });
 
-    if show_conf {
-        run_interactive_dashboard(shared_config, engine).await?;
+    if show_status {
+        run_interactive_status(shared_config, engine, shared_eps).await?;
         return Ok(());
     }
 

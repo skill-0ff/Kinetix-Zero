@@ -1,9 +1,13 @@
-pub mod s_udp;
+pub use s_udp;
 
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct CollectorConfig {}
+pub struct CollectorConfig {
+    pub secrets_path: String,
+    pub max_pending_agents: u32,
+    pub max_online_agents: u32,
+}
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Secrets {

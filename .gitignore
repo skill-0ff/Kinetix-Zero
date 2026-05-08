@@ -13,6 +13,7 @@ frontend/.env
 
 # Engine Core (Rust & Security)
 engine/core/kinetix_turbo/target/
+engine/s-udp/target/
 engine/core/server.key
 engine/core/kinetix-collector.exe
 *.exe

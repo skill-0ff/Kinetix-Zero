@@ -7,7 +7,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio::net::UdpSocket;
 use kinetix_turbo::{AppConfig, Secrets};
-use kinetix_turbo::s_udp::{Engine, Event};
+use s_udp::{Engine, Event as SudpEvent};
 
 const RUDP_PORT: u16 = 5001;
 
@@ -153,12 +153,12 @@ fn bootstrap_secrets(config_path: &Path, config: &mut AppConfig) -> Result<Secre
     }
 }
 
-async fn run_rudp_service(config_handle: Arc<RwLock<AppConfig>>, secrets: Arc<Option<Secrets>>) -> Result<()> {
+async fn run_rudp_service(_config_handle: Arc<RwLock<AppConfig>>, _secrets: Arc<Option<Secrets>>) -> Result<()> {
     let socket = UdpSocket::bind(format!("0.0.0.0:{}", RUDP_PORT)).await?;
     let socket = Arc::new(socket);
     
     // Create S-UDP Engine
-    let engine = Engine::new(config_handle, secrets);
+    let engine = Engine::new();
     engine.start_background_tasks(Arc::clone(&socket)).await;
 
     println!("S-UDP Service listening on port {}", RUDP_PORT);
@@ -168,12 +168,13 @@ async fn run_rudp_service(config_handle: Arc<RwLock<AppConfig>>, secrets: Arc<Op
         let (len, addr) = socket.recv_from(&mut buf).await?;
         match engine.process_packet(&socket, addr, &buf, len).await {
             Ok(Some(event)) => match event {
-                Event::Connected => {
+                SudpEvent::Connected => {
                     println!("Agent authenticated via S-UDP from {}", addr);
                 }
-                Event::Data(payload) => {
+                SudpEvent::Data(payload) => {
                     let _ = payload; // Telemetry logic would go here
                 }
+                _ => {}
             },
             Err(e) => eprintln!("Protocol error for {}: {}", addr, e),
             _ => {}

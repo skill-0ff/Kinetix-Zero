@@ -26,7 +26,7 @@ chacha20poly1305 = "0.10.1"
 crossterm = { version = "0.27", features = ["event-stream"] }
 hostname = "0.4"
 zeroize = { version = "1.7", features = ["derive"] }
-s-udp = "0.1.0"
+s-udp = "0.2.1"
 
 [[bin]]
 name = "kinetix-collector"

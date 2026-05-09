@@ -1670,9 +1670,9 @@ checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
 
 [[package]]
 name = "s-udp"
-version = "0.1.0"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "df16173b47c49554308afcd6169acc13505fb53492a615bf2536c025eff15fa7"
+checksum = "558b28ec61ae7d35a86be562f73113b28d421ecd19bab7b9b40e2e2ae790bb17"
 dependencies = [
  "anyhow",
  "chacha20poly1305",
